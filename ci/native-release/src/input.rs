@@ -153,6 +153,7 @@ impl Request {
         object.remove("verify_target");
         object.remove("builder_sha");
         object.remove("preview_windows_self_sign");
+        object.remove("auto_promote");
         serde_json::to_string(&value).map_err(|_| "Invalid release request")
     }
     pub fn resolve_from(&mut self, env: &Environment) -> Result<()> {
