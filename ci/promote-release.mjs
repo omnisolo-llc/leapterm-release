@@ -1517,7 +1517,9 @@ export async function promoteRelease({
           const runId = String(stagingProvenance.run_id || '');
           const attempt = String(stagingProvenance.attempt || '');
           const proof = String(stagingProvenance.proof || '');
-          const prefix = `releases/v${normalizedVersion}/${resolvedBuildNumber}/${runId}-${attempt}`;
+          const routeSuffix =
+            stagingProvenance.release_route === 'option1' ? '/option1' : '';
+          const prefix = `releases/v${normalizedVersion}/${resolvedBuildNumber}/${runId}-${attempt}${routeSuffix}`;
           const ipaKey = `${prefix}/private-artifacts/${ipaName}`;
           const receiptKey = `${prefix}/github-receipts/${proof}/ios-private-artifact-receipt.json`;
           const stageTag = `ci-stage/application-${runId}-${attempt}`;
