@@ -13,6 +13,7 @@ use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::Path,
+    process::Command,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -81,6 +82,8 @@ enum Failure {
 
 struct State {
     repository: Value,
+    membership_actor: Option<String>,
+    membership: Value,
     release: Option<Value>,
     assets: BTreeMap<u64, Asset>,
     requests: Vec<Value>,
@@ -119,6 +122,11 @@ impl State {
         }).collect();
         Self {
             repository: json!({"full_name":STAGING_REPOSITORY,"private":true}),
+            membership_actor: std::env::var("GITHUB_ACTOR")
+                .ok()
+                .map(|actor| actor.trim().to_owned())
+                .filter(|actor| !actor.is_empty()),
+            membership: json!({"state":"active"}),
             release: Some(release(plan, draft)),
             assets,
             requests: Vec::new(),
@@ -219,6 +227,14 @@ impl State {
                 self.repository = self.repository_mutation.take().unwrap().1;
             }
             self.repository.clone()
+        } else if method == "GET"
+            && self.membership_actor.as_ref().is_some_and(|actor| {
+                endpoint == format!("orgs/omnisolo-llc/teams/release-eng/memberships/{actor}")
+            })
+        {
+            // This fixture supplies a controlled synthetic team response for
+            // the exact actor being exercised. Other actors/teams stay denied.
+            self.membership.clone()
         } else if method == "GET" && endpoint.starts_with(&format!("{prefix}/releases?")) {
             let page = endpoint
                 .split('&')
@@ -1680,5 +1696,99 @@ fn denial_of_individual_private_release_readback_cannot_authorize_a_write() {
             Err("Sentinel readback HTTP failure")
         );
         fixture.assert_preserved(&fixture.original);
+    }
+}
+
+#[test]
+fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
+    const CASE: &str = "OMNI_STAGING_MEMBERSHIP_CASE";
+    const ACTOR: &str = "omni-synthetic-ci-actor";
+    if let Ok(case) = std::env::var(CASE) {
+        assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
+        assert_eq!(std::env::var("GITHUB_ACTOR").as_deref(), Ok(ACTOR));
+        let (directory, plan) = candidate();
+        let mut state = State::new(&plan, directory.path(), false);
+        let expected = match case.as_str() {
+            "active" => Ok(Publication::AlreadyPublished),
+            "inactive" => {
+                state.membership = json!({"state":"pending"});
+                Err("Release actor is not an active member of Release Eng")
+            }
+            "denied" => {
+                state.membership = json!({"status":403});
+                Err("Sentinel readback HTTP failure")
+            }
+            "wrong-actor" => {
+                state.membership_actor = Some("another-synthetic-ci-actor".into());
+                Err("Sentinel readback HTTP failure")
+            }
+            _ => panic!("Unknown synthetic membership case: {case}"),
+        };
+        let mut fixture = HttpFixture::start(format!("membership-{case}"), state);
+        assert_eq!(
+            publication_candidates::publish_to_staging(&plan, &mut fixture),
+            expected
+        );
+        fixture.assert_preserved(&fixture.original);
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(
+            state.requests[0]["endpoint"],
+            format!("repos/{STAGING_REPOSITORY}")
+        );
+        let membership = &state.requests[1];
+        assert_eq!(membership["method"], "GET");
+        assert_eq!(
+            membership["endpoint"],
+            format!("orgs/omnisolo-llc/teams/release-eng/memberships/{ACTOR}")
+        );
+        if case == "active" {
+            assert_eq!(membership["response_status"], 200);
+            assert_eq!(membership["response_json"]["state"], "active");
+            exact_readback_after(&state, &plan, 1, false);
+        } else {
+            assert_eq!(
+                state.requests.len(),
+                2,
+                "Denied membership reached release state"
+            );
+            assert_eq!(
+                membership["response_status"],
+                if case == "inactive" {
+                    200
+                } else if case == "denied" {
+                    403
+                } else {
+                    404
+                }
+            );
+        }
+        return;
+    }
+    // Each child supplies its own process actor context. This avoids global
+    // environment mutation and exercises the real production membership gate.
+    let safe = omni_release_launcher::clean_environment(&std::env::vars().collect());
+    for case in ["active", "inactive", "denied", "wrong-actor"] {
+        let mut child = Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "release_eng_membership_requires_an_active_matching_actor_over_loopback",
+                "--test-threads=1",
+            ])
+            .env_clear()
+            .envs(&safe)
+            .env("GITHUB_ACTIONS", "true")
+            .env("GITHUB_ACTOR", ACTOR)
+            .env(CASE, case);
+        if let Ok(evidence) = std::env::var("OMNI_PRIVATE_STAGING_EVIDENCE") {
+            child.env("OMNI_PRIVATE_STAGING_EVIDENCE", evidence);
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "Synthetic membership case {case} failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
