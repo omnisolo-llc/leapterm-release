@@ -419,6 +419,8 @@ impl HttpFixture {
                     Err(error) => panic!("Loopback fixture accept failed: {error}"),
                 };
                 assert!(peer.ip().is_loopback());
+                // Accepted sockets can inherit nonblocking mode on BSD/macOS.
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();

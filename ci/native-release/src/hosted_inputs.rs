@@ -44,6 +44,23 @@ enum OwnerCommand {
 }
 
 #[cfg(windows)]
+fn native_system_directory() -> Result<PathBuf> {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
+    let mut buffer = [0u16; 4096];
+    let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
+    if length == 0 || length >= buffer.len() {
+        return Err("Windows native system directory unavailable");
+    }
+    let root = PathBuf::from(OsString::from_wide(&buffer[..length]));
+    if !root.is_absolute() {
+        return Err("Windows native system directory unavailable");
+    }
+    guards::directory(&root)?;
+    Ok(root)
+}
+
+#[cfg(windows)]
 fn owner_command_failure(command: OwnerCommand, error: &'static str) -> &'static str {
     let category = match error {
         "Required build tool could not start" => "start",
@@ -86,8 +103,11 @@ fn owner_only(path: &Path) -> Result<()> {
     {
         use std::time::Duration;
         let env = crate::clean_environment(&std::env::vars().collect());
+        // Git Bash can put GNU whoami ahead of the native identity tool.
+        // Select the OS directory through the API for both Windows commands.
+        let system = native_system_directory()?;
         let bytes = crate::process::run(
-            Path::new("whoami.exe"),
+            &system.join("whoami.exe"),
             &["/user".into(), "/fo".into(), "csv".into(), "/nh".into()],
             path.parent().ok_or("Hosted input parent unavailable")?,
             &env,
@@ -111,7 +131,7 @@ fn owner_only(path: &Path) -> Result<()> {
         }
         let grant = format!("*{sid}:{}", if path.is_dir() { "(OI)(CI)F" } else { "F" });
         crate::process::run(
-            Path::new("icacls.exe"),
+            &system.join("icacls.exe"),
             &[
                 path.to_string_lossy().into_owned(),
                 "/inheritance:r".into(),

@@ -345,3 +345,57 @@ fn failed_workflow_output_publication_removes_the_protected_input() {
         }
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn hosted_input_identity_and_acl_tools_ignore_inert_path_shadows() {
+    use std::process::Command;
+    let runner = tempfile::tempdir().unwrap();
+    let shadow = runner.path().join("shadow");
+    fs::create_dir(&shadow).unwrap();
+    for name in ["whoami.exe", "icacls.exe"] {
+        // This owned stand-in rejects native identity/ACL arguments before
+        // attempting any network request. Relative tool lookup must fail.
+        fs::copy(env!("CARGO_BIN_EXE_source-api-fixture"), shadow.join(name)).unwrap();
+    }
+    let output_file = runner.path().join("output");
+    fs::write(&output_file, "").unwrap();
+    let raw = "{\n  \"schema\":1, \"campaigns\":[{},{},{},{}]\n}\n";
+    let mut env = omni_release_launcher::clean_environment(&std::env::vars().collect());
+    env.extend(hosted_environment(runner.path(), &output_file));
+    env.insert("PATH".into(), shadow.to_string_lossy().into_owned());
+    env.insert("OMNI_VPN_INSTALLED_CONTROL_JSON".into(), raw.into());
+    let prepared = Command::new(env!("CARGO_BIN_EXE_omni-release-launcher"))
+        .arg("prepare-installed-control")
+        .current_dir(runner.path())
+        .env_clear()
+        .envs(&env)
+        .output()
+        .unwrap();
+    assert!(
+        prepared.status.success(),
+        "Native Windows identity and ACL tools must ignore PATH shadows"
+    );
+    let record = fs::read_to_string(&output_file).unwrap();
+    let path = std::path::PathBuf::from(record.trim().strip_prefix("control_file=").unwrap());
+    assert_eq!(fs::read(&path).unwrap(), raw.as_bytes());
+    let canonical_runner = runner.path().canonicalize().unwrap();
+    assert_eq!(
+        path.parent().unwrap().parent(),
+        Some(canonical_runner.as_path())
+    );
+    env.insert(
+        "OMNI_VPN_INSTALLED_CONTROL_FILE".into(),
+        path.to_string_lossy().into_owned(),
+    );
+    let cleanup = Command::new(env!("CARGO_BIN_EXE_omni-release-launcher"))
+        .arg("cleanup-hosted-inputs")
+        .current_dir(runner.path())
+        .env_clear()
+        .envs(&env)
+        .output()
+        .unwrap();
+    assert!(cleanup.status.success());
+    assert!(!path.exists());
+    assert!(!path.parent().unwrap().exists());
+}
