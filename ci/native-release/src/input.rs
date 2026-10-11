@@ -47,6 +47,8 @@ pub struct Request {
     pub include_selfhost: bool,
     #[serde(default)]
     pub preview_windows_self_sign: bool,
+    #[serde(default)]
+    pub auto_promote: bool,
 }
 fn yes() -> bool {
     true
