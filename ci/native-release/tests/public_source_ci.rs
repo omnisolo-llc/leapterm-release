@@ -273,6 +273,9 @@ impl Fixture {
                     thread::sleep(Duration::from_millis(2));
                     continue;
                 };
+                // BSD/macOS can inherit the listener's nonblocking mode;
+                // request reads need blocking I/O with the existing timeout.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();
@@ -433,7 +436,7 @@ impl Fixture {
         let executable = dir.join(if cfg!(windows) { "gh.exe" } else { "gh" });
         fs::copy(env!("CARGO_BIN_EXE_source-api-fixture"), executable).unwrap();
         fs::write(dir.join("fixture-address"), &self.address).unwrap();
-        Environment::from([
+        let mut env = Environment::from([
             ("PATH".into(), dir.to_string_lossy().into_owned()),
             ("GITHUB_TOKEN".into(), "public-fixture".into()),
             ("SOURCE_METADATA_READ_TOKEN".into(), "source-fixture".into()),
@@ -450,7 +453,13 @@ impl Fixture {
                 "reader-fixture".into(),
             ),
             ("SOURCE_CI_STATUS_TOKEN".into(), "status-fixture".into()),
-        ])
+        ]);
+        // Windows socket providers need the OS location in an isolated client
+        // environment. The variable lookup is case-insensitive on Windows.
+        if let Ok(value) = std::env::var("SYSTEMROOT") {
+            env.insert("SYSTEMROOT".into(), value);
+        }
+        env
     }
     fn api(&self, dir: &std::path::Path, role: Role) -> GitHubApi {
         let env = self.environment(dir);
