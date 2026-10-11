@@ -4,6 +4,26 @@ fn main() {
         std::process::exit(1);
     }
     let command = std::env::args().nth(1).unwrap_or_default();
+    if ["prepare-installed-control", "prepare-protected-source-pair", "cleanup-hosted-inputs"].contains(&command.as_str()) {
+        if std::env::args().len()!=2 { eprintln!("Unexpected hosted input arguments"); std::process::exit(1); }
+        let environment=std::env::vars().collect();
+        let result=if command=="cleanup-hosted-inputs" {omni_release_launcher::hosted_inputs::cleanup(&environment)}
+            else {omni_release_launcher::hosted_inputs::run(&command,&environment)};
+        if let Err(error)=result {eprintln!("Native hosted input: {error}");std::process::exit(1);}
+        return;
+    }
+    if ["source-ci", "discover-source-ci", "report-source-ci"].contains(&command.as_str()) {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        let environment = std::env::vars().collect();
+        let result = match command.as_str() {
+            "source-ci" if args.is_empty() => omni_release_launcher::source_ci::run(&environment),
+            "discover-source-ci" => omni_release_launcher::source_discovery::discover_cli(&args, &environment),
+            "report-source-ci" => omni_release_launcher::source_report::report_cli(&args, &environment),
+            _ => Err("Unexpected source-CI execution arguments"),
+        };
+        if let Err(error) = result { eprintln!("Native source-CI: {error}"); std::process::exit(1); }
+        return;
+    }
     if command == "check-integration-prerequisites" {
         if std::env::args().len() != 2 {
             eprintln!("Unexpected prerequisite-check arguments");

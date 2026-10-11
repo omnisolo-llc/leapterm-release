@@ -1228,6 +1228,9 @@ fn build_native_stage(
     frozen.verify()?;
     source::verify_tools(src, &checkout)?;
     source::verify(src, source_sha, &checkout, false, 0)?;
+    if let NativeStage::Ci(request) = &stage {
+        crate::source_handoff::retain_stage(env, request, &work.join("source-ci-stage.json"))?;
+    }
     if let NativeStage::Release(_, "prepare-publication") = &stage {
         let (verifier, plan) = crate::publication_candidates::retain_verifier(env, &binary)?;
         write_outputs(

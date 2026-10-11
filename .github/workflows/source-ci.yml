@@ -1,0 +1,81 @@
+name: Public source CI
+run-name: source-ci:${{ inputs.source_sha }}:${{ inputs.builder_sha }}:${{ inputs.catalog_sha256 }}:ci
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact approved private source commit
+        required: true
+        type: string
+      source_ref:
+        description: Approved canonical main or private pull-request head ref
+        required: true
+        type: string
+      builder_sha:
+        description: Exact public builder commit pinned by source
+        required: true
+        type: string
+      catalog_sha256:
+        description: Reviewed current source suite and workflow catalog digest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-ci-${{ inputs.source_sha }}-${{ inputs.builder_sha }}-${{ inputs.catalog_sha256 }}
+  cancel-in-progress: false
+
+jobs:
+  policy:
+    name: policy
+    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: bash ci/native-release/run.sh audit-runners --workflows .github/workflows --policy ci/standard-runner-policy.json
+  source_ci:
+    name: ci [${{ matrix.stage }}]
+    needs: policy
+    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    environment: source-ci-authority
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        stage: [source, security, rust, flutter-vm, flutter-browser, account, vault, worker, web, mcp, relay, packaging, agent-lifecycle]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Execute exact approved source cell and retain verified private receipt
+        id: execute_source_ci
+        run: bash ci/native-release/run.sh source-ci
+        env:
+          SOURCE_CI_REQUEST: >-
+            {"identity":{"source_repository":"omnisolo-llc/omniterm","source_sha":${{ toJSON(inputs.source_sha) }},"builder_repository":"omnisolo-llc/omniterm-release","builder_sha":${{ toJSON(inputs.builder_sha) }},"run_id":"${{ github.run_id }}","attempt":"${{ github.run_attempt }}"},"source_ref":${{ toJSON(inputs.source_ref) }},"stage":"${{ matrix.stage }}","shard_index":0,"shard_count":1}
+          INPUT_CATALOG_SHA256: ${{ inputs.catalog_sha256 }}
+          SOURCE_REPOSITORY: omnisolo-llc/omniterm
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          SOURCE_CI_APPROVAL_READ_TOKEN: ${{ secrets.SOURCE_CI_APPROVAL_READ_TOKEN }}
+          SOURCE_METADATA_READ_TOKEN: ${{ secrets.SOURCE_METADATA_READ_TOKEN }}
+          SOURCE_CI_HANDOFF_WRITE_TOKEN: ${{ secrets.SOURCE_CI_HANDOFF_WRITE_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          OMNI_E2E_AGENT_PREDECESSOR_COMMIT: ${{ vars.SOURCE_CI_AGENT_PREDECESSOR_SHA }}

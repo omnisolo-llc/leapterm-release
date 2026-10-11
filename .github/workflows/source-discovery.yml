@@ -1,0 +1,49 @@
+name: Public source CI discovery
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-source-ci-discovery
+  cancel-in-progress: false
+
+jobs:
+  policy:
+    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_DISCOVERY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Enforce standard runners and bounded storage before discovery
+        run: >-
+          bash ci/native-release/run.sh audit-runners
+          --workflows .github/workflows/source-discovery.yml
+          --policy ci/standard-runner-policy.json
+
+  discover:
+    needs: policy
+    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_DISCOVERY_ENABLED == 'true'
+    environment: source-ci-discovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read reviewed metadata and request canonical public source CI
+        env:
+          SOURCE_CI_DISCOVERY_ENABLED: ${{ vars.SOURCE_CI_DISCOVERY_ENABLED }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_METADATA_READ_TOKEN: ${{ secrets.SOURCE_METADATA_READ_TOKEN }}
+          SOURCE_CI_APPROVAL_READ_TOKEN: ${{ secrets.SOURCE_CI_APPROVAL_READ_TOKEN }}
+        run: bash ci/native-release/run.sh discover-source-ci
