@@ -77,6 +77,7 @@ pub fn verification_environment(env: &Environment) -> Environment {
         "BUILD_CONFIG",
         "SIGNING_CONFIG",
         "STORAGE_CONFIG",
+        "DIAGNOSTICS_PUBLIC_KEY",
         "RUNNER_TEMP",
         "GITHUB_ACTIONS",
         "GITHUB_EVENT_NAME",

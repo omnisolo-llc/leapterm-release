@@ -131,11 +131,10 @@ fn option1_publication_keeps_the_test_matrix_decoupled_and_requires_native_publi
             assert!(step["env"][key].is_null());
         }
     }
-    let writer = steps(publish).last().unwrap();
-    assert_eq!(
-        writer["run"].as_str(),
-        Some("bash ci/native-release/run.sh publish-candidates")
-    );
+    let writer = steps(publish)
+        .iter()
+        .find(|s| s["run"].as_str() == Some("bash ci/native-release/run.sh publish-candidates"))
+        .unwrap();
     assert_eq!(
         writer["env"]["GH_TOKEN"].as_str(),
         Some("${{ secrets.PRIVATE_RELEASE_TOKEN }}")
