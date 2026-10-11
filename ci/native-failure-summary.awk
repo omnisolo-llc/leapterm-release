@@ -21,6 +21,7 @@ FNR == NR {
         target = $0
         sub(/^[ \t]*Running[ \t]+(unittests[ \t]+)?/, "", target)
         sub(/[ \t]+\(.*/, "", target)
+        gsub(/\\/, "/", target)
         last_target = ""
         last_test = ""
         if (target ~ /^(tests|src)\/[A-Za-z0-9_\/-]+\.rs$/) {
@@ -28,14 +29,28 @@ FNR == NR {
             sub(/\.rs$/, "", target)
             if (targets[target]) last_target = target
         }
+        passed_count = 0
+        passed_names = ""
+        for (key in passed_seen) delete passed_seen[key]
     }
     if ($0 ~ /^test [A-Za-z0-9_:]+ \.\.\./) {
         name = $2
         sub(/^.*::/, "", name)
         if (known[name]) last_test = name
     }
+    if (last_target == "public_source_ci" && $0 ~ /^test [A-Za-z0-9_:]+ \.\.\. ok$/) {
+        name = $2
+        sub(/^.*::/, "", name)
+        if (known[name] && !passed_seen[name]++ && passed_count < 20) {
+            passed_count++
+            passed_names = passed_names (passed_names == "" ? "" : " ") name
+        }
+    }
     if (emitted >= 20) next
-    if ($0 ~ /^test [A-Za-z0-9_:]+ \.\.\. FAILED$/) {
+    if (last_target == "public_source_ci" && passed_count > 0 && $0 ~ /^test result: ok\. [0-9]+ passed; 0 failed; 0 ignored;/ && $4 == passed_count) {
+        record("Native contract passed target: public_source_ci " passed_count)
+        record("Native contract passed cases: public_source_ci " passed_names)
+    } else if ($0 ~ /^test [A-Za-z0-9_:]+ \.\.\. FAILED$/) {
         name = $2
         sub(/^.*::/, "", name)
         if (known[name] && !seen[name]++) {
@@ -45,6 +60,8 @@ FNR == NR {
         if (!seen[$0]++) {
             record($0)
         }
+    } else if ($0 ~ /^Native hosted input command: (windows-owner-command|windows-acl-command) (start|group|resume|timeout|stream|failed|other)$/ || $0 ~ /^Native hosted input boundary: (prepare-control|materialize-control|materialize-profile|cleanup-control) (windows-owner-command|windows-acl-command|owner-output|directory|file|handle|identity|cleanup|other)$/ || $0 ~ /^Native subprocess failed: exit-code=(1|2|5|87|123)$/) {
+        if (!seen[$0]++) record($0)
     } else if ($0 ~ /^error\[E[0-9][0-9][0-9][0-9]\]:/) {
         code = substr($0, 7, 5)
         if (!seen[code]++) {

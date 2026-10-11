@@ -148,6 +148,38 @@ fn hosted_environment(runner: &Path, output: &Path) -> Environment {
     ])
 }
 
+fn input_boundary<T>(
+    stage: &str,
+    result: omni_release_launcher::Result<T>,
+) -> omni_release_launcher::Result<T> {
+    if let Err(error) = &result {
+        let category = match *error {
+            "Windows hosted input owner command failed" => "windows-owner-command",
+            "Windows hosted input ACL command failed" => "windows-acl-command",
+            "Hosted input owner unavailable" | "Hosted input owner invalid" => "owner-output",
+            "Hosted input directory unavailable" | "Directory unavailable" | "Unsafe directory" => {
+                "directory"
+            }
+            "Cannot create private release file"
+            | "Cannot write private release file"
+            | "Hosted input unavailable" => "file",
+            "No-follow file handle unavailable"
+            | "Regular file unavailable"
+            | "Unsafe Windows file handle" => "handle",
+            "Expected bounded regular file"
+            | "File replaced or hardlinked"
+            | "File replaced during open"
+            | "File identity unavailable"
+            | "File identity changed"
+            | "Hardlinked workflow output" => "identity",
+            "Hosted input cleanup boundary" | "Hosted input cleanup file unavailable" => "cleanup",
+            _ => "other",
+        };
+        eprintln!("Native hosted input boundary: {stage} {category}");
+    }
+    result
+}
+
 #[test]
 fn hosted_input_custody_preserves_original_bytes_and_removes_its_exact_file() {
     let runner = tempfile::tempdir().unwrap();
@@ -156,11 +188,19 @@ fn hosted_input_custody_preserves_original_bytes_and_removes_its_exact_file() {
     let raw = "{\n  \"schema\":1, \"campaigns\":[{},{},{},{}]\n}\n";
     let mut env = hosted_environment(runner.path(), &output);
     env.insert("OMNI_VPN_INSTALLED_CONTROL_JSON".into(), raw.into());
-    hosted_inputs::run("prepare-installed-control", &env).unwrap();
+    input_boundary(
+        "prepare-control",
+        hosted_inputs::run("prepare-installed-control", &env),
+    )
+    .unwrap();
     let record = fs::read_to_string(&output).unwrap();
     let path = std::path::PathBuf::from(record.trim().strip_prefix("control_file=").unwrap());
     assert_eq!(fs::read_to_string(&path).unwrap(), raw);
-    assert_eq!(path.parent().unwrap().parent(), Some(runner.path()));
+    let canonical_runner = runner.path().canonicalize().unwrap();
+    assert_eq!(
+        path.parent().unwrap().parent(),
+        Some(canonical_runner.as_path())
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -181,7 +221,7 @@ fn hosted_input_custody_preserves_original_bytes_and_removes_its_exact_file() {
         "OMNI_VPN_INSTALLED_CONTROL_FILE".into(),
         path.to_string_lossy().into_owned(),
     );
-    hosted_inputs::cleanup(&env).unwrap();
+    input_boundary("cleanup-control", hosted_inputs::cleanup(&env)).unwrap();
     assert!(!path.exists());
     assert!(!path.parent().unwrap().exists());
 }
@@ -195,12 +235,15 @@ fn hosted_input_materialization_rejects_changed_pin_duplicate_fields_and_missing
         "{\"schema\":\"omniterm.protected-desktop.source-profile.v1\",\"platform\":\"android\"}";
     let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
     assert!(
-        hosted_inputs::materialize(
-            runner.path(),
-            "omni-protected-source-pair-",
-            "profile.json",
-            raw,
-            Some(&digest)
+        input_boundary(
+            "materialize-profile",
+            hosted_inputs::materialize(
+                runner.path(),
+                "omni-protected-source-pair-",
+                "profile.json",
+                raw,
+                Some(&digest)
+            ),
         )
         .is_ok()
     );
@@ -235,12 +278,15 @@ fn hosted_cleanup_cannot_delete_an_unrecognized_file_inside_a_matching_prefix() 
     let runner = tempfile::tempdir().unwrap();
     let output = runner.path().join("output");
     fs::write(&output, "").unwrap();
-    let input = hosted_inputs::materialize(
-        runner.path(),
-        "omni-installed-control-",
-        "control.json",
-        "{}",
-        None,
+    let input = input_boundary(
+        "materialize-control",
+        hosted_inputs::materialize(
+            runner.path(),
+            "omni-installed-control-",
+            "control.json",
+            "{}",
+            None,
+        ),
     )
     .unwrap();
     let foreign = input.parent().unwrap().join("foreign-private-input.json");

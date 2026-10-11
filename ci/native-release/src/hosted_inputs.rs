@@ -37,6 +37,37 @@ fn origin(env: &Environment) -> Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
+enum OwnerCommand {
+    Identity,
+    Acl,
+}
+
+#[cfg(windows)]
+fn owner_command_failure(command: OwnerCommand, error: &'static str) -> &'static str {
+    let category = match error {
+        "Required build tool could not start" => "start",
+        "Process-tree cleanup unavailable" => "group",
+        "Suspended process cannot resume" => "resume",
+        "Build command timed out" => "timeout",
+        "Build output stream did not close" => "stream",
+        "Build command failed; inspect private diagnostics" => "failed",
+        _ => "other",
+    };
+    let (stage, message) = match command {
+        OwnerCommand::Identity => (
+            "windows-owner-command",
+            "Windows hosted input owner command failed",
+        ),
+        OwnerCommand::Acl => (
+            "windows-acl-command",
+            "Windows hosted input ACL command failed",
+        ),
+    };
+    eprintln!("Native hosted input command: {stage} {category}");
+    message
+}
+
 fn owner_only(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -62,7 +93,8 @@ fn owner_only(path: &Path) -> Result<()> {
             &env,
             Duration::from_secs(30),
             None,
-        )?;
+        )
+        .map_err(|error| owner_command_failure(OwnerCommand::Identity, error))?;
         let text = std::str::from_utf8(&bytes).map_err(|_| "Hosted input owner unavailable")?;
         let sid = text
             .trim()
@@ -90,7 +122,8 @@ fn owner_only(path: &Path) -> Result<()> {
             &env,
             Duration::from_secs(30),
             None,
-        )?;
+        )
+        .map_err(|error| owner_command_failure(OwnerCommand::Acl, error))?;
     }
     Ok(())
 }

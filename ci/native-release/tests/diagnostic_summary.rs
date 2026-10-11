@@ -111,3 +111,53 @@ fn failure_summary_is_bounded_and_has_no_raw_log_fallback() {
         20
     );
 }
+
+#[test]
+fn hosted_input_summary_preserves_closed_windows_boundaries_and_observed_public_cases() {
+    let temporary = tempfile::tempdir().unwrap();
+    let source = temporary.path().join("public.rs");
+    let log = temporary.path().join("output.log");
+    fs::write(
+        &source,
+        "Native public target: public_source_ci\nfn public_case_one() {}\nfn public_case_two() {}\nNative public target: source_ci_hosted\nfn custody_case() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        &log,
+        "     Running tests\\public_source_ci.rs (/private/PRIVATE_CANARY)\ntest public_case_one ... ok\ntest public_case_two ... ok\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n     Running tests\\source_ci_hosted.rs (/private/PRIVATE_CANARY)\ntest custody_case ... FAILED\nNative hosted input command: windows-owner-command failed\nNative hosted input boundary: prepare-control windows-acl-command\nNative subprocess failed: exit-code=5\nNative hosted input command: windows-owner-command failed PRIVATE_CANARY\nNative hosted input command: PRIVATE_CANARY failed\nNative hosted input boundary: prepare-control PRIVATE_CANARY\nNative subprocess failed: exit-code=PRIVATE_CANARY\n",
+    )
+    .unwrap();
+    let parser = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("native-failure-summary.awk");
+    let output = Command::new("awk")
+        .arg("-f")
+        .arg(&parser)
+        .arg(&source)
+        .arg(&log)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Native contract last Cargo test target: source_ci_hosted\nNative contract last observed test: custody_case\nNative contract passed target: public_source_ci 2\nNative contract passed cases: public_source_ci public_case_one public_case_two\nNative contract failed test: custody_case\nNative hosted input command: windows-owner-command failed\nNative hosted input boundary: prepare-control windows-acl-command\nNative subprocess failed: exit-code=5\n"
+    );
+    fs::write(
+        &log,
+        "     Running tests\\public_source_ci.rs (/private/PRIVATE_CANARY)\ntest public_case_one ... ok\ntest PRIVATE_CANARY ... ok\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+    )
+    .unwrap();
+    let incomplete = Command::new("awk")
+        .arg("-f")
+        .arg(parser)
+        .arg(source)
+        .arg(log)
+        .output()
+        .unwrap();
+    assert!(incomplete.status.success());
+    assert_eq!(
+        String::from_utf8(incomplete.stdout).unwrap(),
+        "Native contract last Cargo test target: public_source_ci\nNative contract last observed test: public_case_one\n"
+    );
+}
