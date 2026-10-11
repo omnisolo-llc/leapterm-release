@@ -399,3 +399,99 @@ fn hosted_input_identity_and_acl_tools_ignore_inert_path_shadows() {
     assert!(!path.exists());
     assert!(!path.parent().unwrap().exists());
 }
+
+#[test]
+fn hosted_profile_admission_preserves_original_bytes_for_each_supported_version() {
+    for version in ["v1", "v2"] {
+        let runner = tempfile::tempdir().unwrap();
+        let output = runner.path().join("output");
+        fs::write(&output, "").unwrap();
+        let raw = format!(
+            "{{\n  \"schema\": \"omniterm.protected-desktop.source-profile.{version}\",\n  \"platform\": \"android\"\n}}\n"
+        );
+        let held_pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        let mut env = hosted_environment(runner.path(), &output);
+        env.insert(
+            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON".into(),
+            raw.clone(),
+        );
+        env.insert(
+            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256".into(),
+            held_pin,
+        );
+        input_boundary(
+            "materialize-profile",
+            hosted_inputs::run("prepare-protected-source-pair", &env),
+        )
+        .unwrap();
+        let record = fs::read_to_string(&output).unwrap();
+        let path = std::path::PathBuf::from(record.trim().strip_prefix("profile_file=").unwrap());
+        assert_eq!(fs::read(&path).unwrap(), raw.as_bytes(), "{version}");
+        let canonical_runner = runner.path().canonicalize().unwrap();
+        assert_eq!(
+            path.parent().unwrap().parent(),
+            Some(canonical_runner.as_path()),
+            "{version}"
+        );
+        env.insert(
+            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE".into(),
+            path.to_string_lossy().into_owned(),
+        );
+        hosted_inputs::cleanup(&env).unwrap();
+        assert!(!path.exists(), "{version}");
+        assert!(!path.parent().unwrap().exists(), "{version}");
+    }
+}
+
+#[test]
+fn hosted_profile_admission_refuses_wrong_platform_unknown_version_and_changed_original_pin() {
+    for change in ["platform", "version", "pin", "original-bytes"] {
+        let runner = tempfile::tempdir().unwrap();
+        let output = runner.path().join("output");
+        fs::write(&output, "").unwrap();
+        let version = if change == "version" { "v3" } else { "v2" };
+        let platform = if change == "platform" {
+            "ios"
+        } else {
+            "android"
+        };
+        let original = format!(
+            "{{\n  \"schema\": \"omniterm.protected-desktop.source-profile.{version}\",\n  \"platform\": \"{platform}\"\n}}\n"
+        );
+        let held_pin = if change == "pin" {
+            "0".repeat(64)
+        } else {
+            format!("{:x}", Sha256::digest(original.as_bytes()))
+        };
+        let raw = if change == "original-bytes" {
+            format!(" {original}")
+        } else {
+            original
+        };
+        let mut env = hosted_environment(runner.path(), &output);
+        env.insert("OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON".into(), raw);
+        env.insert(
+            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256".into(),
+            held_pin,
+        );
+        let expected = if ["pin", "original-bytes"].contains(&change) {
+            "Protected hosted input digest changed"
+        } else {
+            "Protected source pair original profile missing"
+        };
+        assert_eq!(
+            hosted_inputs::run("prepare-protected-source-pair", &env),
+            Err(expected),
+            "{change}"
+        );
+        assert!(fs::read_to_string(&output).unwrap().is_empty(), "{change}");
+        assert!(
+            fs::read_dir(runner.path()).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_type()
+                .unwrap()
+                .is_dir()),
+            "{change}"
+        );
+    }
+}

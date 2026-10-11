@@ -218,6 +218,7 @@ pub fn validate_configuration(env: &Environment, command: &str) -> Result<Reques
         || (command == "windows-sdk" && target != "windows")
         || (command == "verify-build" && !crate::input::BUILD_TARGETS.contains(&target))
         || (command == "prepare-publication" && target != "publish")
+        || (crate::private_final_archive::command(command) && target != "publish")
         || (command == "sign-public-candidates" && target != "publish")
         || (command == "run" && target == "resolve")
     {
@@ -456,7 +457,7 @@ pub fn run(command: &str) -> Result<()> {
         if std::env::args().len() != 2 {
             return Err("Unexpected native publication arguments");
         }
-        let plan = crate::publication_candidates::verify_prepared(&env)?;
+        let plan = crate::private_final_archive::require_publication(&env)?;
         let directory = crate::publication_candidates::directory(&env)?;
         let mut github = crate::publication_candidates::GitHub::new_for_repo(
             &env,
@@ -557,6 +558,8 @@ pub fn run(command: &str) -> Result<()> {
         "run",
         "verify-build",
         "prepare-publication",
+        "prepare-private-final-archive",
+        "verify-private-final-archive",
         "sign-public-candidates",
         "agent-run",
         "windows-sdk",
@@ -570,6 +573,9 @@ pub fn run(command: &str) -> Result<()> {
         return Err("Unexpected native release arguments");
     }
     let mut request = validate_configuration(&env, command)?;
+    if crate::private_final_archive::command(command) {
+        crate::publication_candidates::verify_prepared(&env)?;
+    }
     let retained = if command == "retain-artifacts" {
         let Some(artifact) = crate::retained_artifacts::artifact(&env, &request)? else {
             println!("No encrypted diagnostic produced by this job.");
@@ -964,6 +970,8 @@ fn build_native_stage(
             if [
                 "verify-build",
                 "prepare-publication",
+                "prepare-private-final-archive",
+                "verify-private-final-archive",
                 "sign-public-candidates",
             ]
             .contains(command) =>
@@ -989,6 +997,16 @@ fn build_native_stage(
         NativeStage::Release(request, command) => {
             task.insert("RELEASE_REQUEST".into(), request.normalized()?);
             task.remove("WINDOWS_PREVIEW_OUTPUT_DIR");
+            crate::private_final_archive::forward(
+                env,
+                request,
+                required(env, "RELEASE_TARGET")?,
+                command,
+                &mut task,
+            )?;
+            if crate::private_final_archive::command(command) {
+                task.remove("SIGNING_CONFIG");
+            }
             if request.preview_windows_self_sign && required(env, "RELEASE_TARGET")? == "windows" {
                 required(env, "DIAGNOSTICS_PUBLIC_KEY")?;
                 task.insert(
@@ -1006,7 +1024,13 @@ fn build_native_stage(
                 "RELEASE_INTEGRATION_SOURCE_REF".into(),
                 format!("refs/heads/{}", required(env, "SOURCE_BRANCH")?),
             );
-            let args = if *command == "sign-public-candidates" {
+            let args = if crate::private_final_archive::command(command) {
+                task.insert(
+                    "OMNI_RELEASE_SOURCE_ROOT".into(),
+                    src.to_string_lossy().into_owned(),
+                );
+                crate::private_final_archive::arguments(command, env, &work)?
+            } else if *command == "sign-public-candidates" {
                 crate::publication_candidates::request(env)?;
                 task.insert(
                     "OMNI_RELEASE_SOURCE_ROOT".into(),
@@ -1232,6 +1256,12 @@ fn build_native_stage(
         // The authenticated source-CI parent owns its exact receipt handoff.
         // This compiler boundary has no release output mirror or upload role.
         return Ok(());
+    }
+    if let NativeStage::Release(_, operation) = &stage
+        && crate::private_final_archive::command(operation)
+    {
+        let proof = crate::private_final_archive::capture(env, &work, operation)?;
+        write_outputs(env, &[("private_archive_proof_sha256", &proof)])?;
     }
     if let NativeStage::Release(_, "prepare-publication") = &stage {
         let (verifier, plan) = crate::publication_candidates::retain_verifier(env, &binary)?;

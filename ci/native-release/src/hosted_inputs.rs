@@ -252,7 +252,8 @@ pub fn run(command: &str, env: &Environment) -> Result<()> {
         {
             return Err("Installed control original campaigns missing");
         }
-    } else if value["schema"] != "omniterm.protected-desktop.source-profile.v1"
+    } else if (value["schema"] != "omniterm.protected-desktop.source-profile.v1"
+        && value["schema"] != "omniterm.protected-desktop.source-profile.v2")
         || value["platform"] != platform
     {
         return Err("Protected source pair original profile missing");

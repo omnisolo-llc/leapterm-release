@@ -60,6 +60,9 @@ fn main(){
     assert!(source.join("omniterm-release/payload").is_file());
     assert_eq!(env::var("SIGNING_CONFIG").unwrap(),"synthetic-signing-config");
     assert_eq!(env::var("STORAGE_CONFIG").unwrap(),"synthetic-storage-config");
+    let target=env::var("RELEASE_TARGET").unwrap();
+    if request.contains("\"build_only\":false") && ["linux","windows","macos","android","ios","web","publish"].contains(&target.as_str()){assert_eq!(env::var("DIAGNOSTICS_PUBLIC_KEY").unwrap(),"unqualified-local-recipient");}
+    if target=="publish"{assert!(env::var("PRIVATE_FINAL_ARCHIVE_INPUTS_FILE").unwrap().ends_with("unqualified-operator-inputs.json"));}else{assert!(env::var_os("PRIVATE_FINAL_ARCHIVE_INPUTS_FILE").is_none());}
     if args[0]=="agent-run"{let platform=env::var("OMNI_AGENT_PLATFORM").unwrap();let target=if platform.starts_with("darwin-"){"macos"}else if platform.starts_with("windows-"){"windows"}else{"linux"};assert_eq!(env::var("RELEASE_TARGET").unwrap(),target);fs::write(Path::new(&env::var("OMNI_AGENT_OUTPUT").unwrap()).join("synthetic-handoff"),platform).unwrap();}
     fs::write(work.join("handoff"),format!("{}\n{}\n{}",env::var("RELEASE_TARGET").unwrap(),request,env::var("SOURCE").unwrap())).unwrap();
     println!("private synthetic compiler and source output");
@@ -68,7 +71,7 @@ fn main(){
 "#;
 const BUILD: &str = r#"
 fn main(){
-    for key in ["SOURCE_DEPLOY_KEY","SOURCE_SUBMODULE_TOKEN","SOURCE_SUBMODULE_DEPLOY_KEY_BASE64","SIGNING_CONFIG","STORAGE_CONFIG","GH_TOKEN","GITHUB_TOKEN","SOURCE","RELEASE_REQUEST","RUSTFLAGS","GITHUB_OUTPUT"] {assert!(std::env::var_os(key).is_none(),"{key}");}
+    for key in ["SOURCE_DEPLOY_KEY","SOURCE_SUBMODULE_TOKEN","SOURCE_SUBMODULE_DEPLOY_KEY_BASE64","SIGNING_CONFIG","STORAGE_CONFIG","GH_TOKEN","GITHUB_TOKEN","SOURCE","RELEASE_REQUEST","RUSTFLAGS","GITHUB_OUTPUT","DIAGNOSTICS_PUBLIC_KEY","PRIVATE_FINAL_ARCHIVE_INPUTS_FILE"] {assert!(std::env::var_os(key).is_none(),"{key}");}
     assert!(std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default().is_empty());
     for file in ["identity","known_hosts","website-identity"]{assert!(!std::path::Path::new(file).exists());}
     assert!(std::env::var("CARGO_BUILD_JOBS").unwrap().parse::<usize>().is_ok_and(|n| (1..=64).contains(&n)));
@@ -174,6 +177,9 @@ if [[ -f omniterm-release/payload ]]; then /usr/bin/git -C omniterm-release remo
             ("SOURCE_REPOSITORY".into(),"omnisolo-llc/omniterm".into()),("SOURCE_BRANCH".into(),"main".into()),("SOURCE_DEPLOY_KEY".into(),"-----BEGIN SYNTHETIC PRIVATE KEY-----\nfixture\n-----END SYNTHETIC PRIVATE KEY-----".into()),("SOURCE_KNOWN_HOSTS".into(),"synthetic-host fixture".into()),("SOURCE_SUBMODULE_DEPLOY_KEY_BASE64".into(),base64::Engine::encode(&base64::engine::general_purpose::STANDARD,"-----BEGIN SYNTHETIC PRIVATE KEY-----\nfixture\n-----END SYNTHETIC PRIVATE KEY-----")),
             ("SOURCE_SUBMODULE_TOKEN".into(),"synthetic-read-token".into()),("SIGNING_CONFIG".into(),"synthetic-signing-config".into()),("STORAGE_CONFIG".into(),"synthetic-storage-config".into()),("BUILD_CONFIG".into(),r#"{"OMNI_ENABLE_VPN":"true"}"#.into()),("APPROVED_RELEASE_SOURCE_SHA".into(),sha.clone()),("APPROVED_RELEASE_BUILDER_SHA".into(),builder_sha),
             ("OMNITERM_VPN_PROVIDER_PUBLIC_KEY".into(),base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD,[1u8;32])),
+            // Forwarding placeholders only: genuine native archive retention would refuse these inputs.
+            ("DIAGNOSTICS_PUBLIC_KEY".into(),"unqualified-local-recipient".into()),
+            ("PRIVATE_FINAL_ARCHIVE_INPUTS_FILE".into(),root.join("unqualified-operator-inputs.json").to_str().unwrap().into()),
             ("GH_TOKEN".into(),"synthetic-scoped-token".into()),("RUSTFLAGS".into(),"untrusted compiler setting".into()),("NODE_OPTIONS".into(),"untrusted runtime setting".into())
         ]);
         Self {

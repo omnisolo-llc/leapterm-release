@@ -77,7 +77,7 @@ fn main() {
     }
     if command == "--help" {
         println!(
-            "omni-release-launcher resolve|run|verify-build|agent-run|validate-request|approve-source|agent-source\nomni-release-launcher sign-public-candidates|prepare-publication|publish-candidates|verify-ios|windows-sdk|retain-artifacts\nomni-release-launcher verify-source --root PATH --sha SHA\nomni-release-launcher verify-agent-handoff --directory PATH --version VERSION --platform PLATFORM"
+            "omni-release-launcher resolve|run|verify-build|agent-run|validate-request|approve-source|agent-source\nomni-release-launcher sign-public-candidates|prepare-publication|prepare-private-final-archive|verify-private-final-archive|publish-candidates|verify-ios|windows-sdk|retain-artifacts\nomni-release-launcher verify-source --root PATH --sha SHA\nomni-release-launcher verify-agent-handoff --directory PATH --version VERSION --platform PLATFORM"
         );
         return;
     }

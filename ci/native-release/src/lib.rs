@@ -72,3 +72,5 @@ pub fn clean_environment(parent: &Environment) -> Environment {
 pub fn null_device() -> &'static str {
     if cfg!(windows) { "NUL" } else { "/dev/null" }
 }
+
+pub mod private_final_archive;
