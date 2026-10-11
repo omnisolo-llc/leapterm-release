@@ -1228,6 +1228,11 @@ fn build_native_stage(
     frozen.verify()?;
     source::verify_tools(src, &checkout)?;
     source::verify(src, source_sha, &checkout, false, 0)?;
+    if matches!(&stage, NativeStage::Ci(_)) {
+        // The authenticated source-CI parent owns its exact receipt handoff.
+        // This compiler boundary has no release output mirror or upload role.
+        return Ok(());
+    }
     if let NativeStage::Release(_, "prepare-publication") = &stage {
         let (verifier, plan) = crate::publication_candidates::retain_verifier(env, &binary)?;
         write_outputs(
