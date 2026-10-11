@@ -8,7 +8,7 @@ use omni_release_launcher::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
@@ -99,8 +99,11 @@ struct State {
     download_denial: bool,
     repository_reads: u64,
     repository_mutation: Option<(u64, Value)>,
-    download_count: u64,
-    metadata_after_download: Option<(u64, String, Value)>,
+    expected_assets: usize,
+    upload_seen: bool,
+    post_upload_readbacks: BTreeSet<u64>,
+    metadata_after_uploaded_readback: Option<(String, Value)>,
+    drift_request: Option<usize>,
     upload_asset_mutation: Option<&'static str>,
     promotion_asset_mutation: Option<&'static str>,
     denied_reads: BTreeMap<String, usize>,
@@ -134,8 +137,11 @@ impl State {
             download_denial: false,
             repository_reads: 0,
             repository_mutation: None,
-            download_count: 0,
-            metadata_after_download: None,
+            expected_assets: plan.files().len(),
+            upload_seen: false,
+            post_upload_readbacks: BTreeSet::new(),
+            metadata_after_uploaded_readback: None,
+            drift_request: None,
             upload_asset_mutation: None,
             promotion_asset_mutation: None,
             denied_reads: BTreeMap::new(),
@@ -251,14 +257,16 @@ impl State {
                         return (404, b"missing synthetic asset".to_vec());
                     };
                     let bytes = asset.bytes.clone();
-                    self.download_count += 1;
-                    if self
-                        .metadata_after_download
-                        .as_ref()
-                        .is_some_and(|(at, _, _)| *at == self.download_count)
+                    if self.upload_seen {
+                        self.post_upload_readbacks.insert(id);
+                    }
+                    if self.metadata_after_uploaded_readback.is_some()
+                        && self.assets.len() == self.expected_assets
+                        && self.post_upload_readbacks.len() == self.expected_assets
                     {
-                        let (_, key, value) = self.metadata_after_download.take().unwrap();
+                        let (key, value) = self.metadata_after_uploaded_readback.take().unwrap();
                         self.release.as_mut().unwrap()[key] = value;
+                        self.drift_request = Some(self.requests.len() - 1);
                     }
                     if std::mem::take(&mut self.replace_asset_after_download) {
                         let mut replacement = self.assets.remove(&id).unwrap();
@@ -314,6 +322,8 @@ impl State {
                     bytes: bytes.to_vec(),
                 },
             );
+            self.upload_seen = true;
+            self.post_upload_readbacks.clear();
             if let Some((key, value)) = self.upload_mutation.take() {
                 self.release.as_mut().unwrap()[key] = value;
             }
@@ -537,7 +547,7 @@ impl Drop for HttpFixture {
                 .state
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let evidence = json!({"schema":1,"scope":"synthetic loopback HTTP only","label":self.label,"server_failed":server_failed,"original":self.original,"requests":state.requests,"final_release":state.release,"final_assets":state.assets.values().map(|asset|json!({"metadata":asset.metadata,"sha256":format!("{:x}",Sha256::digest(&asset.bytes))})).collect::<Vec<_>>()});
+            let evidence = json!({"schema":1,"scope":"synthetic loopback HTTP only","label":self.label,"server_failed":server_failed,"drift_request":state.drift_request,"original":self.original,"requests":state.requests,"final_release":state.release,"final_assets":state.assets.values().map(|asset|json!({"metadata":asset.metadata,"sha256":format!("{:x}",Sha256::digest(&asset.bytes))})).collect::<Vec<_>>()});
             fs::write(
                 Path::new(&directory).join(format!("{}.json", self.label)),
                 serde_json::to_vec_pretty(&evidence).unwrap(),
@@ -1452,18 +1462,33 @@ fn ownership_drift_during_the_last_asset_readback_prevents_promotion() {
     ] {
         let (directory, plan) = candidate();
         let mut state = State::new(&plan, directory.path(), true);
-        let original_assets = state.retained()["assets"].clone();
-        state.metadata_after_download = Some((plan.files().len() as u64, field.into(), changed));
+        state.assets.pop_last();
+        let (original_id, original_asset) = state.assets.first_key_value().unwrap();
+        let original_id = *original_id;
+        let original_metadata = original_asset.metadata.clone();
+        let original_bytes = original_asset.bytes.clone();
+        state.metadata_after_uploaded_readback = Some((field.into(), changed));
         let mut fixture = HttpFixture::start(format!("drift-during-readback-{field}"), state);
         assert_eq!(
             publication_candidates::publish_to_staging(&plan, &mut fixture),
             Err(error)
         );
-        assert!(fixture.writes().is_empty());
-        assert_eq!(
-            fixture.state.lock().unwrap().retained()["assets"],
-            original_assets
-        );
+        assert_eq!(fixture.writes().len(), 1);
+        assert_eq!(fixture.writes()[0]["method"], "POST");
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.assets[&original_id].metadata, original_metadata);
+        assert_eq!(state.assets[&original_id].bytes, original_bytes);
+        let trigger = state
+            .drift_request
+            .expect("No complete post-upload byte readback");
+        assert_eq!(state.requests[trigger]["method"], "GET");
+        let uploaded = state
+            .requests
+            .iter()
+            .position(|request| request["method"] == "POST")
+            .unwrap();
+        assert!(uploaded < trigger);
+        assert_eq!(state.post_upload_readbacks.len(), plan.files().len());
     }
 }
 

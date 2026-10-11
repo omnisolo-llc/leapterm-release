@@ -46,8 +46,10 @@ pub fn run(env: &Environment) -> Result<()> {
         &fs::read(builder_root.join("ci/standard-runner-policy.json"))
             .map_err(|_| "Runner policy unavailable")?,
     )?;
-    let audit =
-        crate::runner_policy::audit_workflows(&builder_root.join(".github/workflows"), &policy)?;
+    let audit = crate::runner_policy::audit_workflows(
+        &builder_root.join(".github/workflows/source-ci.yml"),
+        &policy,
+    )?;
     if !audit["findings"].as_array().is_some_and(Vec::is_empty) {
         return Err("Public source-CI workflow policy refused");
     }
@@ -208,6 +210,11 @@ pub fn run(env: &Environment) -> Result<()> {
             required(env, "INPUT_CATALOG_SHA256")?.into(),
         );
         launch::build_and_dispatch_ci(&src, &root, &parent, &request, &mut bootstrap)?;
+        crate::source_handoff::retain_stage(
+            &parent,
+            &request,
+            &root.join("release-work/source-ci-stage.json"),
+        )?;
         Ok(())
     })();
     drop(bootstrap);

@@ -205,10 +205,10 @@ impl GitHubApi {
         )
         .map_err(|_| "Source-CI GitHub API unavailable")?;
         drop(input);
-        if let Some(deadline) = self.deadline {
-            if now()? >= deadline {
-                return Err("Source-CI API authority expired");
-            }
+        if let Some(deadline) = self.deadline
+            && now()? >= deadline
+        {
+            return Err("Source-CI API authority expired");
         }
         if result.len() > max {
             return Err("Source-CI API response exceeds bound");

@@ -102,6 +102,18 @@ pub fn materialize(
     raw: &str,
     expected_sha256: Option<&str>,
 ) -> Result<PathBuf> {
+    let (temporary, file) = materialize_guarded(runner, prefix, name, raw, expected_sha256)?;
+    let _retained = temporary.keep();
+    Ok(file)
+}
+
+fn materialize_guarded(
+    runner: &Path,
+    prefix: &str,
+    name: &str,
+    raw: &str,
+    expected_sha256: Option<&str>,
+) -> Result<(tempfile::TempDir, PathBuf)> {
     if ![
         ("omni-installed-control-", "control.json"),
         ("omni-protected-source-pair-", "profile.json"),
@@ -141,8 +153,7 @@ pub fn materialize(
     let held = guards::open_regular(&file, 128 * 1024)?;
     guards::single_link(&held)?;
     guards::unchanged(&held, &file)?;
-    let _retained = temporary.keep();
-    Ok(file)
+    Ok((temporary, file))
 }
 
 pub fn run(command: &str, env: &Environment) -> Result<()> {
@@ -182,9 +193,9 @@ pub fn run(command: &str, env: &Environment) -> Result<()> {
     if command == "prepare-installed-control" {
         crate::source_api::fields(&value, &["schema", "campaigns"])?;
         if value["schema"] != 1
-            || !value["campaigns"]
+            || value["campaigns"]
                 .as_array()
-                .is_some_and(|rows| rows.len() == 4)
+                .is_none_or(|rows| rows.len() != 4)
         {
             return Err("Installed control original campaigns missing");
         }
@@ -193,11 +204,13 @@ pub fn run(command: &str, env: &Environment) -> Result<()> {
     {
         return Err("Protected source pair original profile missing");
     }
-    let file = materialize(&runner, prefix, name, raw, pin)?;
+    let (temporary, file) = materialize_guarded(&runner, prefix, name, raw, pin)?;
     launch::write_outputs(
         env,
         &[(output, file.to_str().ok_or("Hosted input path encoding")?)],
-    )
+    )?;
+    let _retained = temporary.keep();
+    Ok(())
 }
 
 pub fn cleanup(env: &Environment) -> Result<()> {

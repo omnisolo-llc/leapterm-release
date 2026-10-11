@@ -208,16 +208,16 @@ pub fn ci_child_environment(
         }
         result.insert("SOURCE_CI_CATALOG_SHA256".into(), catalog.clone());
     }
-    if request.stage == "agent-lifecycle" {
-        if let Some(predecessor) = parent.get("OMNI_E2E_AGENT_PREDECESSOR_COMMIT") {
-            if !valid_sha(predecessor) || *predecessor == request.identity.source_sha {
-                return Err("Invalid source-CI agent predecessor");
-            }
-            result.insert(
-                "OMNI_E2E_AGENT_PREDECESSOR_COMMIT".into(),
-                predecessor.clone(),
-            );
+    if request.stage == "agent-lifecycle"
+        && let Some(predecessor) = parent.get("OMNI_E2E_AGENT_PREDECESSOR_COMMIT")
+    {
+        if !valid_sha(predecessor) || *predecessor == request.identity.source_sha {
+            return Err("Invalid source-CI agent predecessor");
         }
+        result.insert(
+            "OMNI_E2E_AGENT_PREDECESSOR_COMMIT".into(),
+            predecessor.clone(),
+        );
     }
     Ok(result)
 }

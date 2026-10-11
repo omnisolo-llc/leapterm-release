@@ -49,16 +49,26 @@ fn source_ci_runs_every_canonical_cell_under_protected_authority() {
 
 #[test]
 fn legacy_release_policy_debt_does_not_replace_source_ci_authority_checks() {
-    let request=serde_json::json!({"identity":{"source_repository":"omnisolo-llc/omniterm","source_sha":"a".repeat(40),
+    let request = serde_json::json!({"identity":{"source_repository":"omnisolo-llc/omniterm","source_sha":"a".repeat(40),
         "builder_repository":"omnisolo-llc/omniterm-release","builder_sha":"b".repeat(40),"run_id":"123","attempt":"1"},
         "source_ref":"refs/heads/main","stage":"source","shard_index":0,"shard_count":1});
-    let env=Environment::from([
-        ("SOURCE_CI_REQUEST".into(),request.to_string()),("INPUT_CATALOG_SHA256".into(),"c".repeat(64)),
-        ("GITHUB_SHA".into(),"b".repeat(40)),("GITHUB_RUN_ID".into(),"123".into()),("GITHUB_RUN_ATTEMPT".into(),"1".into()),
+    let env = Environment::from([
+        ("SOURCE_CI_REQUEST".into(), request.to_string()),
+        ("INPUT_CATALOG_SHA256".into(), "c".repeat(64)),
+        ("GITHUB_SHA".into(), "b".repeat(40)),
+        ("GITHUB_RUN_ID".into(), "123".into()),
+        ("GITHUB_RUN_ATTEMPT".into(), "1".into()),
     ]);
-    let result=omni_release_launcher::source_ci::run(&env);
-    assert!(result.is_err(),"Missing current approval must still refuse acquisition");
-    assert_ne!(result,Err("Public source-CI workflow policy refused"),"Only the new source graph is enforced before legacy cutover");
+    let result = omni_release_launcher::source_ci::run(&env);
+    assert!(
+        result.is_err(),
+        "Missing current approval must still refuse acquisition"
+    );
+    assert_ne!(
+        result,
+        Err("Public source-CI workflow policy refused"),
+        "Only the new source graph is enforced before legacy cutover"
+    );
 }
 
 #[test]
@@ -242,4 +252,50 @@ fn hosted_cleanup_cannot_delete_an_unrecognized_file_inside_a_matching_prefix() 
     );
     assert!(hosted_inputs::cleanup(&env).is_err());
     assert!(foreign.exists());
+}
+
+#[test]
+fn failed_workflow_output_publication_removes_the_protected_input() {
+    for (command, input, raw) in [
+        (
+            "prepare-installed-control",
+            "OMNI_VPN_INSTALLED_CONTROL_JSON",
+            "{\"schema\":1,\"campaigns\":[{},{},{},{}]}",
+        ),
+        (
+            "prepare-protected-source-pair",
+            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON",
+            "{\"schema\":\"omniterm.protected-desktop.source-profile.v1\",\"platform\":\"android\"}",
+        ),
+    ] {
+        for failure in [
+            "missing-output-variable",
+            "missing-output-file",
+            "output-is-directory",
+        ] {
+            let runner = tempfile::tempdir().unwrap();
+            let output = runner.path().join("output");
+            let mut env = hosted_environment(runner.path(), &output);
+            env.insert(input.into(), raw.into());
+            env.insert(
+                "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256".into(),
+                format!("{:x}", Sha256::digest(raw.as_bytes())),
+            );
+            if failure == "missing-output-variable" {
+                env.remove("GITHUB_OUTPUT");
+            } else if failure == "output-is-directory" {
+                fs::create_dir(&output).unwrap();
+            }
+            assert!(hosted_inputs::run(command, &env).is_err());
+            let retained = fs::read_dir(runner.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.is_dir() && path != &output)
+                .collect::<Vec<_>>();
+            assert!(
+                retained.is_empty(),
+                "{command}/{failure} left protected input directories: {retained:?}"
+            );
+        }
+    }
 }

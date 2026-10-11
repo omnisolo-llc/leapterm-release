@@ -746,12 +746,122 @@ fn assets_for_repo(
     Ok(result)
 }
 
-pub fn publish_to_staging(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publication> {
-    plan.verify_files()?;
+fn check_staging_repository(api: &mut impl ReleaseApi) -> Result<()> {
     let repository = api.get_json(&format!("repos/{STAGING_REPOSITORY}"))?;
     if repository["full_name"] != STAGING_REPOSITORY || repository["private"] != true {
         return Err("Private staging repository visibility differs from reviewed scope");
     }
+    Ok(())
+}
+
+fn check_staging_release(plan: &Plan, info: &Value) -> Result<(u64, bool)> {
+    let id = info["id"]
+        .as_u64()
+        .filter(|id| *id > 0)
+        .ok_or("Invalid release identity")?;
+    let draft = info["draft"].as_bool().ok_or("Missing release state")?;
+    if info["tag_name"] != plan.tag() {
+        return Err("Staging release tag differs from reviewed identity");
+    }
+    if info["target_commitish"] != plan.document.identity.source_sha {
+        return Err("Staging release source differs from reviewed identity");
+    }
+    if info["body"] != plan.notes() {
+        return Err("Staging release plan differs from reviewed identity");
+    }
+    if info["prerelease"] != false {
+        return Err("Staging release prerelease state differs from reviewed identity");
+    }
+    Ok((id, draft))
+}
+
+fn check_staging_state(plan: &Plan, info: &Value, id: u64, draft: bool) -> Result<()> {
+    let (current_id, current_draft) = check_staging_release(plan, info)?;
+    if current_id != id {
+        return Err("Staging release identity changed");
+    }
+    if current_draft != draft {
+        return Err(if draft {
+            "Staging release no longer an owned draft"
+        } else {
+            "Staging published release state changed"
+        });
+    }
+    Ok(())
+}
+
+fn staging_owner(plan: &Plan, api: &mut impl ReleaseApi, id: u64, draft: bool) -> Result<()> {
+    let current = api.get_json(&format!("repos/{STAGING_REPOSITORY}/releases/{id}"))?;
+    check_staging_state(plan, &current, id, draft)?;
+    let listed = release_for_repo(plan, api, STAGING_REPOSITORY)?
+        .ok_or("Staging release no longer available")?;
+    check_staging_state(plan, &listed, id, draft)
+}
+
+fn staging_inventory(
+    plan: &Plan,
+    api: &mut impl ReleaseApi,
+    id: u64,
+) -> Result<BTreeMap<String, u64>> {
+    let value = api.get_json(&format!(
+        "repos/{STAGING_REPOSITORY}/releases/{id}/assets?per_page=100"
+    ))?;
+    let rows = value
+        .as_array()
+        .filter(|rows| rows.len() < 100)
+        .ok_or("Incomplete asset inventory")?;
+    let mut inventory = BTreeMap::new();
+    let mut ids = BTreeSet::new();
+    for asset in rows {
+        let name = asset["name"].as_str().ok_or("Invalid release asset name")?;
+        let record = plan
+            .document
+            .files
+            .get(name)
+            .ok_or("Release contains an unreviewed asset")?;
+        let id = asset["id"]
+            .as_u64()
+            .filter(|id| *id > 0)
+            .ok_or("Invalid asset identity")?;
+        if asset["state"] != "uploaded"
+            || asset["size"] != record.bytes
+            || !ids.insert(id)
+            || inventory.insert(name.into(), id).is_some()
+        {
+            return Err("Invalid or duplicate release asset");
+        }
+    }
+    Ok(inventory)
+}
+
+fn staging_readback(
+    plan: &Plan,
+    api: &mut impl ReleaseApi,
+    id: u64,
+    draft: bool,
+    retained: &BTreeMap<String, u64>,
+    complete: bool,
+) -> Result<BTreeMap<String, u64>> {
+    check_staging_repository(api)?;
+    staging_owner(plan, api, id, draft)?;
+    let inventory = assets_for_repo(plan, api, STAGING_REPOSITORY, id, complete)?;
+    if staging_inventory(plan, api, id)? != inventory
+        || retained
+            .iter()
+            .any(|(name, id)| inventory.get(name) != Some(id))
+    {
+        return Err("Staging release asset identities changed");
+    }
+    // Ownership and private repository authority are refreshed after byte
+    // downloads, so a change during readback cannot authorize the next write.
+    check_staging_repository(api)?;
+    staging_owner(plan, api, id, draft)?;
+    Ok(inventory)
+}
+
+pub fn publish_to_staging(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publication> {
+    plan.verify_files()?;
+    check_staging_repository(api)?;
     if std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
         && let Ok(actor) = std::env::var("GITHUB_ACTOR")
     {
@@ -766,101 +876,116 @@ pub fn publish_to_staging(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publ
         }
     }
     let existing = release_for_repo(plan, api, STAGING_REPOSITORY)?;
-    let info = match existing {
+    let (id, draft, mut retained) = match existing {
         Some(info) => {
-            let id = info["id"]
-                .as_u64()
-                .filter(|n| *n > 0)
-                .ok_or("Invalid release identity")?;
-            if info["target_commitish"] != plan.document.identity.source_sha
-                || info["body"] != plan.notes()
-                || info["prerelease"] != false
-            {
-                let old_assets = api.get_json(&format!(
-                    "repos/{STAGING_REPOSITORY}/releases/{id}/assets?per_page=100"
-                ))?;
-                if let Some(rows) = old_assets.as_array() {
-                    for asset in rows {
-                        if let Some(asset_id) = asset["id"].as_u64() {
-                            let _ = api.write_json(
-                                "DELETE",
-                                &format!("repos/{STAGING_REPOSITORY}/releases/assets/{asset_id}"),
-                                &json!({}),
-                            );
-                        }
-                    }
+            // Conflicting same-version releases are immutable, including
+            // published archives and drafts owned by another Plan identity.
+            let (id, draft) = check_staging_release(plan, &info)?;
+            let retained = staging_readback(plan, api, id, draft, &BTreeMap::new(), !draft)?;
+            (id, draft, retained)
+        }
+        None => {
+            check_staging_repository(api)?;
+            if release_for_repo(plan, api, STAGING_REPOSITORY)?.is_some() {
+                return Err("Staging release appeared before creation");
+            }
+            let created = api.write_json(
+                "POST",
+                &format!("repos/{STAGING_REPOSITORY}/releases"),
+                &json!({
+                    "tag_name": plan.tag(),
+                    "target_commitish": plan.document.identity.source_sha,
+                    "name": format!("Omniterm {}", plan.tag()),
+                    "body": plan.notes(),
+                    "draft": true,
+                    "prerelease": false
+                }),
+            );
+            match created {
+                Ok(info) => {
+                    let (id, draft) = check_staging_release(plan, &info)?;
+                    check_staging_state(plan, &info, id, true)?;
+                    let retained = staging_readback(plan, api, id, true, &BTreeMap::new(), false)?;
+                    (id, draft, retained)
                 }
-                api.write_json(
-                    "PATCH",
-                    &format!("repos/{STAGING_REPOSITORY}/releases/{id}"),
-                    &json!({
-                        "tag_name": plan.tag(),
-                        "target_commitish": plan.document.identity.source_sha,
-                        "name": format!("Omniterm {}", plan.tag()),
-                        "body": plan.notes(),
-                        "draft": true,
-                        "prerelease": false
-                    }),
-                )?
-            } else {
-                info
+                Err(error) => {
+                    let mut recover = || -> Result<(u64, bool, BTreeMap<String, u64>)> {
+                        check_staging_repository(api)?;
+                        let info = release_for_repo(plan, api, STAGING_REPOSITORY)?
+                            .ok_or("Staging creation could not be verified")?;
+                        let (id, draft) = check_staging_release(plan, &info)?;
+                        check_staging_state(plan, &info, id, true)?;
+                        let retained =
+                            staging_readback(plan, api, id, true, &BTreeMap::new(), false)?;
+                        Ok((id, draft, retained))
+                    };
+                    recover().map_err(|_| error)?
+                }
             }
         }
-        None => api.write_json(
-            "POST",
-            &format!("repos/{STAGING_REPOSITORY}/releases"),
-            &json!({
-                "tag_name": plan.tag(),
-                "target_commitish": plan.document.identity.source_sha,
-                "name": format!("Omniterm {}", plan.tag()),
-                "body": plan.notes(),
-                "draft": true,
-                "prerelease": false
-            }),
-        )?,
     };
-    let id = info["id"]
-        .as_u64()
-        .filter(|n| *n > 0)
-        .ok_or("Invalid release identity")?;
-    let draft = info["draft"].as_bool().ok_or("Missing release state")?;
-    if info["tag_name"] != plan.tag()
-        || info["target_commitish"] != plan.document.identity.source_sha
-        || info["body"] != plan.notes()
-        || info["prerelease"] != false
-    {
-        return Err("Staging release differs from reviewed identity");
-    }
-    let existing = assets_for_repo(plan, api, STAGING_REPOSITORY, id, !draft)?;
     if !draft {
         return Ok(Publication::AlreadyPublished);
     }
     for (name, record) in &plan.document.files {
-        if existing.contains_key(name) {
+        if retained.contains_key(name) {
             continue;
         }
         let path = plan.directory.join(name);
         verify_record(&path, record)?;
-        let uploaded = api.upload(id, name, &path)?;
-        if uploaded["name"] != *name
-            || uploaded["state"] != "uploaded"
-            || uploaded["size"] != record.bytes
-            || uploaded["id"].as_u64().is_none_or(|n| n == 0)
-        {
-            return Err("Staging asset upload response differs from candidate");
+        let current = staging_readback(plan, api, id, true, &retained, false)?;
+        if current != retained {
+            return Err("Staging release asset identities changed");
+        }
+        match api.upload(id, name, &path) {
+            Ok(uploaded) => {
+                let asset_id = uploaded["id"]
+                    .as_u64()
+                    .filter(|id| *id > 0)
+                    .ok_or("Staging asset upload response differs from candidate")?;
+                if uploaded["name"] != *name
+                    || uploaded["state"] != "uploaded"
+                    || uploaded["size"] != record.bytes
+                    || retained.values().any(|id| *id == asset_id)
+                {
+                    return Err("Staging asset upload response differs from candidate");
+                }
+                retained.insert(name.clone(), asset_id);
+            }
+            Err(error) => {
+                let recovered =
+                    staging_readback(plan, api, id, true, &retained, false).map_err(|_| error)?;
+                if recovered.len() != retained.len() + 1 || !recovered.contains_key(name) {
+                    return Err(error);
+                }
+                retained = recovered;
+            }
         }
     }
     plan.verify_files()?;
-    assets_for_repo(plan, api, STAGING_REPOSITORY, id, true)?;
-    let updated = api.write_json(
+    if staging_readback(plan, api, id, true, &retained, true)? != retained {
+        return Err("Staging release asset identities changed");
+    }
+    let promoted = api.write_json(
         "PATCH",
         &format!("repos/{STAGING_REPOSITORY}/releases/{id}"),
         &json!({"draft":false,"make_latest":"true"}),
-    )?;
-    if updated["id"].as_u64() != Some(id) || updated["draft"] != false {
-        return Err("Staging release promotion did not preserve identity");
+    );
+    match promoted {
+        Ok(updated) => {
+            check_staging_state(plan, &updated, id, false)?;
+            if staging_readback(plan, api, id, false, &retained, true)? != retained {
+                return Err("Staging release asset identities changed");
+            }
+        }
+        Err(error) => {
+            let recovered =
+                staging_readback(plan, api, id, false, &retained, true).map_err(|_| error)?;
+            if recovered != retained {
+                return Err(error);
+            }
+        }
     }
-    assets_for_repo(plan, api, STAGING_REPOSITORY, id, true)?;
     Ok(Publication::Published)
 }
 

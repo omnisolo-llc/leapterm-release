@@ -221,6 +221,8 @@ fn actual_ci_dispatch_uses_distinct_request_and_cleans_privileged_environment() 
         assert_eq!(env::var("CARGO_BUILD_JOBS").unwrap(),"2");
         for key in ["GH_TOKEN","GITHUB_TOKEN","PRIVATE_RELEASE_TOKEN","SOURCE_DEPLOY_KEY","SOURCE_METADATA_READ_TOKEN","SOURCE_SUBMODULE_TOKEN","SOURCE_SUBMODULE_DEPLOY_KEY_BASE64","SOURCE_ENTRYPOINT","GITHUB_OUTPUT","GITHUB_ENV","SIGNING_CONFIG","STORAGE_CONFIG","RELEASE_REQUEST","RUSTFLAGS","NODE_OPTIONS"] {assert!(env::var_os(key).is_none(),"{key}");}
         fs::write(Path::new(&args[4]).join("synthetic-ci-observation"),value).unwrap();
+        let outputs=Path::new(&args[4]).join("outputs");fs::create_dir(&outputs).unwrap();
+        fs::write(outputs.join(format!("ci-private-synthetic-{}",env::var("RELEASE_SOURCE_SHA").unwrap())),b"private synthetic fixture bytes").unwrap();
         println!("private synthetic CI output");
     }"#;
     fs::write(fixture.source.join("tools/release-cli/src/main.rs"), cli).unwrap();
@@ -257,6 +259,20 @@ fn actual_ci_dispatch_uses_distinct_request_and_cleans_privileged_environment() 
     fs::create_dir(&root).unwrap();
     let mut log = fs::File::create(root.join("bootstrap.log")).unwrap();
     build_and_dispatch_ci(&fixture.source, &root, &env, &request, &mut log).unwrap();
+    let private_name = format!("ci-private-synthetic-{}", request.identity.source_sha);
+    assert!(
+        root.join("release-work/outputs")
+            .join(&private_name)
+            .is_file()
+    );
+    assert!(
+        !std::env::current_dir()
+            .unwrap()
+            .join("release-work/outputs")
+            .join(&private_name)
+            .exists(),
+        "CI dispatch must retain its outputs privately before the authenticated orchestrator's exact receipt handoff"
+    );
     let observed = fs::read_to_string(root.join("release-work/synthetic-ci-observation")).unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&observed).unwrap(),

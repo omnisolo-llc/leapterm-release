@@ -51,11 +51,23 @@ function sealEvaluation(directory, output, identity, scope, pem) {
   if (typeof scope !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(scope) || !path.isAbsolute(output)) {
     throw Error('Invalid evaluation scope');
   }
+  const source = inventory(directory);
+  return sealBoundFile(source, output, {schema: 1, kind: 'evaluation', identity, scope,
+    filename: source.filename, plaintext_sha256: source.checksum, plaintext_size: Number(source.metadata.size)},
+    pem, MAGIC, MAX_ZIP);
+}
+// Encryption only. Native callers own classification, inventory and receipts.
+// Preserve the evaluation protocol while allowing other approved native
+// producers to use the same bounded, authenticated streaming primitive.
+function sealBoundFile(source, output, attributes, pem, magic, maximum) {
+  if (!path.isAbsolute(output) || fs.realpathSync(path.dirname(output)) !== path.dirname(output) ||
+      !fs.lstatSync(path.dirname(output)).isDirectory() || !Buffer.isBuffer(magic) ||
+      !Number.isSafeInteger(maximum) || maximum <= 0 || !attributes || typeof attributes !== 'object' ||
+      ['algorithm', 'key', 'iv'].some(key => Object.hasOwn(attributes, key))) throw Error('Invalid sealed file input');
   const recipient = crypto.createPublicKey(pem);
   if (recipient.asymmetricKeyType !== 'rsa' || recipient.asymmetricKeyDetails.modulusLength < 3072) {
     throw Error('RSA key of at least 3072 bits required');
   }
-  const source = inventory(directory);
   const key = crypto.randomBytes(32);
   const iv = crypto.randomBytes(12);
   const temporary = path.join(path.dirname(output), `.evaluation-${crypto.randomBytes(16).toString('hex')}`);
@@ -63,14 +75,13 @@ function sealEvaluation(directory, output, identity, scope, pem) {
   try {
     input = fs.openSync(source.file, 'r');
     if (!same(source.metadata, fs.fstatSync(input, {bigint: true}))) throw Error('Evaluation input changed');
-    const header = Buffer.from(JSON.stringify({schema: 1, kind: 'evaluation', identity, scope,
-      filename: source.filename, plaintext_sha256: source.checksum, plaintext_size: Number(source.metadata.size),
+    const header = Buffer.from(JSON.stringify({...attributes,
       algorithm: 'RSA-OAEP-SHA256+A256GCM',
       key: crypto.publicEncrypt({key: recipient, oaepHash: 'sha256', padding: crypto.constants.RSA_PKCS1_OAEP_PADDING}, key).toString('base64'),
       iv: iv.toString('base64')}));
     if (header.length > 16384) throw Error('Evaluation header exceeds its bound');
     const length = Buffer.alloc(4); length.writeUInt32BE(header.length);
-    const aad = Buffer.concat([MAGIC, length, header]);
+    const aad = Buffer.concat([magic, length, header]);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv); cipher.setAAD(aad);
     const digest = crypto.createHash('sha256');
     destination = fs.openSync(temporary, 'wx', 0o600);
@@ -79,7 +90,7 @@ function sealEvaluation(directory, output, identity, scope, pem) {
     let read, bytes = 0;
     while ((read = fs.readSync(input, buffer)) > 0) {
       bytes += read;
-      if (bytes > MAX_ZIP) throw Error('Evaluation input exceeds its bound');
+      if (bytes > maximum) throw Error('Sealed input exceeds its bound');
       const chunk = buffer.subarray(0, read);
       digest.update(chunk);
       fs.writeFileSync(destination, cipher.update(chunk));
@@ -87,7 +98,7 @@ function sealEvaluation(directory, output, identity, scope, pem) {
     fs.writeFileSync(destination, cipher.final());
     fs.writeFileSync(destination, cipher.getAuthTag());
     if (bytes !== Number(source.metadata.size) || digest.digest('hex') !== source.checksum ||
-        !same(source.metadata, fs.fstatSync(input, {bigint: true})) || !same(source.metadata, regular(source.file, MAX_ZIP))) {
+        !same(source.metadata, fs.fstatSync(input, {bigint: true})) || !same(source.metadata, regular(source.file, maximum))) {
       throw Error('Evaluation revision changed');
     }
     fs.fsyncSync(destination); fs.closeSync(destination); destination = undefined;
@@ -109,4 +120,4 @@ if (require.main === module) {
       process.env.DIAGNOSTICS_PUBLIC_KEY || '');
   } catch (_) { process.stderr.write('Evaluation encryption failed.\n'); process.exitCode = 1; }
 }
-module.exports = {MAGIC, MAX_ZIP, validateIdentity, inventory, sealEvaluation};
+module.exports = {MAGIC, MAX_ZIP, validateIdentity, inventory, sealEvaluation, sealBoundFile, regular};

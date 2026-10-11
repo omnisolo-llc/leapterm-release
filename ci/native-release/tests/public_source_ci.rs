@@ -168,20 +168,25 @@ fn owning_suite_cannot_replace_stage_inputs_with_a_digest_claim() {
 fn owning_suite_preserves_registered_unicode_and_bounded_long_case_ids() {
     for case in [
         "example_test.dart::supports native continuity — café".to_owned(),
-        format!("registered-{}","x".repeat(2025)),
+        format!("registered-{}", "x".repeat(2025)),
     ] {
-        let mut value=receipt("flutter-vm");
-        value["suites"][0]["kind"]=json!("flutter");
-        let id=value["suites"][0]["id"].as_str().unwrap();
-        let cases=json!([format!("{id}::{case}")]);
-        value["suites"][0]["case_ids"]=cases.clone();
-        value["suites"][0]["case_ids_sha256"]=json!(sha(&cases));
-        value["case_ids_sha256"]=json!(sha(&cases));
-        let mut approved=approval_value();
-        let row=approved["requests"].as_array_mut().unwrap().iter_mut().find(|row|row["stage"]=="flutter-vm").unwrap();
-        row["case_ids_sha256"]=json!(sha(&cases));
-        let auth=Approval::parse_at(&approved,1500).unwrap();
-        assert!(verify_stage_receipt(&value,&request("flutter-vm"),&auth).is_ok());
+        let mut value = receipt("flutter-vm");
+        value["suites"][0]["kind"] = json!("flutter");
+        let id = value["suites"][0]["id"].as_str().unwrap();
+        let cases = json!([format!("{id}::{case}")]);
+        value["suites"][0]["case_ids"] = cases.clone();
+        value["suites"][0]["case_ids_sha256"] = json!(sha(&cases));
+        value["case_ids_sha256"] = json!(sha(&cases));
+        let mut approved = approval_value();
+        let row = approved["requests"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["stage"] == "flutter-vm")
+            .unwrap();
+        row["case_ids_sha256"] = json!(sha(&cases));
+        let auth = Approval::parse_at(&approved, 1500).unwrap();
+        assert!(verify_stage_receipt(&value, &request("flutter-vm"), &auth).is_ok());
     }
 }
 #[test]
@@ -226,13 +231,14 @@ struct Seen {
     token: String,
     body: Vec<u8>,
 }
+type FixtureResponses = Arc<Mutex<BTreeMap<String, (u16, Vec<u8>)>>>;
 struct Fixture {
     address: String,
     requests: Arc<Mutex<Vec<Seen>>>,
     assets: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     private: Arc<AtomicBool>,
     ambiguous: Arc<AtomicBool>,
-    responses: Arc<Mutex<BTreeMap<String, (u16, Vec<u8>)>>>,
+    responses: FixtureResponses,
     dispatch_accept: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,

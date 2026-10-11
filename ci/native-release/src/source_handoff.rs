@@ -154,10 +154,10 @@ pub fn verify_stage_receipt(
         let mut previous = None;
         for case in registered {
             let case = case.as_str().ok_or("Invalid Source-CI case id")?;
-            if case.len() > 1024
+            if case.len() > id.len() + 2 + 2048
                 || !case.starts_with(&format!("{id}::"))
                 || case.len() <= id.len() + 2
-                || !case.bytes().all(|b| b.is_ascii_graphic() || b == b' ')
+                || case.chars().any(char::is_control)
                 || previous.is_some_and(|p| p >= case)
                 || !cases.insert(case.to_owned())
             {

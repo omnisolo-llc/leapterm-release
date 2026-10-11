@@ -426,7 +426,7 @@ pub fn hosted_job(job: &Value) -> Result<()> {
             .as_str()
             .is_some_and(|l| crate::runner_policy::RUNNERS.contains(&l))
         || job["runner_group_name"] != "GitHub Actions"
-        || !job["runner_name"].as_str().is_some_and(|s| !s.is_empty())
+        || job["runner_name"].as_str().is_none_or(|s| s.is_empty())
     {
         return Err("Source-CI runner policy denied");
     }
