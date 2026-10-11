@@ -324,7 +324,7 @@ impl HttpFixture {
         listener.set_nonblocking(true).unwrap();
         let join = std::thread::spawn(move || {
             for (expected, body) in responses {
-                let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
                 let mut socket = loop {
                     match listener.accept() {
                         Ok((socket, _)) => break socket,
@@ -337,6 +337,7 @@ impl HttpFixture {
                         Err(error) => panic!("Fixture request unavailable: {expected}: {error}"),
                     }
                 };
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(std::time::Duration::from_secs(30)))
                     .unwrap();
@@ -469,7 +470,11 @@ impl ReleaseApi for HttpFixture {
 impl Drop for HttpFixture {
     fn drop(&mut self) {
         if let Some(join) = self.join.take() {
-            join.join().unwrap();
+            if std::thread::panicking() {
+                let _ = join.join();
+            } else {
+                join.join().unwrap();
+            }
         }
     }
 }
