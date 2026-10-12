@@ -1655,12 +1655,13 @@ jobs:
       - name: Auto-promote candidates to internal store tracks
         if: ${{ inputs.auto_promote }}
         run: |
-          echo "Auto-promoting release candidate to pre-release tracks only (TestFlight & Google Play Internal)..."
+          echo "Auto-promoting release candidate to pre-release tracks and staging environment (TestFlight, Google Play Internal, staging Cloudflare, and ghcr.io/omnisolo-llc/omniterm/cloud:latest-staging)..."
           gh workflow run promote-release.yml \
             --ref main \
             -f version="${{ needs.resolve.outputs.version }}" \
             -f build_number="${{ needs.resolve.outputs.build_number }}" \
             -f publish_github_release=false \
+            -f rollout_environment=staging \
             -f ios_store_action=testflight \
             -f macos_store_action=testflight \
             -f android_store_action=internal
