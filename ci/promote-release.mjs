@@ -1251,6 +1251,17 @@ export function buildEnvironmentRolloutPlan({
   };
 }
 
+function requireEnvironmentRolloutCredentials() {
+  for (const name of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'KUBECONFIG']) {
+    if (!String(process.env[name] || '').trim()) {
+      throw new Error(`${name} is required for environment rollout`);
+    }
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9./_:-]*@sha256:[a-f0-9]{64}$/.test(String(process.env.OMNI_GATEWAY_SOURCE_IMAGE || ''))) {
+    throw new Error('OMNI_GATEWAY_SOURCE_IMAGE is required as an immutable repository@sha256 digest pin');
+  }
+}
+
 export function executeEnvironmentRollout({
   environment,
   version,
@@ -1273,57 +1284,124 @@ export function executeEnvironmentRollout({
     sourceSha,
     containerRegistry,
   });
+  if (!/^[0-9a-f]{40}$/i.test(plan.source_sha)) {
+    throw new Error('Rollout source_sha must be an exact 40-character commit SHA');
+  }
 
   let resolvedRoot = String(
     sourceRoot || process.env.PROMOTE_SOURCE_ROOT || '',
   ).trim();
   let tempCheckoutDir = '';
+  let tempKubeconfigDir = '';
 
   try {
-    if (
-      !resolvedRoot &&
-      privateToken &&
-      plan.source_sha &&
-      /^[0-9a-f]{40}$/i.test(plan.source_sha)
-    ) {
+    requireEnvironmentRolloutCredentials();
+    const configuredKubeconfig = process.env.KUBECONFIG;
+    let kubeconfigBytes = Buffer.from(configuredKubeconfig, 'utf8');
+    let kubeconfigStat;
+    try {
+      kubeconfigStat = fs.statSync(configuredKubeconfig);
+    } catch (error) {
+      if (!['ENOENT', 'ENOTDIR', 'ENAMETOOLONG'].includes(error.code)) {
+        throw new Error('KUBECONFIG must contain opaque content or name a readable regular file');
+      }
+    }
+    if (kubeconfigStat) {
+      if (!kubeconfigStat.isFile()) {
+        throw new Error('KUBECONFIG must name a readable regular file');
+      }
+      try {
+        kubeconfigBytes = fs.readFileSync(configuredKubeconfig);
+      } catch {
+        throw new Error('KUBECONFIG must name a readable regular file');
+      }
+    }
+    if (!kubeconfigBytes.toString('utf8').trim()) {
+      throw new Error('KUBECONFIG file must not be empty');
+    }
+    tempKubeconfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omni-rollout-kubeconfig-'));
+    fs.chmodSync(tempKubeconfigDir, 0o700);
+    const kubeconfigPath = path.join(tempKubeconfigDir, 'config');
+    fs.writeFileSync(kubeconfigPath, kubeconfigBytes, { mode: 0o600, flag: 'wx' });
+    fs.chmodSync(kubeconfigPath, 0o600);
+    const rolloutEnv = { ...process.env, KUBECONFIG: kubeconfigPath };
+
+    if (!resolvedRoot) {
+      if (!privateToken) {
+        throw new Error('Rollout requires a source checkout or private checkout token');
+      }
       tempCheckoutDir = fs.mkdtempSync(
         path.join(os.tmpdir(), 'omni-rollout-src-'),
       );
-      const cloneUrl = `https://x-access-token:${privateToken}@github.com/${stagingRepo}.git`;
-      execFileImpl('git', ['init', tempCheckoutDir], { stdio: 'pipe' });
-      execFileImpl(
-        'git',
-        ['-C', tempCheckoutDir, 'remote', 'add', 'origin', cloneUrl],
-        { stdio: 'pipe' },
-      );
-      execFileImpl(
-        'git',
-        [
-          '-C',
-          tempCheckoutDir,
-          'fetch',
-          '--depth=1',
-          'origin',
-          plan.source_sha,
-        ],
-        { stdio: 'pipe' },
-      );
-      execFileImpl(
-        'git',
-        ['-C', tempCheckoutDir, 'checkout', '--detach', 'FETCH_HEAD'],
-        { stdio: 'pipe' },
-      );
+      const cloneUrl = `https://github.com/${stagingRepo}.git`;
+      try {
+        execFileImpl('git', ['init', tempCheckoutDir], { stdio: 'pipe', env: rolloutEnv });
+        execFileImpl(
+          'git',
+          ['-C', tempCheckoutDir, 'remote', 'add', 'origin', cloneUrl],
+          { stdio: 'pipe', env: rolloutEnv },
+        );
+        execFileImpl(
+          'git',
+          ['-C', tempCheckoutDir, 'fetch', '--depth=1', 'origin', plan.source_sha],
+          {
+            stdio: 'pipe',
+            env: {
+              ...rolloutEnv,
+              GIT_TERMINAL_PROMPT: '0',
+              GIT_CONFIG_COUNT: '1',
+              GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+              GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${privateToken}`).toString('base64')}`,
+            },
+          },
+        );
+        execFileImpl(
+          'git',
+          ['-C', tempCheckoutDir, 'checkout', '--detach', 'FETCH_HEAD'],
+          { stdio: 'pipe', env: rolloutEnv },
+        );
+      } catch {
+        throw new Error('Unable to acquire rollout source checkout');
+      }
       resolvedRoot = tempCheckoutDir;
     }
 
-    const rolloutScript = resolvedRoot
-      ? path.join(resolvedRoot, 'scripts', 'rollout-env.sh')
-      : '';
-    if (!rolloutScript || !fs.existsSync(rolloutScript)) {
-      return {
-        ...plan,
-        status: 'skipped-no-source-checkout',
+    let checkoutRoot;
+    let gitRoot;
+    let checkoutSha;
+    let checkoutStatus;
+    try {
+      checkoutRoot = fs.realpathSync(resolvedRoot);
+      const readOptions = {
+        stdio: 'pipe',
+        encoding: 'utf8',
+        env: { ...rolloutEnv, GIT_OPTIONAL_LOCKS: '0' },
       };
+      gitRoot = fs.realpathSync(String(execFileImpl(
+        'git', ['-C', checkoutRoot, 'rev-parse', '--show-toplevel'], readOptions,
+      )).trim());
+      checkoutSha = String(execFileImpl(
+        'git', ['-C', checkoutRoot, 'rev-parse', '--verify', 'HEAD'], readOptions,
+      )).trim();
+      checkoutStatus = String(execFileImpl(
+        'git', ['-C', checkoutRoot, 'status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=none'], readOptions,
+      ));
+    } catch {
+      throw new Error('Unable to validate rollout source checkout');
+    }
+    if (gitRoot !== checkoutRoot) {
+      throw new Error('Rollout source checkout must be the repository root');
+    }
+    if (checkoutSha.toLowerCase() !== plan.source_sha.toLowerCase()) {
+      throw new Error('Rollout source checkout HEAD does not match approved source_sha commit');
+    }
+    if (checkoutStatus.trim()) {
+      throw new Error('Rollout source checkout must be clean, with no local changes');
+    }
+    resolvedRoot = checkoutRoot;
+    const rolloutScript = path.join(resolvedRoot, 'scripts', 'rollout-env.sh');
+    if (!fs.existsSync(rolloutScript)) {
+      throw new Error('Rollout source checkout is missing the rollout script');
     }
 
     const effectiveGithubToken =
@@ -1333,7 +1411,7 @@ export function executeEnvironmentRollout({
       process.env.GH_TOKEN ||
       '';
     const childEnv = {
-      ...process.env,
+      ...rolloutEnv,
       OMNI_REGISTRY: plan.container.registry,
       PROMOTE_CONTAINER_REGISTRY: plan.container.registry,
       PROMOTE_VERSION: plan.version,
@@ -1373,6 +1451,9 @@ export function executeEnvironmentRollout({
       status: 'rolled-out',
     };
   } finally {
+    if (tempKubeconfigDir) {
+      fs.rmSync(tempKubeconfigDir, { recursive: true, force: true });
+    }
     if (tempCheckoutDir) {
       fs.rmSync(tempCheckoutDir, { recursive: true, force: true });
     }
@@ -1409,6 +1490,15 @@ export async function promoteRelease({
   if (!privateToken) {
     throw new Error('PRIVATE_RELEASE_TOKEN is required');
   }
+  const resolvedRolloutEnv = resolveRolloutEnvironment({
+    rolloutEnvironment,
+    publishGithubRelease,
+    iosStoreAction,
+    macosStoreAction,
+    androidStoreAction,
+    verifyStoreCredentialsOnly,
+  });
+  if (resolvedRolloutEnv !== 'none') requireEnvironmentRolloutCredentials();
   const actor = String(process.env.GITHUB_ACTOR || '').trim();
   if (actor) {
     const teamRes = await githubRequest(
@@ -1855,14 +1945,6 @@ export async function promoteRelease({
       );
     }
 
-    const resolvedRolloutEnv = resolveRolloutEnvironment({
-      rolloutEnvironment,
-      publishGithubRelease,
-      iosStoreAction,
-      macosStoreAction,
-      androidStoreAction,
-      verifyStoreCredentialsOnly,
-    });
     if (resolvedRolloutEnv !== 'none') {
       const rolloutResult = executeEnvironmentRollout({
         environment: resolvedRolloutEnv,

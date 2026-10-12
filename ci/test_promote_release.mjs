@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import vm from 'node:vm';
 
 import {
   GHCR_CONTAINER_REGISTRY,
@@ -22,6 +23,7 @@ import {
   promoteAndroidToPlayStore,
   promoteIosToAppStoreConnect,
   promoteMacosToAppStoreConnect,
+  promoteRelease,
   resolveGpgSigningCredentials,
   resolveRolloutEnvironment,
   scanDirectoryForLeaks,
@@ -30,6 +32,27 @@ import {
   verifyAppleStoreAccess,
   verifyGooglePlayStoreAccess,
 } from './promote-release.mjs';
+
+const mockRolloutCredentials = {
+  CLOUDFLARE_API_TOKEN: 'mock-cloudflare-rollout-token',
+  CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+  KUBECONFIG: 'apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n',
+  OMNI_GATEWAY_SOURCE_IMAGE: `omniterm/gateway@sha256:${'b'.repeat(64)}`,
+};
+
+test.beforeEach((t) => {
+  const previous = {};
+  for (const [name, value] of Object.entries(mockRolloutCredentials)) {
+    previous[name] = process.env[name];
+    process.env[name] = value;
+  }
+  t.after(() => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+});
 
 function makeStagingFixtures(version = '0.1.1') {
   const allTargets = [
@@ -638,6 +661,11 @@ test('executeEnvironmentRollout invokes rollout-env.sh and prune-ghcr-packages.m
       dockerHubPatReadWrite: 'dckr_pat_rw_test',
       dockerHubPatReadOnly: 'dckr_pat_ro_test',
       execFileImpl: (cmd, args, opts) => {
+        if (cmd === 'git') {
+          if (args.includes('--show-toplevel')) return `${tempRoot}\n`;
+          if (args.includes('status')) return '';
+          return `${'a'.repeat(40)}\n`;
+        }
         calls.push({ cmd, args, cwd: opts.cwd, env: opts.env });
       },
     });
@@ -686,9 +714,533 @@ test('release and promote-release workflows wire staging/production rollout and 
   );
   assert.match(
     promoteYml,
-    /PROMOTE_ROLLOUT_ENVIRONMENT:\s*\$\{\{\s*inputs\.rollout_environment\s*\}\}/,
+    /PROMOTE_ROLLOUT_ENVIRONMENT:\s*\$\{\{\s*(?:inputs\.rollout_environment|steps\.rollout_environment\.outputs\.environment)\s*\}\}/,
   );
   assert.match(releaseYml, /-f rollout_environment=staging/);
 });
 
+function makeRolloutSourceFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'omni-rollout-guard-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  fs.writeFileSync(path.join(root, 'scripts/rollout-env.sh'), '# mock rollout\n');
+  fs.writeFileSync(path.join(root, 'scripts/prune-ghcr-packages.mjs'), '// mock prune\n');
+  return root;
+}
 
+function rolloutCheckoutMock(root, { head = 'a'.repeat(40), status = '', topLevel = root, failure = '' } = {}) {
+  const actions = [];
+  const execFileImpl = (cmd, args) => {
+    if (cmd !== 'git') {
+      actions.push({ cmd, args });
+      return '';
+    }
+    if (failure) throw new Error(failure);
+    if (args.includes('--show-toplevel')) return `${topLevel}\n`;
+    if (args.includes('status')) return status;
+    return `${head}\n`;
+  };
+  return { actions, execFileImpl };
+}
+
+test('rollout rejects a local checkout at a different commit before rollout or pruning', (t) => {
+  const sourceRoot = makeRolloutSourceFixture(t);
+  const mock = rolloutCheckoutMock(sourceRoot, { head: 'b'.repeat(40) });
+  assert.throws(() => executeEnvironmentRollout({
+    environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+    execFileImpl: mock.execFileImpl,
+  }), /source checkout.*(?:commit|HEAD|source_sha)/i);
+  assert.deepEqual(mock.actions, []);
+});
+
+test('rollout checks PROMOTE_SOURCE_ROOT against the approved source commit', (t) => {
+  const sourceRoot = makeRolloutSourceFixture(t);
+  const prior = process.env.PROMOTE_SOURCE_ROOT;
+  process.env.PROMOTE_SOURCE_ROOT = sourceRoot;
+  t.after(() => {
+    if (prior === undefined) delete process.env.PROMOTE_SOURCE_ROOT;
+    else process.env.PROMOTE_SOURCE_ROOT = prior;
+  });
+  const mock = rolloutCheckoutMock(sourceRoot, { head: 'b'.repeat(40) });
+  assert.throws(() => executeEnvironmentRollout({
+    environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40),
+    execFileImpl: mock.execFileImpl,
+  }), /source checkout.*(?:commit|HEAD|source_sha)/i);
+  assert.deepEqual(mock.actions, []);
+});
+
+for (const [name, sourceSha] of [
+  ['missing', ''], ['abbreviated', 'a'.repeat(7)], ['invalid', 'g'.repeat(40)],
+]) {
+  test(`rollout rejects ${name} source SHA before any subprocess`, (t) => {
+    const sourceRoot = makeRolloutSourceFixture(t);
+    const calls = [];
+    assert.throws(() => executeEnvironmentRollout({
+      environment: 'staging', version: '0.1.1', sourceSha, sourceRoot,
+      execFileImpl: (cmd, args) => { calls.push({ cmd, args }); return ''; },
+    }), /source_sha.*40|40.*source_sha/i);
+    assert.deepEqual(calls, []);
+  });
+}
+
+for (const [name, status] of [
+  ['modified tracked files', ' M scripts/rollout-env.sh\n'],
+  ['staged files', 'M  scripts/rollout-env.sh\n'],
+  ['untracked files', '?? scripts/local-deploy.sh\n'],
+  ['dirty submodules', ' m myk3s\n'],
+]) {
+  test(`rollout rejects ${name} before rollout or pruning`, (t) => {
+    const sourceRoot = makeRolloutSourceFixture(t);
+    const mock = rolloutCheckoutMock(sourceRoot, { status });
+    assert.throws(() => executeEnvironmentRollout({
+      environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+      execFileImpl: mock.execFileImpl,
+    }), /source checkout.*(?:dirty|clean|changes)/i);
+    assert.deepEqual(mock.actions, []);
+  });
+}
+
+test('rollout rejects a directory inside another checkout root', (t) => {
+  const sourceRoot = makeRolloutSourceFixture(t);
+  const mock = rolloutCheckoutMock(sourceRoot, { topLevel: path.dirname(sourceRoot) });
+  assert.throws(() => executeEnvironmentRollout({
+    environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+    execFileImpl: mock.execFileImpl,
+  }), /source checkout.*root/i);
+  assert.deepEqual(mock.actions, []);
+});
+
+test('rollout fails closed when checkout identity cannot be read', (t) => {
+  const sourceRoot = makeRolloutSourceFixture(t);
+  const mock = rolloutCheckoutMock(sourceRoot, { failure: 'mock repository read error' });
+  assert.throws(() => executeEnvironmentRollout({
+    environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+    execFileImpl: mock.execFileImpl,
+  }), /source checkout/i);
+  assert.deepEqual(mock.actions, []);
+});
+
+test('rollout fails closed when no source checkout or checkout token is supplied', () => {
+  const calls = [];
+  assert.throws(() => executeEnvironmentRollout({
+    environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40),
+    execFileImpl: (cmd, args) => { calls.push({ cmd, args }); },
+  }), /source checkout/i);
+  assert.deepEqual(calls, []);
+});
+
+test('rollout fails closed when the checked source has no rollout script', (t) => {
+  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'omni-rollout-missing-'));
+  t.after(() => fs.rmSync(sourceRoot, { recursive: true, force: true }));
+  const mock = rolloutCheckoutMock(sourceRoot);
+  assert.throws(() => executeEnvironmentRollout({
+    environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+    execFileImpl: mock.execFileImpl,
+  }), /source checkout.*rollout.*script/i);
+  assert.deepEqual(mock.actions, []);
+});
+
+function acquiredRolloutCheckoutMock({ head = 'a'.repeat(40) } = {}) {
+  const calls = [];
+  let checkoutRoot = '';
+  const execFileImpl = (cmd, args, opts = {}) => {
+    calls.push({ cmd, args, opts });
+    if (cmd !== 'git') return '';
+    if (args[0] === 'init') checkoutRoot = args[1];
+    if (args.includes('checkout')) {
+      fs.mkdirSync(path.join(checkoutRoot, 'scripts'));
+      fs.writeFileSync(path.join(checkoutRoot, 'scripts/rollout-env.sh'), '# mock rollout\n');
+      fs.writeFileSync(path.join(checkoutRoot, 'scripts/prune-ghcr-packages.mjs'), '// mock prune\n');
+    }
+    if (args.includes('--show-toplevel')) return `${checkoutRoot}\n`;
+    if (args.includes('status')) return '';
+    return `${head}\n`;
+  };
+  return { calls, execFileImpl };
+}
+
+test('rollout acquisition keeps checkout credentials out of Git arguments and supplies fetch-only authentication', () => {
+  const mockToken = 'mock-private-checkout-token';
+  const mock = acquiredRolloutCheckoutMock();
+  const result = executeEnvironmentRollout({
+    environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40),
+    privateToken: mockToken, githubToken: 'mock-ghcr-token', execFileImpl: mock.execFileImpl,
+  });
+  assert.equal(result.status, 'rolled-out');
+  assert.equal(mock.calls.some(({ args }) => args.some((arg) => String(arg).includes(mockToken))), false,
+    'Checkout credentials must not appear in Git arguments');
+  const remote = mock.calls.find(({ args }) => args.includes('remote'));
+  assert.equal(remote.args.at(-1), 'https://github.com/omnisolo-llc/omniterm.git');
+  const fetch = mock.calls.find(({ args }) => args.includes('fetch'));
+  assert.equal(fetch.args.at(-1), 'a'.repeat(40));
+  assert.equal(fetch.opts.env.GIT_TERMINAL_PROMPT, '0');
+  assert.equal(fetch.opts.env.GIT_CONFIG_COUNT, '1');
+  assert.equal(fetch.opts.env.GIT_CONFIG_KEY_0, 'http.https://github.com/.extraheader');
+  assert.equal(fetch.opts.env.GIT_CONFIG_VALUE_0,
+    `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${mockToken}`).toString('base64')}`);
+  for (const call of mock.calls.filter(({ args }) => !args.includes('fetch'))) {
+    assert.equal(call.opts.env?.GIT_CONFIG_VALUE_0, undefined);
+  }
+});
+
+test('rollout verifies the acquired checkout before rollout or pruning', () => {
+  const mock = acquiredRolloutCheckoutMock({ head: 'b'.repeat(40) });
+  assert.throws(() => executeEnvironmentRollout({
+    environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40),
+    privateToken: 'mock-private-checkout-token', execFileImpl: mock.execFileImpl,
+  }), /source checkout.*(?:commit|HEAD|source_sha)/i);
+  assert.equal(mock.calls.some(({ cmd }) => cmd === 'bash' || cmd === 'node'), false);
+});
+
+test('rollout acquisition errors do not expose checkout credentials', () => {
+  const mockToken = 'mock-private-checkout-token';
+  assert.throws(() => executeEnvironmentRollout({
+    environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), privateToken: mockToken,
+    execFileImpl: () => { throw new Error(`mock Git command error ${mockToken}`); },
+  }), (err) => /source checkout/i.test(err.message) && !err.message.includes(mockToken));
+});
+
+function releaseWorkflowJob(filename, job) {
+  const workflow = fs.readFileSync(path.resolve(import.meta.dirname, '../.github/workflows', filename), 'utf8');
+  const block = workflow.match(new RegExp(`^  ${job}:\\n([\\s\\S]*?)(?=^  [a-z_]+:\\n|(?![\\s\\S]))`, 'm'));
+  assert.ok(block, `Workflow job ${job} must exist`);
+  return block[1];
+}
+
+function releaseWorkflowStep(job, name) {
+  const step = job.split(/^      - /m).find((block) => block.startsWith(`name: ${name}\n`));
+  assert.ok(step, `Workflow step ${name} must exist`);
+  return step;
+}
+
+test('publication pins Node 24 before preparing public candidate bytes', () => {
+  const publish = releaseWorkflowJob('release.yml', 'publish');
+  const setup = publish.indexOf('uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020');
+  assert.ok(setup >= 0, 'Publication must pin setup-node');
+  assert.match(publish.slice(setup), /node-version: '24\.21\.0'\n          package-manager-cache: false/);
+  assert.ok(setup < publish.indexOf('run: bash ci/native-release/run.sh prepare-publication'));
+});
+
+test('publication retains the complete private archive before publication', () => {
+  const publish = releaseWorkflowJob('release.yml', 'publish');
+  const archive = releaseWorkflowStep(publish, 'Retain the complete private encrypted archive');
+  assert.match(archive, /id: private_final_archive\n        run: bash ci\/native-release\/run\.sh prepare-private-final-archive/);
+  assert.match(archive, /APPROVED_NATIVE_VERIFIER_SHA256: \$\{\{ steps\.publication_candidates\.outputs\.native_verifier_sha256 \}\}/);
+  assert.match(archive, /APPROVED_PUBLICATION_PLAN_SHA256: \$\{\{ steps\.publication_candidates\.outputs\.publication_plan_sha256 \}\}/);
+  assert.match(archive, /PRIVATE_FINAL_ARCHIVE_INPUTS_FILE: \$\{\{ vars\.PRIVATE_FINAL_ARCHIVE_INPUTS_FILE \}\}/);
+  assert.doesNotMatch(archive, /(?:if|continue-on-error):/);
+  assert.ok(publish.indexOf(archive) < publish.indexOf('name: Publish the verified public candidate bytes'));
+});
+
+test('publication independently reads back the complete private archive before publication', () => {
+  const publish = releaseWorkflowJob('release.yml', 'publish');
+  const readback = releaseWorkflowStep(publish, 'Independently read back the complete private archive');
+  assert.match(readback, /id: private_final_archive_readback\n        run: bash ci\/native-release\/run\.sh verify-private-final-archive/);
+  assert.doesNotMatch(readback, /(?:if|continue-on-error):/);
+  assert.ok(publish.indexOf('run: bash ci/native-release/run.sh prepare-private-final-archive') < publish.indexOf(readback));
+  assert.ok(publish.indexOf(readback) < publish.indexOf('name: Publish the verified public candidate bytes'));
+});
+
+test('public publication is gated on the independent private archive proof hash', () => {
+  const publish = releaseWorkflowJob('release.yml', 'publish');
+  const publication = releaseWorkflowStep(publish, 'Publish the verified public candidate bytes');
+  assert.match(publication, /APPROVED_PRIVATE_ARCHIVE_PROOF_SHA256: \$\{\{ steps\.private_final_archive_readback\.outputs\.private_archive_proof_sha256 \}\}/);
+});
+
+test('Linux promotion resolves rollout from all actual inputs, including Apple-only promotions', () => {
+  const job = releaseWorkflowJob('promote-release.yml', 'promote');
+  const step = releaseWorkflowStep(job, 'Resolve environment rollout from all promotion inputs');
+  assert.match(step, /id: rollout_environment/);
+  const inputNames = {
+    INPUT_ROLLOUT_ENVIRONMENT: 'rollout_environment', INPUT_PUBLISH_GITHUB_RELEASE: 'publish_github_release',
+    INPUT_IOS_STORE_ACTION: 'ios_store_action', INPUT_MACOS_STORE_ACTION: 'macos_store_action',
+    INPUT_ANDROID_STORE_ACTION: 'android_store_action', INPUT_VERIFY_STORE_CREDENTIALS_ONLY: 'verify_store_credentials_only',
+  };
+  for (const [envName, inputName] of Object.entries(inputNames)) {
+    assert.match(step, new RegExp(`${envName}: \\$\\{\\{ inputs\\.${inputName} \\}\\}`));
+  }
+  const nodeScript = step.match(/^          node --input-type=module <<'NODE'\n([\s\S]+)^          NODE\s*$/m);
+  assert.ok(nodeScript, 'Rollout resolver must run the shared helper');
+  const script = nodeScript[1].replace(/^          /gm, '')
+    .replace("import fs from 'node:fs';", '')
+    .replace("import { resolveRolloutEnvironment } from './ci/promote-release.mjs';", '');
+  const cases = [
+    [{ INPUT_IOS_STORE_ACTION: 'testflight' }, 'staging'],
+    [{ INPUT_MACOS_STORE_ACTION: 'testflight' }, 'staging'],
+    [{ INPUT_IOS_STORE_ACTION: 'app-store' }, 'production'],
+    [{ INPUT_MACOS_STORE_ACTION: 'app-store' }, 'production'],
+    [{ INPUT_ANDROID_STORE_ACTION: 'internal' }, 'staging'],
+    [{ INPUT_PUBLISH_GITHUB_RELEASE: 'true', INPUT_IOS_STORE_ACTION: 'testflight' }, 'production'],
+    [{ INPUT_ROLLOUT_ENVIRONMENT: 'none', INPUT_IOS_STORE_ACTION: 'testflight' }, 'none'],
+    [{ INPUT_ROLLOUT_ENVIRONMENT: 'staging', INPUT_PUBLISH_GITHUB_RELEASE: 'true' }, 'staging'],
+    [{ INPUT_ROLLOUT_ENVIRONMENT: 'production', INPUT_IOS_STORE_ACTION: 'testflight' }, 'production'],
+    [{ INPUT_VERIFY_STORE_CREDENTIALS_ONLY: 'true', INPUT_IOS_STORE_ACTION: 'app-store' }, 'none'],
+  ];
+  for (const [inputs, expected] of cases) {
+    const outputs = [];
+    vm.runInNewContext(script, {
+      fs: { appendFileSync: (file, text) => { assert.equal(file, 'mock-workflow-output'); outputs.push(text); } },
+      resolveRolloutEnvironment,
+      process: { env: {
+        INPUT_ROLLOUT_ENVIRONMENT: 'auto', INPUT_PUBLISH_GITHUB_RELEASE: 'false',
+        INPUT_IOS_STORE_ACTION: 'none', INPUT_MACOS_STORE_ACTION: 'none', INPUT_ANDROID_STORE_ACTION: 'none',
+        INPUT_VERIFY_STORE_CREDENTIALS_ONLY: 'false', GITHUB_OUTPUT: 'mock-workflow-output', ...inputs,
+      } },
+    });
+    assert.deepEqual(outputs, [`environment=${expected}\n`]);
+  }
+  const promotion = releaseWorkflowStep(job, 'Promote verified public release, Play Store track, and environment rollout');
+  assert.match(promotion, /PROMOTE_ROLLOUT_ENVIRONMENT: \$\{\{ steps\.rollout_environment\.outputs\.environment \}\}/);
+  assert.match(promotion, /PROMOTE_IOS_STORE_ACTION: none\n          PROMOTE_MACOS_STORE_ACTION: none/);
+  assert.ok(job.indexOf(step) < job.indexOf(promotion));
+});
+
+test('Linux promotion waits for requested Apple promotions to succeed', () => {
+  const job = releaseWorkflowJob('promote-release.yml', 'promote');
+  assert.match(job, /needs: \[promote_apple\]/);
+  assert.match(job, /needs\.promote_apple\.result == 'success' \|\| needs\.promote_apple\.result == 'skipped'/);
+});
+
+test('Linux promotion forwards the approved gateway source image repository variable', () => {
+  const job = releaseWorkflowJob('promote-release.yml', 'promote');
+  const promotion = releaseWorkflowStep(job, 'Promote verified public release, Play Store track, and environment rollout');
+  assert.match(promotion, /^          OMNI_GATEWAY_SOURCE_IMAGE: \$\{\{ vars\.OMNI_GATEWAY_SOURCE_IMAGE \}\}$/m);
+});
+
+for (const name of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) {
+  test(`Linux promotion forwards the existing ${name} secret selector`, () => {
+    const job = releaseWorkflowJob('promote-release.yml', 'promote');
+    const promotion = releaseWorkflowStep(job, 'Promote verified public release, Play Store track, and environment rollout');
+    assert.match(promotion, new RegExp(`^          ${name}: \\$\\{\\{ secrets\\.${name} \\}\\}$`, 'm'));
+  });
+}
+
+test('Linux promotion forwards the existing KUBECONFIG secret selector', () => {
+  const job = releaseWorkflowJob('promote-release.yml', 'promote');
+  const promotion = releaseWorkflowStep(job, 'Promote verified public release, Play Store track, and environment rollout');
+  assert.match(promotion, /^          KUBECONFIG: \$\{\{ secrets\.KUBECONFIG \}\}$/m);
+});
+
+for (const name of Object.keys(mockRolloutCredentials)) {
+  for (const [label, value] of [['missing', undefined], ['blank', ' \n\t ']]) {
+    test(`rollout rejects ${label} ${name} before any subprocess`, (t) => {
+      const sourceRoot = makeRolloutSourceFixture(t);
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+      const calls = [];
+      assert.throws(() => executeEnvironmentRollout({
+        environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+        execFileImpl: (cmd, args) => { calls.push({ cmd, args }); return ''; },
+      }), new RegExp(`${name}.*required`, 'i'));
+      assert.deepEqual(calls, []);
+    });
+  }
+}
+
+function assertPrivateKubeconfig(filename, expectedBytes) {
+  assert.equal(fs.statSync(filename).isFile(), true);
+  assert.equal(fs.statSync(filename).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.dirname(filename)).mode & 0o777, 0o700);
+  if (process.getuid) assert.equal(fs.statSync(filename).uid, process.getuid());
+  assert.deepEqual(fs.readFileSync(filename), expectedBytes);
+}
+
+test('rollout preserves opaque KUBECONFIG content privately and forwards Cloudflare credentials without logging', (t) => {
+  const sourceRoot = makeRolloutSourceFixture(t);
+  const opaque = `apiVersion: v1\nusers:\n- user:\n    token: mock-${'x'.repeat(8192)}\n  name: fixture\n\n`;
+  process.env.KUBECONFIG = opaque;
+  const mock = rolloutCheckoutMock(sourceRoot);
+  const actions = [];
+  const reported = [];
+  const previousConsole = {};
+  for (const name of ['log', 'error', 'warn']) {
+    previousConsole[name] = console[name];
+    console[name] = (...args) => { reported.push(args); };
+  }
+  let result;
+  try {
+    result = executeEnvironmentRollout({
+      environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+      execFileImpl: (cmd, args, opts) => {
+        assert.notEqual(opts.env.KUBECONFIG, opaque);
+        assertPrivateKubeconfig(opts.env.KUBECONFIG, Buffer.from(opaque));
+        if (cmd === 'git') return mock.execFileImpl(cmd, args);
+        assert.equal(opts.env.CLOUDFLARE_API_TOKEN, mockRolloutCredentials.CLOUDFLARE_API_TOKEN);
+        assert.equal(opts.env.CLOUDFLARE_ACCOUNT_ID, mockRolloutCredentials.CLOUDFLARE_ACCOUNT_ID);
+        assert.equal(args.some((arg) => String(arg).includes(opaque)), false);
+        actions.push({ cmd, filename: opts.env.KUBECONFIG });
+      },
+    });
+  } finally {
+    for (const [name, value] of Object.entries(previousConsole)) console[name] = value;
+  }
+  assert.equal(result.status, 'rolled-out');
+  assert.deepEqual(actions.map(({ cmd }) => cmd), ['bash', 'node']);
+  assert.equal(actions[0].filename, actions[1].filename);
+  assert.equal(fs.existsSync(actions[0].filename), false);
+  assert.equal(fs.existsSync(path.dirname(actions[0].filename)), false);
+  assert.deepEqual(reported, []);
+  assert.equal(process.env.KUBECONFIG, opaque);
+});
+
+test('rollout copies a KUBECONFIG filename into an owned private file and preserves the original', (t) => {
+  const sourceRoot = makeRolloutSourceFixture(t);
+  const configuredFile = path.join(sourceRoot, 'cluster config.yaml');
+  const configBytes = Buffer.from(mockRolloutCredentials.KUBECONFIG);
+  fs.writeFileSync(configuredFile, configBytes, { mode: 0o640 });
+  process.env.KUBECONFIG = configuredFile;
+  const mock = rolloutCheckoutMock(sourceRoot);
+  let usedFile;
+  const result = executeEnvironmentRollout({
+    environment: 'production', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+    execFileImpl: (cmd, args, opts) => {
+      assert.notEqual(opts.env.KUBECONFIG, configuredFile);
+      assertPrivateKubeconfig(opts.env.KUBECONFIG, configBytes);
+      if (cmd === 'git') return mock.execFileImpl(cmd, args);
+      usedFile = opts.env.KUBECONFIG;
+    },
+  });
+  assert.equal(result.status, 'rolled-out');
+  assert.equal(fs.existsSync(usedFile), false);
+  assert.deepEqual(fs.readFileSync(configuredFile), configBytes);
+  assert.equal(fs.statSync(configuredFile).mode & 0o777, 0o640);
+});
+
+for (const kind of ['directory', 'empty file']) {
+  test(`rollout rejects a KUBECONFIG ${kind} before any subprocess without exposing the input`, (t) => {
+    const sourceRoot = makeRolloutSourceFixture(t);
+    const configuredPath = path.join(sourceRoot, `mock-private-${kind.replace(' ', '-')}`);
+    if (kind === 'directory') fs.mkdirSync(configuredPath);
+    else fs.writeFileSync(configuredPath, ' \n\t ');
+    process.env.KUBECONFIG = configuredPath;
+    const calls = [];
+    assert.throws(() => executeEnvironmentRollout({
+      environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+      execFileImpl: (cmd, args) => { calls.push({ cmd, args }); return ''; },
+    }), (error) => /KUBECONFIG.*(?:regular file|empty|required)/i.test(error.message) && !error.message.includes(configuredPath));
+    assert.deepEqual(calls, []);
+  });
+}
+
+for (const failingCommand of ['bash', 'node']) {
+  test(`rollout removes its private KUBECONFIG when ${failingCommand} fails`, (t) => {
+    const sourceRoot = makeRolloutSourceFixture(t);
+    const mock = rolloutCheckoutMock(sourceRoot);
+    let usedFile;
+    assert.throws(() => executeEnvironmentRollout({
+      environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+      execFileImpl: (cmd, args, opts) => {
+        if (cmd === 'git') return mock.execFileImpl(cmd, args);
+        usedFile = opts.env.KUBECONFIG;
+        assertPrivateKubeconfig(usedFile, Buffer.from(mockRolloutCredentials.KUBECONFIG));
+        if (cmd === failingCommand) throw new Error(`mock ${cmd} failure`);
+      },
+    }), new RegExp(`mock ${failingCommand} failure`));
+    assert.equal(fs.existsSync(usedFile), false);
+    assert.equal(fs.existsSync(path.dirname(usedFile)), false);
+  });
+}
+
+test('rollout removes its private KUBECONFIG when source acquisition fails', () => {
+  let usedFile;
+  assert.throws(() => executeEnvironmentRollout({
+    environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40),
+    privateToken: 'mock-private-checkout-token',
+    execFileImpl: (cmd, args, opts) => {
+      usedFile = opts.env.KUBECONFIG;
+      assertPrivateKubeconfig(usedFile, Buffer.from(mockRolloutCredentials.KUBECONFIG));
+      throw new Error('mock source acquisition failure');
+    },
+  }), /source checkout/i);
+  assert.ok(usedFile);
+  assert.equal(fs.existsSync(usedFile), false);
+  assert.equal(fs.existsSync(path.dirname(usedFile)), false);
+});
+
+for (const name of Object.keys(mockRolloutCredentials)) {
+  test(`promotion rejects missing ${name} before contacting any provider`, async (t) => {
+    delete process.env[name];
+    const previousFetch = globalThis.fetch;
+    let providerRequests = 0;
+    globalThis.fetch = async () => {
+      providerRequests += 1;
+      throw new Error('mock unexpected provider request before credential validation');
+    };
+    t.after(() => { globalThis.fetch = previousFetch; });
+    await assert.rejects(promoteRelease({
+      version: '0.1.1', privateToken: 'mock-private-release-token',
+      publishGithubRelease: false, rolloutEnvironment: 'staging',
+    }), new RegExp(`${name}.*required`, 'i'));
+    assert.equal(providerRequests, 0);
+  });
+}
+
+test('credential verification bypasses rollout requirements and provider mutation', async (t) => {
+  for (const name of Object.keys(mockRolloutCredentials)) delete process.env[name];
+  const previousLog = console.log;
+  const reported = [];
+  console.log = (message) => { reported.push(message); };
+  t.after(() => { console.log = previousLog; });
+  const result = await promoteRelease({
+    version: '0.1.1', privateToken: 'mock-private-release-token',
+    rolloutEnvironment: 'production', verifyStoreCredentialsOnly: true,
+  });
+  assert.deepEqual(result, { verified_stores: [] });
+  assert.deepEqual(reported.map((message) => JSON.parse(message)), [{ verified_stores: [] }]);
+});
+
+for (const [label, pin] of [
+  ['mutable tag', 'omniterm/gateway:latest'],
+  ['missing repository', `@sha256:${'b'.repeat(64)}`],
+  ['uppercase algorithm', `omniterm/gateway@SHA256:${'b'.repeat(64)}`],
+  ['uppercase digest', `omniterm/gateway@sha256:${'B'.repeat(64)}`],
+  ['short digest', `omniterm/gateway@sha256:${'b'.repeat(63)}`],
+  ['leading whitespace', ` omniterm/gateway@sha256:${'b'.repeat(64)}`],
+]) {
+  test(`rollout rejects a gateway source image pin with ${label} before any subprocess`, (t) => {
+    process.env.OMNI_GATEWAY_SOURCE_IMAGE = pin;
+    const sourceRoot = makeRolloutSourceFixture(t);
+    const calls = [];
+    assert.throws(() => executeEnvironmentRollout({
+      environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+      execFileImpl: (cmd, args) => { calls.push({ cmd, args }); return ''; },
+    }), (error) => /OMNI_GATEWAY_SOURCE_IMAGE.*(?:required|immutable)/i.test(error.message) && !error.message.includes(pin));
+    assert.deepEqual(calls, []);
+  });
+
+  test(`promotion rejects a gateway source image pin with ${label} before contacting any provider`, async (t) => {
+    process.env.OMNI_GATEWAY_SOURCE_IMAGE = pin;
+    const previousFetch = globalThis.fetch;
+    let providerRequests = 0;
+    globalThis.fetch = async () => {
+      providerRequests += 1;
+      throw new Error('mock unexpected provider request before source image pin validation');
+    };
+    t.after(() => { globalThis.fetch = previousFetch; });
+    await assert.rejects(promoteRelease({
+      version: '0.1.1', privateToken: 'mock-private-release-token',
+      publishGithubRelease: false, rolloutEnvironment: 'staging',
+    }), (error) => /OMNI_GATEWAY_SOURCE_IMAGE.*(?:required|immutable)/i.test(error.message) && !error.message.includes(pin));
+    assert.equal(providerRequests, 0);
+  });
+}
+
+for (const repository of ['omniterm/gateway', 'Registry.EXAMPLE:5000/Team/Gateway_1']) {
+  test(`rollout forwards a valid gateway source image pin unchanged for ${repository}`, (t) => {
+    const pin = `${repository}@sha256:${'b'.repeat(64)}`;
+    process.env.OMNI_GATEWAY_SOURCE_IMAGE = pin;
+    const sourceRoot = makeRolloutSourceFixture(t);
+    const mock = rolloutCheckoutMock(sourceRoot);
+    const actions = [];
+    const result = executeEnvironmentRollout({
+      environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
+      execFileImpl: (cmd, args, opts) => {
+        assert.equal(opts.env.OMNI_GATEWAY_SOURCE_IMAGE, pin);
+        if (cmd === 'git') return mock.execFileImpl(cmd, args);
+        actions.push(cmd);
+      },
+    });
+    assert.equal(result.status, 'rolled-out');
+    assert.deepEqual(actions, ['bash', 'node']);
+  });
+}
