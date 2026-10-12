@@ -6,19 +6,24 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  GHCR_CONTAINER_REGISTRY,
+  PRIMARY_CONTAINER_REGISTRY,
   PUBLIC_TARGETS,
   FORBIDDEN_PRIVATE_TARGETS,
   assertNoPrivateLeakInPublicMetadata,
+  buildEnvironmentRolloutPlan,
   buildPublicSha256Sums,
   canonicalJson,
   createAppStoreConnectJwt,
   createZipBuffer,
+  executeEnvironmentRollout,
   filterPublicDownloadLinks,
   filterPublicProvenance,
   promoteAndroidToPlayStore,
   promoteIosToAppStoreConnect,
   promoteMacosToAppStoreConnect,
   resolveGpgSigningCredentials,
+  resolveRolloutEnvironment,
   scanDirectoryForLeaks,
   scanSelfHostedZipForLeaks,
   sha256Hex,
@@ -454,3 +459,236 @@ test('buildPublicSha256Sums sorts deterministically and excludes private assets'
   );
   assertNoPrivateLeakInPublicMetadata('SHA256SUMS', sums);
 });
+
+test('resolveRolloutEnvironment maps candidate and production promotion inputs', () => {
+  assert.equal(
+    resolveRolloutEnvironment({
+      rolloutEnvironment: 'auto',
+      publishGithubRelease: false,
+      iosStoreAction: 'testflight',
+      macosStoreAction: 'testflight',
+      androidStoreAction: 'internal',
+    }),
+    'staging',
+  );
+  assert.equal(
+    resolveRolloutEnvironment({
+      rolloutEnvironment: 'auto',
+      publishGithubRelease: true,
+      iosStoreAction: 'none',
+      macosStoreAction: 'none',
+      androidStoreAction: 'none',
+    }),
+    'production',
+  );
+  assert.equal(
+    resolveRolloutEnvironment({
+      rolloutEnvironment: 'auto',
+      publishGithubRelease: false,
+      iosStoreAction: 'app-store',
+      macosStoreAction: 'none',
+      androidStoreAction: 'none',
+    }),
+    'production',
+  );
+  assert.equal(
+    resolveRolloutEnvironment({
+      rolloutEnvironment: 'staging',
+      publishGithubRelease: true,
+    }),
+    'staging',
+  );
+  assert.equal(
+    resolveRolloutEnvironment({
+      rolloutEnvironment: 'production',
+      publishGithubRelease: false,
+    }),
+    'production',
+  );
+  assert.equal(
+    resolveRolloutEnvironment({
+      rolloutEnvironment: 'none',
+      publishGithubRelease: true,
+    }),
+    'none',
+  );
+  assert.equal(
+    resolveRolloutEnvironment({
+      rolloutEnvironment: 'production',
+      verifyStoreCredentialsOnly: true,
+    }),
+    'none',
+  );
+  assert.throws(
+    () => resolveRolloutEnvironment({ rolloutEnvironment: 'invalid-env' }),
+    /Unsupported rollout_environment/,
+  );
+});
+
+test('buildEnvironmentRolloutPlan targets Docker Hub omniterm/omni primary registry and supports GHCR', () => {
+  assert.equal(PRIMARY_CONTAINER_REGISTRY, 'omniterm/omni');
+  assert.equal(
+    GHCR_CONTAINER_REGISTRY,
+    'ghcr.io/omnisolo-llc/omniterm/cloud',
+  );
+
+  const stagingPlan = buildEnvironmentRolloutPlan({
+    environment: 'staging',
+    version: 'v0.1.1',
+    buildNumber: '18',
+    sourceSha: '1'.repeat(40),
+  });
+  assert.equal(stagingPlan.environment, 'staging');
+  assert.equal(stagingPlan.containerTag, 'cloud-staging-latest');
+  assert.equal(
+    stagingPlan.containerImage,
+    'omniterm/omni:cloud-staging-latest',
+  );
+  assert.equal(
+    stagingPlan.cloudflare.api_origin,
+    'https://api.staging.omniterm.dev',
+  );
+  assert.equal(
+    stagingPlan.cloudflare.cloud_origin,
+    'https://cloud.staging.omniterm.dev',
+  );
+  assert.equal(
+    stagingPlan.container.image,
+    'omniterm/omni:cloud-staging-latest',
+  );
+  assert.equal(
+    stagingPlan.container.alias_image,
+    'omniterm/omni:latest-staging',
+  );
+  assert.equal(
+    stagingPlan.container.client_image,
+    'omniterm/omni:client-staging-latest',
+  );
+  assert.equal(stagingPlan.k3s.deployment, 'omniterm-staging');
+  assert.deepEqual(stagingPlan.rollout_command, [
+    'bash',
+    'scripts/rollout-env.sh',
+    '--env',
+    'staging',
+  ]);
+  assert.deepEqual(stagingPlan.prune_command, [
+    'node',
+    'scripts/prune-ghcr-packages.mjs',
+  ]);
+
+  const prodPlan = buildEnvironmentRolloutPlan({
+    environment: 'production',
+    version: '0.1.1',
+    buildNumber: '18',
+    sourceSha: '2'.repeat(40),
+  });
+  assert.equal(prodPlan.environment, 'production');
+  assert.equal(prodPlan.containerTag, 'cloud-latest');
+  assert.equal(prodPlan.containerImage, 'omniterm/omni:cloud-latest');
+  assert.equal(prodPlan.cloudflare.api_origin, 'https://api.omniterm.dev');
+  assert.equal(prodPlan.cloudflare.cloud_origin, 'https://cloud.omniterm.dev');
+  assert.equal(prodPlan.container.image, 'omniterm/omni:cloud-latest');
+  assert.equal(prodPlan.container.alias_image, 'omniterm/omni:latest');
+  assert.equal(prodPlan.container.client_image, 'omniterm/omni:client-latest');
+  assert.equal(prodPlan.k3s.deployment, 'omniterm');
+  assert.deepEqual(prodPlan.rollout_command, [
+    'bash',
+    'scripts/rollout-env.sh',
+    '--env',
+    'production',
+  ]);
+
+  const ghcrPlan = buildEnvironmentRolloutPlan({
+    environment: 'staging',
+    version: '0.1.1',
+    buildNumber: '18',
+    sourceSha: '3'.repeat(40),
+    containerRegistry: GHCR_CONTAINER_REGISTRY,
+  });
+  assert.equal(
+    ghcrPlan.container.image,
+    'ghcr.io/omnisolo-llc/omniterm/cloud:cloud-staging-latest',
+  );
+});
+
+test('executeEnvironmentRollout invokes rollout-env.sh and prune-ghcr-packages.mjs with Docker Hub and GHCR credentials', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'omni-rollout-test-'));
+  try {
+    fs.mkdirSync(path.join(tempRoot, 'scripts'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tempRoot, 'scripts', 'rollout-env.sh'),
+      '#!/usr/bin/env bash\nexit 0\n',
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(tempRoot, 'scripts', 'prune-ghcr-packages.mjs'),
+      '#!/usr/bin/env node\n',
+      { mode: 0o755 },
+    );
+
+    const calls = [];
+    const result = executeEnvironmentRollout({
+      environment: 'staging',
+      version: '0.1.1',
+      buildNumber: '18',
+      sourceSha: 'a'.repeat(40),
+      sourceRoot: tempRoot,
+      githubToken: 'ghs_test_token',
+      dockerHubUsername: 'omniterm',
+      dockerHubPatReadWrite: 'dckr_pat_rw_test',
+      dockerHubPatReadOnly: 'dckr_pat_ro_test',
+      execFileImpl: (cmd, args, opts) => {
+        calls.push({ cmd, args, cwd: opts.cwd, env: opts.env });
+      },
+    });
+
+    assert.equal(result.status, 'rolled-out');
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].cmd, 'bash');
+    assert.deepEqual(calls[0].args, [
+      'scripts/rollout-env.sh',
+      '--env',
+      'staging',
+    ]);
+    assert.equal(calls[0].env.OMNI_REGISTRY, 'omniterm/omni');
+    assert.equal(calls[0].env.DOCKER_HUB_USERNAME, 'omniterm');
+    assert.equal(calls[0].env.DOCKER_HUB_PAT_READ_WRITE, 'dckr_pat_rw_test');
+    assert.equal(calls[0].env.DOCKER_HUB_PAT_READ_ONLY, 'dckr_pat_ro_test');
+    assert.equal(calls[0].env.GITHUB_TOKEN, 'ghs_test_token');
+    assert.equal(calls[1].cmd, 'node');
+    assert.deepEqual(calls[1].args, ['scripts/prune-ghcr-packages.mjs']);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('release and promote-release workflows wire staging/production rollout and Docker Hub + GHCR credentials', () => {
+  const workflowsDir = path.resolve(
+    path.dirname(new URL(import.meta.url).pathname),
+    '../.github/workflows',
+  );
+  const promoteYml = fs.readFileSync(
+    path.join(workflowsDir, 'promote-release.yml'),
+    'utf8',
+  );
+  const releaseYml = fs.readFileSync(
+    path.join(workflowsDir, 'release.yml'),
+    'utf8',
+  );
+
+  assert.match(promoteYml, /rollout_environment:/);
+  assert.match(promoteYml, /packages:\s*write/);
+  assert.match(promoteYml, /PROMOTE_CONTAINER_REGISTRY:\s*omniterm\/omni/);
+  assert.match(promoteYml, /DOCKER_HUB_USERNAME:\s*omniterm/);
+  assert.match(
+    promoteYml,
+    /DOCKER_HUB_PAT_READ_WRITE:\s*\$\{\{\s*secrets\.DOCKER_HUB_PAT_READ_WRITE\s*\}\}/,
+  );
+  assert.match(
+    promoteYml,
+    /PROMOTE_ROLLOUT_ENVIRONMENT:\s*\$\{\{\s*inputs\.rollout_environment\s*\}\}/,
+  );
+  assert.match(releaseYml, /-f rollout_environment=staging/);
+});
+
+

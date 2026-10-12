@@ -9,6 +9,8 @@ import zlib from 'node:zlib';
 
 export const STAGING_REPOSITORY = 'omnisolo-llc/omniterm';
 export const PUBLIC_REPOSITORY = 'omnisolo-llc/omniterm-release';
+export const PRIMARY_CONTAINER_REGISTRY = 'omniterm/omni';
+export const GHCR_CONTAINER_REGISTRY = 'ghcr.io/omnisolo-llc/omniterm/cloud';
 
 export const PUBLIC_TARGETS = Object.freeze([
   'windows',
@@ -1149,6 +1151,234 @@ export async function promoteAndroidToPlayStore({
   };
 }
 
+export function resolveRolloutEnvironment({
+  rolloutEnvironment = 'auto',
+  publishGithubRelease = false,
+  iosStoreAction = 'none',
+  macosStoreAction = 'none',
+  androidStoreAction = 'none',
+  verifyStoreCredentialsOnly = false,
+} = {}) {
+  if (verifyStoreCredentialsOnly) {
+    return 'none';
+  }
+  const normalized = String(rolloutEnvironment || 'auto')
+    .trim()
+    .toLowerCase();
+  if (!['auto', 'none', 'staging', 'production'].includes(normalized)) {
+    throw new Error(`Unsupported rollout_environment: ${rolloutEnvironment}`);
+  }
+  if (normalized !== 'auto') {
+    return normalized;
+  }
+  const isProductionStore =
+    iosStoreAction === 'app-store' ||
+    macosStoreAction === 'app-store' ||
+    androidStoreAction === 'production';
+  if (publishGithubRelease || isProductionStore) {
+    return 'production';
+  }
+  const isStagingStore =
+    iosStoreAction === 'testflight' ||
+    macosStoreAction === 'testflight' ||
+    ['internal', 'alpha', 'beta'].includes(androidStoreAction);
+  if (isStagingStore) {
+    return 'staging';
+  }
+  return 'none';
+}
+
+export function buildEnvironmentRolloutPlan({
+  environment,
+  version,
+  buildNumber = '',
+  sourceSha = '',
+  containerRegistry = PRIMARY_CONTAINER_REGISTRY,
+  containerTag = '',
+}) {
+  if (!['staging', 'production'].includes(environment)) {
+    throw new Error(
+      `Unsupported rollout environment for plan: ${environment}`,
+    );
+  }
+  const normalizedVersion = String(version || '').trim().replace(/^v/, '');
+  const normalizedBuild = String(buildNumber || '').trim();
+  const normalizedRegistry = String(
+    containerRegistry || PRIMARY_CONTAINER_REGISTRY,
+  )
+    .trim()
+    .replace(/\/+$/, '');
+  const isStaging = environment === 'staging';
+  const imageTag =
+    String(containerTag || '').trim() ||
+    (isStaging ? 'cloud-staging-latest' : 'cloud-latest');
+  const aliasTag = isStaging ? 'latest-staging' : 'latest';
+  const clientTag = isStaging ? 'client-staging-latest' : 'client-latest';
+  const containerImage = `${normalizedRegistry}:${imageTag}`;
+  return {
+    environment,
+    version: normalizedVersion,
+    build_number: normalizedBuild,
+    source_sha: String(sourceSha || '').trim(),
+    containerTag: imageTag,
+    containerImage,
+    cloudflare: {
+      env: isStaging ? 'staging' : 'production',
+      api_origin: isStaging
+        ? 'https://api.staging.omniterm.dev'
+        : 'https://api.omniterm.dev',
+      cloud_origin: isStaging
+        ? 'https://cloud.staging.omniterm.dev'
+        : 'https://cloud.omniterm.dev',
+    },
+    container: {
+      registry: normalizedRegistry,
+      image_tag: imageTag,
+      alias_tag: aliasTag,
+      client_tag: clientTag,
+      image: containerImage,
+      alias_image: `${normalizedRegistry}:${aliasTag}`,
+      client_image: `${normalizedRegistry}:${clientTag}`,
+      prune_script: 'scripts/prune-ghcr-packages.mjs',
+    },
+    k3s: {
+      namespace: 'omniterm',
+      deployment: isStaging ? 'omniterm-staging' : 'omniterm',
+      host: isStaging ? 'cloud.staging.omniterm.dev' : 'cloud.omniterm.dev',
+    },
+    rollout_command: ['bash', 'scripts/rollout-env.sh', '--env', environment],
+    prune_command: ['node', 'scripts/prune-ghcr-packages.mjs'],
+  };
+}
+
+export function executeEnvironmentRollout({
+  environment,
+  version,
+  buildNumber = '',
+  sourceSha = '',
+  sourceRoot = '',
+  stagingRepo = STAGING_REPOSITORY,
+  privateToken = '',
+  githubToken = '',
+  dockerHubUsername = 'omniterm',
+  dockerHubPatReadWrite = '',
+  dockerHubPatReadOnly = '',
+  containerRegistry = PRIMARY_CONTAINER_REGISTRY,
+  execFileImpl = execFileSync,
+}) {
+  const plan = buildEnvironmentRolloutPlan({
+    environment,
+    version,
+    buildNumber,
+    sourceSha,
+    containerRegistry,
+  });
+
+  let resolvedRoot = String(
+    sourceRoot || process.env.PROMOTE_SOURCE_ROOT || '',
+  ).trim();
+  let tempCheckoutDir = '';
+
+  try {
+    if (
+      !resolvedRoot &&
+      privateToken &&
+      plan.source_sha &&
+      /^[0-9a-f]{40}$/i.test(plan.source_sha)
+    ) {
+      tempCheckoutDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'omni-rollout-src-'),
+      );
+      const cloneUrl = `https://x-access-token:${privateToken}@github.com/${stagingRepo}.git`;
+      execFileImpl('git', ['init', tempCheckoutDir], { stdio: 'pipe' });
+      execFileImpl(
+        'git',
+        ['-C', tempCheckoutDir, 'remote', 'add', 'origin', cloneUrl],
+        { stdio: 'pipe' },
+      );
+      execFileImpl(
+        'git',
+        [
+          '-C',
+          tempCheckoutDir,
+          'fetch',
+          '--depth=1',
+          'origin',
+          plan.source_sha,
+        ],
+        { stdio: 'pipe' },
+      );
+      execFileImpl(
+        'git',
+        ['-C', tempCheckoutDir, 'checkout', '--detach', 'FETCH_HEAD'],
+        { stdio: 'pipe' },
+      );
+      resolvedRoot = tempCheckoutDir;
+    }
+
+    const rolloutScript = resolvedRoot
+      ? path.join(resolvedRoot, 'scripts', 'rollout-env.sh')
+      : '';
+    if (!rolloutScript || !fs.existsSync(rolloutScript)) {
+      return {
+        ...plan,
+        status: 'skipped-no-source-checkout',
+      };
+    }
+
+    const effectiveGithubToken =
+      githubToken ||
+      process.env.GITHUB_TOKEN ||
+      privateToken ||
+      process.env.GH_TOKEN ||
+      '';
+    const childEnv = {
+      ...process.env,
+      OMNI_REGISTRY: plan.container.registry,
+      PROMOTE_CONTAINER_REGISTRY: plan.container.registry,
+      PROMOTE_VERSION: plan.version,
+      PROMOTE_BUILD_NUMBER: plan.build_number,
+      RELEASE_SOURCE_SHA: plan.source_sha,
+      DOCKER_HUB_USERNAME:
+        dockerHubUsername || process.env.DOCKER_HUB_USERNAME || 'omniterm',
+      DOCKER_HUB_PAT_READ_WRITE:
+        dockerHubPatReadWrite || process.env.DOCKER_HUB_PAT_READ_WRITE || '',
+      DOCKER_HUB_PAT_READ_ONLY:
+        dockerHubPatReadOnly || process.env.DOCKER_HUB_PAT_READ_ONLY || '',
+      GITHUB_TOKEN: effectiveGithubToken,
+      GH_TOKEN: privateToken || effectiveGithubToken,
+    };
+
+    execFileImpl('bash', ['scripts/rollout-env.sh', '--env', environment], {
+      cwd: resolvedRoot,
+      env: childEnv,
+      stdio: 'inherit',
+    });
+
+    const pruneScript = path.join(
+      resolvedRoot,
+      'scripts',
+      'prune-ghcr-packages.mjs',
+    );
+    if (fs.existsSync(pruneScript)) {
+      execFileImpl('node', ['scripts/prune-ghcr-packages.mjs'], {
+        cwd: resolvedRoot,
+        env: childEnv,
+        stdio: 'inherit',
+      });
+    }
+
+    return {
+      ...plan,
+      status: 'rolled-out',
+    };
+  } finally {
+    if (tempCheckoutDir) {
+      fs.rmSync(tempCheckoutDir, { recursive: true, force: true });
+    }
+  }
+}
+
 export async function promoteRelease({
   version,
   expectedBuildNumber = '',
@@ -1156,6 +1386,10 @@ export async function promoteRelease({
   publicRepo = PUBLIC_REPOSITORY,
   privateToken,
   publicToken,
+  githubToken = '',
+  dockerHubUsername = 'omniterm',
+  dockerHubPatReadWrite = '',
+  dockerHubPatReadOnly = '',
   signingConfigJson,
   publishGithubRelease = true,
   iosStoreAction = 'none',
@@ -1166,7 +1400,11 @@ export async function promoteRelease({
   macosSigningConfigJson = '',
   androidStoreAction = 'none',
   googlePlayServiceAccountJson = '',
+  rolloutEnvironment = 'auto',
+  containerRegistry = PRIMARY_CONTAINER_REGISTRY,
+  sourceRoot = '',
   verifyStoreCredentialsOnly = false,
+  execFileImpl = execFileSync,
 }) {
   if (!privateToken) {
     throw new Error('PRIVATE_RELEASE_TOKEN is required');
@@ -1616,6 +1854,35 @@ export async function promoteRelease({
         `Promoted macOS candidate v${normalizedVersion} (${resolvedBuildNumber}) via action "${macosResult.action}" (${macosResult.status}).`,
       );
     }
+
+    const resolvedRolloutEnv = resolveRolloutEnvironment({
+      rolloutEnvironment,
+      publishGithubRelease,
+      iosStoreAction,
+      macosStoreAction,
+      androidStoreAction,
+      verifyStoreCredentialsOnly,
+    });
+    if (resolvedRolloutEnv !== 'none') {
+      const rolloutResult = executeEnvironmentRollout({
+        environment: resolvedRolloutEnv,
+        version: normalizedVersion,
+        buildNumber: resolvedBuildNumber,
+        sourceSha: String(stagingProvenance.source_sha || ''),
+        sourceRoot,
+        stagingRepo,
+        privateToken,
+        githubToken,
+        dockerHubUsername,
+        dockerHubPatReadWrite,
+        dockerHubPatReadOnly,
+        containerRegistry,
+        execFileImpl,
+      });
+      console.log(
+        `Environment rollout (${rolloutResult.environment}) for v${normalizedVersion} (${resolvedBuildNumber}) image ${rolloutResult.container.image}: ${rolloutResult.status}.`,
+      );
+    }
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });
   }
@@ -1630,6 +1897,10 @@ if (
     expectedBuildNumber: process.env.PROMOTE_BUILD_NUMBER || '',
     privateToken: process.env.PRIVATE_RELEASE_TOKEN,
     publicToken: process.env.GH_TOKEN,
+    githubToken: process.env.GITHUB_TOKEN || '',
+    dockerHubUsername: process.env.DOCKER_HUB_USERNAME || 'omniterm',
+    dockerHubPatReadWrite: process.env.DOCKER_HUB_PAT_READ_WRITE || '',
+    dockerHubPatReadOnly: process.env.DOCKER_HUB_PAT_READ_ONLY || '',
     signingConfigJson: process.env.PACKAGE_SIGNING_CONFIG,
     publishGithubRelease:
       String(process.env.PROMOTE_GITHUB_RELEASE ?? 'true') !== 'false',
@@ -1644,6 +1915,10 @@ if (
     androidStoreAction: process.env.PROMOTE_ANDROID_STORE_ACTION || 'none',
     googlePlayServiceAccountJson:
       process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || '',
+    rolloutEnvironment: process.env.PROMOTE_ROLLOUT_ENVIRONMENT || 'auto',
+    containerRegistry:
+      process.env.PROMOTE_CONTAINER_REGISTRY || PRIMARY_CONTAINER_REGISTRY,
+    sourceRoot: process.env.PROMOTE_SOURCE_ROOT || '',
     verifyStoreCredentialsOnly:
       String(process.env.VERIFY_STORE_CREDENTIALS_ONLY ?? 'false') === 'true',
   }).catch((err) => {
