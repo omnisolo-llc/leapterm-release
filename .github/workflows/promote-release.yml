@@ -78,10 +78,11 @@ permissions:
 jobs:
   promote:
     name: Promote Approved Public & Play Store Artifacts
+    needs: [promote_apple]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: package-signing
-    if: ${{ !cancelled() && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && (inputs.verify_store_credentials_only || inputs.publish_github_release || inputs.android_store_action != 'none' || inputs.rollout_environment != 'none') }}
+    if: ${{ !cancelled() && (needs.promote_apple.result == 'success' || needs.promote_apple.result == 'skipped') && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && (inputs.verify_store_credentials_only || inputs.publish_github_release || inputs.android_store_action != 'none' || inputs.rollout_environment != 'none') }}
     permissions:
       contents: write
       packages: write
@@ -97,13 +98,40 @@ jobs:
           package-manager-cache: false
       - name: Verify promotion and leak-scanner contracts
         run: node --test ci/test_promote_release.mjs
+      - name: Resolve environment rollout from all promotion inputs
+        id: rollout_environment
+        env:
+          INPUT_ROLLOUT_ENVIRONMENT: ${{ inputs.rollout_environment }}
+          INPUT_PUBLISH_GITHUB_RELEASE: ${{ inputs.publish_github_release }}
+          INPUT_IOS_STORE_ACTION: ${{ inputs.ios_store_action }}
+          INPUT_MACOS_STORE_ACTION: ${{ inputs.macos_store_action }}
+          INPUT_ANDROID_STORE_ACTION: ${{ inputs.android_store_action }}
+          INPUT_VERIFY_STORE_CREDENTIALS_ONLY: ${{ inputs.verify_store_credentials_only }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { resolveRolloutEnvironment } from './ci/promote-release.mjs';
+          const environment = resolveRolloutEnvironment({
+            rolloutEnvironment: process.env.INPUT_ROLLOUT_ENVIRONMENT,
+            publishGithubRelease: process.env.INPUT_PUBLISH_GITHUB_RELEASE === 'true',
+            iosStoreAction: process.env.INPUT_IOS_STORE_ACTION,
+            macosStoreAction: process.env.INPUT_MACOS_STORE_ACTION,
+            androidStoreAction: process.env.INPUT_ANDROID_STORE_ACTION,
+            verifyStoreCredentialsOnly: process.env.INPUT_VERIFY_STORE_CREDENTIALS_ONLY === 'true',
+          });
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `environment=${environment}\n`);
+          NODE
       - name: Promote verified public release, Play Store track, and environment rollout
         env:
           PROMOTE_VERSION: ${{ inputs.version }}
           PROMOTE_BUILD_NUMBER: ${{ inputs.build_number }}
           PROMOTE_GITHUB_RELEASE: ${{ inputs.publish_github_release }}
-          PROMOTE_ROLLOUT_ENVIRONMENT: ${{ inputs.rollout_environment }}
+          PROMOTE_ROLLOUT_ENVIRONMENT: ${{ steps.rollout_environment.outputs.environment }}
           PROMOTE_CONTAINER_REGISTRY: omniterm/omni
+          OMNI_GATEWAY_SOURCE_IMAGE: ${{ vars.OMNI_GATEWAY_SOURCE_IMAGE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          KUBECONFIG: ${{ secrets.KUBECONFIG }}
           DOCKER_HUB_USERNAME: omniterm
           DOCKER_HUB_PAT_READ_WRITE: ${{ secrets.DOCKER_HUB_PAT_READ_WRITE }}
           DOCKER_HUB_PAT_READ_ONLY: ${{ secrets.DOCKER_HUB_PAT_READ_ONLY }}
