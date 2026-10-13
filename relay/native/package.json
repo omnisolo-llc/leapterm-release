@@ -1,0 +1,11 @@
+{
+  "name": "omniterm-self-hosted-origin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "description": "Public self-hosted relay socket owner with local durable revocation",
+  "engines": {"node": ">=24.21.0"},
+  "scripts": {"start": "node src/cli.js"},
+  "dependencies": {"ws": "8.21.3"}
+}

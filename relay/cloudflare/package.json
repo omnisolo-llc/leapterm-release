@@ -1,0 +1,21 @@
+{
+  "name": "omniterm-self-hosted-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone token-authenticated OmniTerm WebSocket relay for Cloudflare Workers",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run --outdir .wrangler/check",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "miniflare": "5.20260930.0-alpha",
+    "wrangler": "4.145.0"
+  }
+}

@@ -1,0 +1,103 @@
+name: Public contracts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    if: github.repository == 'omnisolo-llc/omniterm-release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Enforce standard-runner policy before allocating the contracts matrix
+        run: >-
+          bash ci/native-release/run.sh audit-runners
+          --workflows .github/workflows/contracts.yml
+          --policy ci/standard-runner-policy.json
+
+  contracts:
+    # Preserve the required check contexts during the runner upgrade. The
+    # Windows check keeps its historical name; the actual runner is 2025.
+    name: contracts (${{ matrix.check }})
+    needs: policy
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        runner: [ubuntu-24.04, windows-2025, macos-26]
+        include:
+          - runner: ubuntu-24.04
+            check: ubuntu-24.04
+          - runner: windows-2025
+            check: windows-2022
+          - runner: macos-26
+            check: macos-26
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Test launcher and encryption contracts without credentials
+        shell: bash
+        run: |
+          npm ci --prefix relay/cloudflare
+          bash ci/test-native-release.sh
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+          npm test --prefix relay/cloudflare
+
+  first-party-moq:
+    needs: policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Install native HTTP/3 build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libicu-dev
+      - name: Test the first-party MoQT control and cutoff API
+        run: |
+          npm ci --ignore-scripts --prefix relay/moq
+          npm run native-build --prefix relay/moq
+          npm test --prefix relay/moq
+
+  native-relay-contract:
+    needs: policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Test the self-hosted native relay package contract
+        run: |
+          npm ci --prefix relay/native
+          node --test --test-concurrency=1 ci/test_native_relay_contract.mjs

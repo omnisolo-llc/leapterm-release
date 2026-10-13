@@ -1,0 +1,192 @@
+name: Promote Public Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version to promote from private staging (for example 0.1.1)
+        required: true
+        type: string
+      build_number:
+        description: Optional expected build number to verify before promotion (1-9999)
+        required: false
+        default: ""
+        type: string
+      publish_github_release:
+        description: Promote approved public client/agent binaries and self-hosted bundle to GitHub Releases
+        required: false
+        default: true
+        type: boolean
+      rollout_environment:
+        description: Environment rollout target for Cloudflare backend, omniterm/omni container image, and myk3s cluster (auto, none, staging, or production)
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - none
+          - staging
+          - production
+      ios_store_action:
+        description: iOS App Store Connect action (none, testflight candidate upload, or app-store formal submission)
+        required: false
+        default: none
+        type: choice
+        options:
+          - none
+          - testflight
+          - app-store
+      ios_automatic_release:
+        description: Automatically release iOS version after App Store review approval
+        required: false
+        default: false
+        type: boolean
+      macos_store_action:
+        description: macOS App Store Connect action (none, testflight candidate upload, or app-store formal submission)
+        required: false
+        default: none
+        type: choice
+        options:
+          - none
+          - testflight
+          - app-store
+      macos_automatic_release:
+        description: Automatically release macOS version after App Store review approval
+        required: false
+        default: false
+        type: boolean
+      android_store_action:
+        description: Google Play Store track promotion (none, internal candidate, alpha, beta, or production release)
+        required: false
+        default: none
+        type: choice
+        options:
+          - none
+          - internal
+          - alpha
+          - beta
+          - production
+      verify_store_credentials_only:
+        description: Verify live Google Play and Apple App Store Connect API credentials and Release Eng authorization without mutating releases
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Promote Approved Public & Play Store Artifacts
+    needs: [promote_apple]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: package-signing
+    if: ${{ !cancelled() && (needs.promote_apple.result == 'success' || needs.promote_apple.result == 'skipped') && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && (inputs.verify_store_credentials_only || inputs.publish_github_release || inputs.android_store_action != 'none' || inputs.rollout_environment != 'none') }}
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout promoter scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Verify promotion and leak-scanner contracts
+        run: node --test ci/test_promote_release.mjs
+      - name: Resolve environment rollout from all promotion inputs
+        id: rollout_environment
+        env:
+          INPUT_ROLLOUT_ENVIRONMENT: ${{ inputs.rollout_environment }}
+          INPUT_PUBLISH_GITHUB_RELEASE: ${{ inputs.publish_github_release }}
+          INPUT_IOS_STORE_ACTION: ${{ inputs.ios_store_action }}
+          INPUT_MACOS_STORE_ACTION: ${{ inputs.macos_store_action }}
+          INPUT_ANDROID_STORE_ACTION: ${{ inputs.android_store_action }}
+          INPUT_VERIFY_STORE_CREDENTIALS_ONLY: ${{ inputs.verify_store_credentials_only }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { resolveRolloutEnvironment } from './ci/promote-release.mjs';
+          const environment = resolveRolloutEnvironment({
+            rolloutEnvironment: process.env.INPUT_ROLLOUT_ENVIRONMENT,
+            publishGithubRelease: process.env.INPUT_PUBLISH_GITHUB_RELEASE === 'true',
+            iosStoreAction: process.env.INPUT_IOS_STORE_ACTION,
+            macosStoreAction: process.env.INPUT_MACOS_STORE_ACTION,
+            androidStoreAction: process.env.INPUT_ANDROID_STORE_ACTION,
+            verifyStoreCredentialsOnly: process.env.INPUT_VERIFY_STORE_CREDENTIALS_ONLY === 'true',
+          });
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `environment=${environment}\n`);
+          NODE
+      - name: Promote verified public release, Play Store track, and environment rollout
+        env:
+          PROMOTE_VERSION: ${{ inputs.version }}
+          PROMOTE_BUILD_NUMBER: ${{ inputs.build_number }}
+          PROMOTE_GITHUB_RELEASE: ${{ inputs.publish_github_release }}
+          PROMOTE_ROLLOUT_ENVIRONMENT: ${{ steps.rollout_environment.outputs.environment }}
+          PROMOTE_CONTAINER_REGISTRY: omniterm/omni
+          OMNI_GATEWAY_SOURCE_IMAGE: ${{ vars.OMNI_GATEWAY_SOURCE_IMAGE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          KUBECONFIG: ${{ secrets.KUBECONFIG }}
+          DOCKER_HUB_USERNAME: omniterm
+          DOCKER_HUB_PAT_READ_WRITE: ${{ secrets.DOCKER_HUB_PAT_READ_WRITE }}
+          DOCKER_HUB_PAT_READ_ONLY: ${{ secrets.DOCKER_HUB_PAT_READ_ONLY }}
+          PROMOTE_IOS_STORE_ACTION: none
+          PROMOTE_MACOS_STORE_ACTION: none
+          PROMOTE_ANDROID_STORE_ACTION: ${{ inputs.android_store_action }}
+          VERIFY_STORE_CREDENTIALS_ONLY: ${{ inputs.verify_store_credentials_only }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+          PACKAGE_SIGNING_CONFIG: ${{ secrets.PACKAGE_SIGNING_CONFIG }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+        run: node ci/promote-release.mjs
+
+  promote_apple:
+    name: Promote Staged iOS/macOS Candidate to App Store Connect
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment: app-store
+    if: ${{ !cancelled() && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && (inputs.verify_store_credentials_only || inputs.ios_store_action != 'none' || inputs.macos_store_action != 'none') }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout promoter scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Verify promotion and store contracts
+        run: node --test ci/test_promote_release.mjs
+      - name: Promote verified iOS/macOS build to TestFlight or App Store
+        env:
+          PROMOTE_VERSION: ${{ inputs.version }}
+          PROMOTE_BUILD_NUMBER: ${{ inputs.build_number }}
+          PROMOTE_GITHUB_RELEASE: "false"
+          PROMOTE_ROLLOUT_ENVIRONMENT: none
+          PROMOTE_IOS_STORE_ACTION: ${{ inputs.ios_store_action }}
+          PROMOTE_IOS_AUTOMATIC_RELEASE: ${{ inputs.ios_automatic_release }}
+          PROMOTE_MACOS_STORE_ACTION: ${{ inputs.macos_store_action }}
+          PROMOTE_MACOS_AUTOMATIC_RELEASE: ${{ inputs.macos_automatic_release }}
+          PROMOTE_ANDROID_STORE_ACTION: none
+          VERIFY_STORE_CREDENTIALS_ONLY: ${{ inputs.verify_store_credentials_only }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+          IOS_SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
+          MACOS_SIGNING_CONFIG: ${{ secrets.MACOS_SIGNING_CONFIG }}
+        run: node ci/promote-release.mjs

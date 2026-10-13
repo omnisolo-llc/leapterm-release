@@ -1,0 +1,19 @@
+{
+  "name": "@omniterm/moq-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "native-build": "node scripts/build-patched-webtransport.mjs",
+    "start": "node src/index.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "dependencies": {
+    "@fails-components/webtransport": "1.6.8",
+    "@fails-components/webtransport-transport-http3-quiche": "1.6.8",
+    "@moq/net": "0.3.5"
+  }
+}

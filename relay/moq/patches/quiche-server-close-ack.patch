@@ -1,0 +1,18 @@
+diff --git a/quiche/quic/core/http/web_transport_http3.cc b/quiche/quic/core/http/web_transport_http3.cc
+index 1e4c4b9..3be67ad 100644
+--- a/quiche/quic/core/http/web_transport_http3.cc
++++ b/quiche/quic/core/http/web_transport_http3.cc
+@@ -131,5 +131,6 @@ void WebTransportHttp3::OnCloseReceived(WebTransportSessionError error_code,
+   if (close_sent_) {
+     QUIC_DLOG(INFO) << "Ignoring received CLOSE_WEBTRANSPORT_SESSION as we've "
+                        "already sent our own.";
++    MaybeNotifyClose();
+     return;
+   }
+@@ -151,5 +152,6 @@ void WebTransportHttp3::OnConnectStreamFinReceived() {
+   close_received_ = true;
+   if (close_sent_) {
+     QUIC_DLOG(INFO) << "Ignoring received FIN as we've already sent our close.";
++    MaybeNotifyClose();
+     return;
+   }

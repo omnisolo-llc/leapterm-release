@@ -1,0 +1,16 @@
+diff --git a/transports/http3-quiche/lib/clientsocket.js b/transports/http3-quiche/lib/clientsocket.js
+--- a/transports/http3-quiche/lib/clientsocket.js
++++ b/transports/http3-quiche/lib/clientsocket.js
+@@ -69,7 +69,11 @@ export class Http3WebTransportClientSocket extends Http3WebTransportSocket {
+   }
+ 
+   closeClient() {
+-    process.nextTick(() => {
++    // The native receive callback can notify JS before Quiche finishes writing
++    // its peer FIN/close response. nextTick may tear down the native session
++    // reentrantly inside that callback. Let it unwind; do not add a timed grace
++    // period or manufacture a server-side closure acknowledgement.
++    setImmediate(() => {
+       // TODO call close on all sessions
+       this.cobj.closeClientInt()
+       // close socket after sending close frames

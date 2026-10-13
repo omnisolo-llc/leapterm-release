@@ -1,0 +1,51 @@
+diff --git a/src/http3serversession.cc b/src/http3serversession.cc
+--- a/src/http3serversession.cc
++++ b/src/http3serversession.cc
+@@ -11,1 +11,2 @@
+ #include "src/http3serversession.h"
++#include <vector>
+@@ -48,3 +49,17 @@
+       (*itty).second->RemoveVisitorRemoveVisitor();
+     }
+   }
++
++  void Http3ServerSession::OnConnectionClosed(
++      const QuicConnectionCloseFrame &frame, ConnectionCloseSource source) {
++    std::vector<Http3WTSession::Visitor *> visitors;
++    visitors.reserve(svisitors_.size());
++    for (const auto &entry : svisitors_) {
++      if (entry.second != nullptr) visitors.push_back(entry.second);
++    }
++    for (Http3WTSession::Visitor *visitor : visitors) {
++      visitor->OnSessionClosed(0, "quic_connection_closed");
++    }
++    QuicServerSessionBase::OnConnectionClosed(frame, source);
++  }
++
+diff --git a/src/http3serversession.h b/src/http3serversession.h
+--- a/src/http3serversession.h
++++ b/src/http3serversession.h
+@@ -54,2 +54,4 @@
+     // Override base class to detact client sending data on server push stream.
++    void OnConnectionClosed(const QuicConnectionCloseFrame &frame,
++                            ConnectionCloseSource source) override;
+     void OnStreamFrame(const QuicStreamFrame &frame) override;
+diff --git a/src/http3wtsessionvisitor.cc b/src/http3wtsessionvisitor.cc
+--- a/src/http3wtsessionvisitor.cc
++++ b/src/http3wtsessionvisitor.cc
+@@ -24,5 +24,7 @@
+     void Http3WTSession::Visitor::OnSessionClosed(WebTransportSessionError error_code,
+                                                 const std::string &error_message)
+     {
++        if (session_closed_) return;
++        session_closed_ = true;
+         // printf("OnSessionClosed %d %x %x\n", getpid(), this, session_);
+         session_->session_ = nullptr;
+diff --git a/src/http3wtsessionvisitor.h b/src/http3wtsessionvisitor.h
+--- a/src/http3wtsessionvisitor.h
++++ b/src/http3wtsessionvisitor.h
+@@ -101,3 +101,4 @@
+          protected:
+           Http3WTSession* session_;
++          bool session_closed_ = false;
+           VisitorRemoveVisitor* vrvis_;
