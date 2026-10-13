@@ -4,14 +4,91 @@
 const MAX_FRAME = 1024 * 1024;
 const MAX_DATA = 256 * 1024;
 const MAX_IDENTIFIER = 256;
+const MAX_SCOPE_CIDRS = 32;
+const MAX_SCOPE_CIDR_BYTES = 43;
+export const SCOPED_DESTINATION_CAPABILITY = 8192;
 const utf8 = new TextEncoder();
 const text = new TextDecoder('utf-8', { fatal: true });
 const TYPES = ['Hello', 'HelloAccepted', 'Dial', 'DialAccepted', 'Data', 'WindowUpdate', 'Close', 'Telemetry', 'Ping', 'Pong', 'DatagramDial', 'DatagramDialAccepted', 'Datagram', 'DatagramClose'];
 TYPES[29] = 'Capabilities';
 TYPES[36] = 'HelloChallenge';
 TYPES[37] = 'ClientAuthenticated';
+TYPES[44] = 'OrdinaryDesktopSignalRequest';
+TYPES[45] = 'OrdinaryDesktopSignalReply';
+TYPES[46] = 'OrdinaryDesktopServiceRetired';
+TYPES[47] = 'DialScoped';
 
 function fail() { throw new Error('invalid connector frame'); }
+
+function ipv4Words(value) {
+  const parts = value.split('.');
+  if (parts.length !== 4 || parts.some(part => !/^(0|[1-9][0-9]{0,2})$/.test(part) || Number(part) > 255)) fail();
+  const octets = parts.map(Number);
+  if (octets.join('.') !== value) fail();
+  return octets;
+}
+
+function ipv6Words(value) {
+  if (!value.includes(':') || !/^[0-9a-f:.]+$/.test(value)) fail();
+  let expanded = value;
+  if (value.includes('.')) {
+    const at = value.lastIndexOf(':');
+    const octets = ipv4Words(value.slice(at + 1));
+    expanded = `${value.slice(0, at + 1)}${((octets[0] << 8) | octets[1]).toString(16)}:${((octets[2] << 8) | octets[3]).toString(16)}`;
+  }
+  const halves = expanded.split('::');
+  if (halves.length > 2) fail();
+  const take = part => part ? part.split(':').map(word => {
+    if (!/^[0-9a-f]{1,4}$/.test(word)) fail();
+    return parseInt(word, 16);
+  }) : [];
+  const left = take(halves[0]), right = halves.length === 2 ? take(halves[1]) : [];
+  if (halves.length === 1) { if (left.length !== 8) fail(); return left; }
+  const missing = 8 - left.length - right.length;
+  if (missing < 1) fail();
+  return [...left, ...Array(missing).fill(0), ...right];
+}
+
+// Match Rust's unmapped IPv6 display: shortest lowercase representation and
+// the first longest zero run. Mapped CIDRs are rejected before this is called.
+function canonicalIpv6(words) {
+  let bestAt = -1, bestLength = 1;
+  for (let at = 0; at < words.length;) {
+    if (words[at] !== 0) { at++; continue; }
+    const start = at;
+    while (at < words.length && words[at] === 0) at++;
+    if (at - start > bestLength) { bestAt = start; bestLength = at - start; }
+  }
+  const hex = words.map(word => word.toString(16));
+  if (bestAt < 0) return hex.join(':');
+  return `${hex.slice(0, bestAt).join(':')}::${hex.slice(bestAt + bestLength).join(':')}`;
+}
+
+function validateCidr(value) {
+  if (typeof value !== 'string' || !value.length || utf8.encode(value).length > MAX_SCOPE_CIDR_BYTES) fail();
+  const parts = value.split('/');
+  if (parts.length !== 2 || !/^(0|[1-9][0-9]{0,2})$/.test(parts[1])) fail();
+  const prefix = Number(parts[1]), v6 = parts[0].includes(':'), bits = v6 ? 128 : 32;
+  if (prefix > bits || String(prefix) !== parts[1]) fail();
+  const words = v6 ? ipv6Words(parts[0]) : ipv4Words(parts[0]);
+  // The shared IpCidr policy normalizes mapped addresses to IPv4. Carry the
+  // canonical IPv4 network explicitly so both codecs agree on prefix meaning.
+  if (v6 && words.slice(0, 5).every(word => word === 0) && words[5] === 0xffff) fail();
+  const address = words.reduce((n, word) => (n << BigInt(v6 ? 16 : 8)) | BigInt(word), 0n);
+  const hostMask = (1n << BigInt(bits - prefix)) - 1n;
+  if ((address & hostMask) !== 0n || `${v6 ? canonicalIpv6(words) : words.join('.')}/${prefix}` !== value) fail();
+}
+
+// Scope is a broker-owned restriction. Copy and freeze its array so no caller
+// can replace a validated policy with additional address permissions later.
+export function validateDestinationScope(scope) {
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope) || scope.scope_version !== 1 ||
+      typeof scope.allow_private_network !== 'boolean' || !Array.isArray(scope.allowed_network_cidrs) ||
+      scope.allowed_network_cidrs.length > MAX_SCOPE_CIDRS) fail();
+  for (const cidr of scope.allowed_network_cidrs) validateCidr(cidr);
+  return Object.freeze({ scope_version: 1, allow_private_network: scope.allow_private_network,
+    allowed_network_cidrs: Object.freeze([...scope.allowed_network_cidrs]) });
+}
 
 function bytes(value) {
   if (value instanceof Uint8Array) return value;
@@ -47,12 +124,13 @@ class Reader {
     if (!n || n > max || n > this.bytes.length - this.at) fail();
     const value = this.bytes.slice(this.at, this.at + n); this.at += n; return value;
   }
-  string() {
-    const value = text.decode(this.blob(MAX_IDENTIFIER));
+  string(max = MAX_IDENTIFIER) {
+    const value = text.decode(this.blob(max));
     if (!value.trim() || value.includes('\0')) fail();
     return value;
   }
   optional() { const tag = this.byte(); if (tag > 1) fail(); return tag ? this.uint(64) : null; }
+  boolean() { const value = this.byte(); if (value > 1) fail(); return value === 1; }
 }
 
 class Writer {
@@ -65,8 +143,9 @@ class Writer {
     const b = bytes(value); if (!b.length || b.length > max) fail();
     this.uint(b.length); for (const v of b) this.parts.push(v);
   }
-  string(value) { if (typeof value !== 'string' || !value.trim() || value.includes('\0')) fail(); this.blob(utf8.encode(value), MAX_IDENTIFIER); }
+  string(value, max = MAX_IDENTIFIER) { if (typeof value !== 'string' || !value.trim() || value.includes('\0')) fail(); this.blob(utf8.encode(value), max); }
   optional(value) { this.parts.push(value == null ? 0 : 1); if (value != null) this.uint(value, 64); }
+  boolean(value) { if (typeof value !== 'boolean') fail(); this.parts.push(value ? 1 : 0); }
 }
 
 function fields(io, frame, writing) {
@@ -79,6 +158,24 @@ function fields(io, frame, writing) {
     case 'HelloAccepted': u('version', 16); s('lease_id'); if (!frame.version) fail(); break;
     case 'Dial': case 'DatagramDial':
       u(frame.type === 'Dial' ? 'stream_id' : 'datagram_id'); s('target_id'); s('hostname'); u('port', 16); if (!frame.port) fail(); break;
+    case 'DialScoped': {
+      if (writing) validateDestinationScope(frame);
+      u('stream_id'); s('target_id'); s('hostname'); u('port', 16); u('scope_version', 16);
+      if (writing) {
+        io.boolean(frame.allow_private_network);
+        io.uint(frame.allowed_network_cidrs.length);
+        for (const cidr of frame.allowed_network_cidrs) io.string(cidr, MAX_SCOPE_CIDR_BYTES);
+      } else {
+        frame.allow_private_network = io.boolean();
+        const count = io.uint();
+        if (count > MAX_SCOPE_CIDRS) fail();
+        frame.allowed_network_cidrs = [];
+        for (let i = 0; i < count; i++) frame.allowed_network_cidrs.push(io.string(MAX_SCOPE_CIDR_BYTES));
+        validateDestinationScope(frame);
+      }
+      if (!frame.stream_id || !frame.port) fail();
+      break;
+    }
     case 'DialAccepted': u('stream_id'); break;
     case 'ClientAuthenticated': u('stream_id'); if (!frame.stream_id) fail(); break;
     case 'Data': u('stream_id'); b('bytes', MAX_DATA); break;
@@ -100,6 +197,8 @@ function fields(io, frame, writing) {
     case 'Datagram': u('datagram_id'); b('bytes', 65536); break;
     case 'DatagramClose': u('datagram_id'); s('reason'); break;
     case 'Capabilities': u('capabilities'); break;
+    case 'OrdinaryDesktopServiceRetired': b('payload', 8 * 1024); break;
+    case 'OrdinaryDesktopSignalRequest': case 'OrdinaryDesktopSignalReply': b('payload', 192 * 1024); break;
     case 'HelloChallenge': b('nonce', 32); if (frame.nonce.length !== 32) fail(); break;
     default: fail();
   }

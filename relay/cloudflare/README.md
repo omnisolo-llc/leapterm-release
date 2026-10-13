@@ -8,6 +8,13 @@ checkout, or OmniTerm build credentials are needed.
 This is **not a general-purpose HTTP/SOCKS proxy or a STUN/TURN server**.
 It connects compatible OmniTerm clients and agents over WebSockets.
 
+The Worker and agents must use the coordinated scoped connector protocol:
+`Hello` version 2, capability `8192`, and `DialScoped` requests. Older peers fail
+closed without a legacy dial fallback. Follow the
+[coordinated update and destination policy](../README.md#coordinated-connector-updates)
+when upgrading an existing deployment. Its HTTP discovery API remains version
+1 and the existing `v1` Durable Object migration is retained.
+
 An optional [Cloudflare TURN credential issuer](TURN.md) is also included and is
 **disabled by default**. Cloudflare operates the TURN server; this Worker only
 issues short-lived credentials to authenticated sessions. Turning it on does not
@@ -85,6 +92,13 @@ The token validator accepts a UUID, or 10–256 characters containing uppercase,
 lowercase, a number and a symbol with no whitespace. A randomly generated UUID
 is the simplest supported option. Do not place the token in `wrangler.toml`,
 commit it to Git, pass it as a literal shell argument, or paste it in an issue.
+
+Keep `OMNITERM_ALLOW_LOCAL_NETWORK` unset for the default public-only destination
+policy. To explicitly permit private networks, configure it as the string
+`true` or `1` in your Worker environment. This is an operator setting; browser
+or native request fields cannot change it. The Agent's hard-denied destinations
+remain blocked. Changing the setting requires updating the Worker so new relay
+instances capture the new policy.
 
 Record the HTTPS URL printed by Wrangler, for example
 `https://omniterm-free-relay.YOUR-SUBDOMAIN.workers.dev`.

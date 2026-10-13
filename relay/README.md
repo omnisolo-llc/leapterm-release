@@ -24,5 +24,28 @@ set `moq_origin` to the same HTTPS origin.
 Use Node.js 24.21.0 or newer. The MoQ endpoint also needs direct UDP/443 access;
 do not assume an HTTP-only reverse proxy supports WebTransport.
 
+## Coordinated connector updates
+
+Update the relay kit and its agents together. Both the direct Worker and the
+ordinary-process relay require connector `Hello` version 2 and scoped-destination
+capability `8192`. Network dials use `DialScoped` (wire tag 47) with scope version
+1; the relay refuses older or incapable agents and never falls back to an
+unscoped `Dial`. The HTTP discovery API remains version 1, which is separate
+from the connector wire version and does not prove compatible negotiation.
+
+Deploy the matching relay before upgrading its agents, and plan for existing
+connections to reconnect. For the ordinary-process option, update the sibling
+`cloudflare/src` directory along with `native`; it supplies their shared wire
+engine. Keep the existing Durable Object namespace/migration and native state
+database when updating.
+
+The default destination policy permits public addresses only. An operator may
+set the trusted relay environment value `OMNITERM_ALLOW_LOCAL_NETWORK` to the
+string `true` or `1` to permit private networks. Client request fields, purpose
+labels and headers cannot enable that setting. The Agent still enforces its
+target authorization and hard denials, including loopback destinations, when
+the operator enables private networks. The relay introduces no caller-supplied
+CIDR grants.
+
 The source is licensed under [GPL-3.0](../LICENSE). Cloudflare's service limits
 and charges are separate from the software license.
