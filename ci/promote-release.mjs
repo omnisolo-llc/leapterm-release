@@ -768,6 +768,7 @@ export async function promoteAppleToAppStoreConnect({
     }
     const keyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omni-asc-key-'));
     fs.chmodSync(keyDir, 0o700);
+    let tempKeychain = null;
     try {
       const keyFile = path.join(keyDir, `AuthKey_${keyId}.p8`);
       fs.writeFileSync(keyFile, Buffer.from(apiKeyBase64, 'base64'), {
@@ -775,6 +776,16 @@ export async function promoteAppleToAppStoreConnect({
       });
       let uploadFilePath = packagePath;
       if (platform === 'macos' && packagePath.endsWith('.zip')) {
+        const installerIdentity = String(
+          signing.MACOS_INSTALLER_IDENTITY ||
+            signing.MACOS_DEVELOPER_ID_INSTALLER ||
+            '',
+        ).trim();
+        if (!installerIdentity) {
+          throw new Error(
+            'macOS TestFlight .zip-to-.pkg packaging requires MACOS_INSTALLER_IDENTITY in MACOS_SIGNING_CONFIG',
+          );
+        }
         const extractDir = path.join(keyDir, 'macos-extract');
         fs.mkdirSync(extractDir, { recursive: true });
         execFileImpl('ditto', ['-x', '-k', packagePath, extractDir], {
@@ -787,6 +798,72 @@ export async function promoteAppleToAppStoreConnect({
             `macOS archive ${path.basename(packagePath)} does not contain a .app bundle`,
           );
         }
+        const certificatePrefix = [
+          'MACOS_INSTALLER',
+          'MACOS_DEVELOPER_ID_INSTALLER',
+          'MACOS_DEVELOPER_ID',
+        ].find((prefix) =>
+          String(signing[`${prefix}_CERTIFICATE_BASE64`] || '').trim(),
+        );
+        const certBase64 = certificatePrefix
+          ? String(signing[`${certificatePrefix}_CERTIFICATE_BASE64`]).trim()
+          : '';
+        const certPassword = certificatePrefix
+          ? String(signing[`${certificatePrefix}_CERTIFICATE_PASSWORD`] ?? '')
+          : '';
+        if (certBase64) {
+          const p12Path = path.join(keyDir, 'installer.p12');
+          fs.writeFileSync(p12Path, Buffer.from(certBase64, 'base64'), {
+            mode: 0o600,
+          });
+          tempKeychain = path.join(keyDir, 'installer.keychain-db');
+          const kcPass = crypto.randomBytes(24).toString('hex');
+          try {
+            execFileImpl(
+              'security',
+              ['create-keychain', '-p', kcPass, tempKeychain],
+              { stdio: 'pipe' },
+            );
+            execFileImpl(
+              'security',
+              ['unlock-keychain', '-p', kcPass, tempKeychain],
+              { stdio: 'pipe' },
+            );
+            execFileImpl(
+              'security',
+              [
+                'import',
+                p12Path,
+                '-P',
+                certPassword,
+                '-T',
+                '/usr/bin/productbuild',
+                '-T',
+                '/usr/bin/productsign',
+                '-f',
+                'pkcs12',
+                '-k',
+                tempKeychain,
+              ],
+              { stdio: 'pipe' },
+            );
+            execFileImpl(
+              'security',
+              [
+                'set-key-partition-list',
+                '-S',
+                'apple-tool:,apple:,codesign:,productsign:',
+                '-k',
+                kcPass,
+                tempKeychain,
+              ],
+              { stdio: 'pipe' },
+            );
+          } catch {
+            // Child-process errors can include password-bearing command arguments.
+            throw new Error('macOS installer certificate import failed');
+          }
+        }
         const pkgPath = path.join(
           keyDir,
           `omniterm-${normalizedVersion}-macos.pkg`,
@@ -795,9 +872,11 @@ export async function promoteAppleToAppStoreConnect({
           '--component',
           path.join(extractDir, appName),
           '/Applications',
+          '--sign',
+          installerIdentity,
         ];
-        if (signing.MACOS_INSTALLER_IDENTITY) {
-          productbuildArgs.push('--sign', signing.MACOS_INSTALLER_IDENTITY);
+        if (tempKeychain) {
+          productbuildArgs.push('--keychain', tempKeychain);
         }
         productbuildArgs.push(pkgPath);
         execFileImpl('productbuild', productbuildArgs, { stdio: 'pipe' });
@@ -826,6 +905,15 @@ export async function promoteAppleToAppStoreConnect({
         },
       );
     } finally {
+      if (tempKeychain) {
+        try {
+          execFileImpl('security', ['delete-keychain', tempKeychain], {
+            stdio: 'pipe',
+          });
+        } catch {
+          // ignore cleanup failure
+        }
+      }
       fs.rmSync(keyDir, { recursive: true, force: true });
     }
     return {

@@ -261,6 +261,135 @@ test('promoteIosToAppStoreConnect and promoteMacosToAppStoreConnect support test
     assert.equal(macTfRes.status, 'uploaded-to-testflight');
     assert.ok(macAltoolArgs.includes('osx'));
 
+    const macZipPath = path.join(tempDir, 'omniterm-0.1.1-macos-arm64.zip');
+    fs.writeFileSync(macZipPath, 'signed-app-zip-fixture');
+    await assert.rejects(
+      () =>
+        promoteMacosToAppStoreConnect({
+          version: '0.1.1',
+          buildNumber: '18',
+          action: 'testflight',
+          packagePath: macZipPath,
+          macosSigningConfigJson: appleSigningConfigJson,
+          execFileImpl: () => {},
+        }),
+      /MACOS_INSTALLER_IDENTITY/,
+    );
+
+    const zipExecCalls = [];
+    const macSigningWithInstaller = JSON.stringify({
+      ...JSON.parse(appleSigningConfigJson),
+      MACOS_INSTALLER_IDENTITY:
+        '3rd Party Mac Developer Installer: OmniSolo LLC (TEAM123456)',
+      MACOS_INSTALLER_CERTIFICATE_BASE64: Buffer.from(
+        'fixture-p12',
+        'utf8',
+      ).toString('base64'),
+      MACOS_INSTALLER_CERTIFICATE_PASSWORD: 'p12-password',
+    });
+    const macZipTfRes = await promoteMacosToAppStoreConnect({
+      version: '0.1.1',
+      buildNumber: '18',
+      action: 'testflight',
+      packagePath: macZipPath,
+      macosSigningConfigJson: macSigningWithInstaller,
+      execFileImpl: (cmd, args) => {
+        zipExecCalls.push({ cmd, args });
+        if (cmd === 'ditto') {
+          const extractDir = args[3];
+          fs.mkdirSync(path.join(extractDir, 'OmniTerm.app'), {
+            recursive: true,
+          });
+        }
+      },
+    });
+    assert.equal(macZipTfRes.status, 'uploaded-to-testflight');
+    assert.ok(
+      zipExecCalls.some(
+        (c) =>
+          c.cmd === 'productbuild' &&
+          c.args.includes('--sign') &&
+          c.args.includes(
+            '3rd Party Mac Developer Installer: OmniSolo LLC (TEAM123456)',
+          ) &&
+          c.args.includes('--keychain'),
+      ),
+    );
+    assert.ok(
+      zipExecCalls.some(
+        (c) => c.cmd === 'security' && c.args[0] === 'delete-keychain',
+      ),
+    );
+
+    for (const prefix of [
+      'MACOS_INSTALLER',
+      'MACOS_DEVELOPER_ID_INSTALLER',
+      'MACOS_DEVELOPER_ID',
+    ]) {
+      let imported = false;
+      const certificateBytes = Buffer.from(`fixture-${prefix}`);
+      await promoteMacosToAppStoreConnect({
+        version: '0.1.1', buildNumber: '18', action: 'testflight',
+        packagePath: macZipPath,
+        macosSigningConfigJson: JSON.stringify({
+          ...JSON.parse(appleSigningConfigJson),
+          MACOS_INSTALLER_IDENTITY: 'fixture installer identity',
+          MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD: 'other-certificate-password',
+          [`${prefix}_CERTIFICATE_BASE64`]: certificateBytes.toString('base64'),
+          [`${prefix}_CERTIFICATE_PASSWORD`]: '',
+        }),
+        execFileImpl: (cmd, args) => {
+          if (cmd === 'ditto') fs.mkdirSync(path.join(args[3], 'OmniTerm.app'));
+          if (cmd === 'security' && args[0] === 'import') {
+            imported = true;
+            assert.equal(args[args.indexOf('-P') + 1], '');
+            assert.deepEqual(fs.readFileSync(args[1]), certificateBytes);
+            assert.equal(fs.statSync(args[1]).mode & 0o777, 0o600);
+            assert.equal(fs.statSync(path.dirname(args[1])).mode & 0o777, 0o700);
+          }
+        },
+      });
+      assert.equal(imported, true);
+    }
+
+    for (const failedOperation of [
+      'create-keychain', 'unlock-keychain', 'import', 'set-key-partition-list',
+    ]) {
+      const failureCalls = [];
+      let privateDir;
+      let keychainPassword;
+      await assert.rejects(promoteMacosToAppStoreConnect({
+        version: '0.1.1', buildNumber: '18', action: 'testflight',
+        packagePath: macZipPath,
+        macosSigningConfigJson: macSigningWithInstaller,
+        execFileImpl: (cmd, args) => {
+          failureCalls.push({ cmd, args });
+          if (cmd === 'ditto') {
+            privateDir = path.dirname(args[3]);
+            fs.mkdirSync(path.join(args[3], 'OmniTerm.app'));
+          }
+          if (cmd === 'security' && args[0] === 'create-keychain') {
+            keychainPassword = args[args.indexOf('-p') + 1];
+          }
+          if (cmd === 'security' && args[0] === failedOperation) {
+            const error = new Error(`command failed: ${args.join(' ')} p12-password`);
+            error.stderr = Buffer.from('provider diagnostic p12-password');
+            throw error;
+          }
+        },
+      }), (error) => {
+        assert.equal(error.message, 'macOS installer certificate import failed');
+        assert.equal(error.message.includes('p12-password'), false);
+        assert.equal(error.message.includes(keychainPassword), false);
+        assert.equal(error.cause, undefined);
+        return true;
+      });
+      assert.equal(fs.existsSync(privateDir), false);
+      assert.ok(failureCalls.some(({ cmd, args }) =>
+        cmd === 'security' && args[0] === 'delete-keychain'));
+      assert.equal(failureCalls.some(({ cmd }) => cmd === 'xcrun'), false);
+    }
+
     const apiCalls = [];
     const storeRes = await promoteMacosToAppStoreConnect({
       version: '0.1.1',
