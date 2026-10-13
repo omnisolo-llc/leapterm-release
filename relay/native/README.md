@@ -10,6 +10,12 @@ Use Node.js 24.21.0 or newer, install this package with `npm ci --ignore-scripts
 and run `npm start`. The public kit must include the sibling `cloudflare/src`
 directory: the native owner uses that same public protocol engine.
 
+Update the whole sibling protocol engine and agents together. The connector
+requires `Hello` version 2 and scoped-destination capability `8192`; older
+agents fail closed without an unscoped dial fallback. The HTTP discovery API
+remains version 1. See the
+[coordinated update policy](../README.md#coordinated-connector-updates).
+
 The listener is deliberately restricted to loopback. Publish it through your
 own HTTPS reverse proxy with WebSocket upgrade support. Do not expose a plain
 HTTP listener to the Internet. Configure:
@@ -19,6 +25,14 @@ HTTP listener to the Internet. Configure:
 - `RELAY_MANAGEMENT_TOKEN`: a different operator-only credential.
 - `RELAY_STATE_PATH`: a persistent local SQLite file in an owner-only directory.
 - `RELAY_PORT`: the loopback HTTP port; the default is 7777.
+
+Destination access defaults to public addresses. Set
+`OMNITERM_ALLOW_LOCAL_NETWORK=true` (or `1`) only in the trusted process
+environment to explicitly permit private networks, then restart the owner.
+Request purposes, headers and JSON fields cannot enable it. The Agent retains
+its target authorization and hard denials, including loopback targets. The
+loopback listener restriction above is for the local reverse-proxy connection;
+it does not grant access to a loopback destination on an Agent.
 
 The state directory must be owned by the process user with mode 0700; existing
 state files must be regular owner-only files. A separate SQLite exclusive

@@ -2,7 +2,7 @@
 // Provides base WebSocket lifecycle, postcard framing, duplex stream bridging, and backpressure.
 // Shared byte-routing engine; subclasses supply admission and accounting policy.
 
-import { FrameDecoder, encodeFrame } from './connector-wire.js';
+import { FrameDecoder, encodeFrame, validateDestinationScope, SCOPED_DESTINATION_CAPABILITY } from './connector-wire.js';
 import { emptyBody } from './public-contract.js';
 import { scopeId, equalBytes, readBoundedJson } from './security.js';
 import { issueCloudflareTurn, turnConfigured, MAX_TURN_TTL } from './cloudflare-turn.js';
@@ -52,6 +52,22 @@ export class RelayCore {
     this.nextStream = 1;
     this.queuedBytes = 0;
     this.connectorId = null;
+    // Only trusted operator configuration selects this restriction. Requests
+    // and admission results cannot replace it or introduce CIDR permissions.
+    const flag = env?.OMNITERM_ALLOW_LOCAL_NETWORK;
+    Object.defineProperty(this, 'destinationScope', { enumerable: true,
+      value: validateDestinationScope({ scope_version: 1,
+        allow_private_network: typeof flag === 'string' && (flag.toLowerCase() === 'true' || flag === '1'),
+        allowed_network_cidrs: [] }) });
+  }
+
+  supportsScopedDestination(agent) {
+    return agent?.version === 2 && agent.capabilitiesReceived === true &&
+      (agent.capabilities & SCOPED_DESTINATION_CAPABILITY) !== 0;
+  }
+
+  async allocateStreamId() {
+    return this.nextStream++;
   }
 
   // Hook: authorize workload token for internal management/dial routes.
@@ -293,12 +309,15 @@ export class RelayCore {
       ) {
         throw Error('invalid_hello');
       }
+      if (hello.version !== 2) throw Error('scoped_destination_required');
       const record = await this.authorizeRegistration(hello.connector_id, hello, agent);
       if (agent.closed || this.agents.has(record.connector_id)) {
         throw Error('connector_already_connected');
       }
       agent.record = record;
       agent.version = hello.version;
+      agent.capabilities = 0;
+      agent.capabilitiesReceived = false;
       this.pending.delete(agent);
       this.agents.set(record.connector_id, agent);
       this.touch(agent);
@@ -307,7 +326,7 @@ export class RelayCore {
         version: hello.version,
         lease_id: crypto.randomUUID(),
       });
-      if (hello.version === 2) this.send(agent, { type: 'Capabilities', capabilities: 0 });
+      this.send(agent, { type: 'Capabilities', capabilities: SCOPED_DESTINATION_CAPABILITY });
       return;
     }
     if (this.agents.get(agent.record.connector_id) !== agent) return;
@@ -319,7 +338,9 @@ export class RelayCore {
       }
       if (frame.type === 'Pong') continue;
       if (frame.type === 'Capabilities' && agent.version === 2 && !agent.capabilitiesReceived) {
+        if (!(frame.capabilities & SCOPED_DESTINATION_CAPABILITY)) throw Error('scoped_destination_required');
         agent.capabilitiesReceived = true;
+        agent.capabilities = frame.capabilities & SCOPED_DESTINATION_CAPABILITY;
         continue;
       }
       if (frame.type === 'Telemetry' && frame.target_id === agent.record.target_id) continue;
@@ -467,6 +488,10 @@ export class RelayCore {
     const accountId = authorized.accountId || agent.record?.subject_id || 'free-self-host';
     const policyEpoch = authorized.policyEpoch || agent.record?.policy_epoch || 1;
 
+    if (!this.supportsScopedDestination(agent)) {
+      close('scoped_destination_required');
+      return;
+    }
     if (
       agent.closed ||
       this.agents.get(connectorId) !== agent ||
@@ -476,8 +501,18 @@ export class RelayCore {
       close('connector_stream_limit');
       return;
     }
+    const streamId = await this.allocateStreamId();
+    if (!this.supportsScopedDestination(agent)) {
+      close('scoped_destination_required');
+      return;
+    }
+    if (pending.closed || !Number.isInteger(streamId) || streamId < 1 || streamId > 0xffffffff ||
+        agent.closed || this.agents.get(connectorId) !== agent || agent.streams.size >= MAX_STREAMS) {
+      close('connector_stream_limit');
+      return;
+    }
     const stream = {
-      id: this.nextStream++,
+      id: streamId,
       admissionId: crypto.randomUUID(),
       socket,
       ready: false,
@@ -488,9 +523,11 @@ export class RelayCore {
       handshakeBytes: 0,
       chargeSequence: 0,
       destination,
+      destinationScope: this.destinationScope,
       accountId,
       policyEpoch,
     };
+    Object.defineProperty(stream, 'destinationScope', { writable: false, configurable: false });
     pending.agent = agent;
     pending.stream = stream;
     this.pendingClients.delete(pending);
@@ -522,11 +559,14 @@ export class RelayCore {
     );
     agent.streams.set(stream.id, stream);
     this.send(agent, {
-      type: 'Dial',
+      type: 'DialScoped',
       stream_id: stream.id,
       target_id: destination.target_id,
       hostname: destination.hostname,
       port: destination.port,
+      scope_version: stream.destinationScope.scope_version,
+      allow_private_network: stream.destinationScope.allow_private_network,
+      allowed_network_cidrs: stream.destinationScope.allowed_network_cidrs,
     });
   }
 
