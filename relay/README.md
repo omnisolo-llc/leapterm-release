@@ -24,14 +24,17 @@ set `moq_origin` to the same HTTPS origin.
 Use Node.js 24.21.0 or newer. The MoQ endpoint also needs direct UDP/443 access;
 do not assume an HTTP-only reverse proxy supports WebTransport.
 
-## Coordinated connector updates
+## Coordinated relay connection updates
+
+A relay connection identifies an enrolled host or agent route. Configuration
+fields named `connector_id` contain that route's enrolled relay connection ID.
 
 Update the relay kit and its agents together. Both the direct Worker and the
-ordinary-process relay require connector `Hello` version 2 and scoped-destination
+ordinary-process relay require relay connection protocol `Hello` version 2 and scoped-destination
 capability `8192`. Network dials use `DialScoped` (wire tag 47) with scope version
 1; the relay refuses older or incapable agents and never falls back to an
 unscoped `Dial`. The HTTP discovery API remains version 1, which is separate
-from the connector wire version and does not prove compatible negotiation.
+from the relay connection wire version and does not prove compatible negotiation.
 
 Deploy the matching relay before upgrading its agents, and plan for existing
 connections to reconnect. For the ordinary-process option, update the sibling

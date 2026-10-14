@@ -1,7 +1,7 @@
 # Optional Cloudflare TURN credential issuer
 
 This Worker can issue short-lived Cloudflare TURN credentials to authenticated,
-live connector sessions. Cloudflare operates the TURN service; this repository
+live relay connections. Cloudflare operates the TURN service; this repository
 does not run coturn. The existing WebSocket relay remains available.
 
 **This endpoint is not, by itself, a complete application transport upgrade.**
@@ -50,7 +50,7 @@ password. A mismatched, revoked, or unauthorized issuer must fail; changing rela
 authentication or disabling TLS verification will not repair it.
 
 A 401/403 returned by this Worker's own authentication is different: check
-`RELAY_AUTH_TOKEN` and connector scope. A provider authorization failure is reported
+`RELAY_AUTH_TOKEN` and relay connection scope. A provider authorization failure is reported
 as `turn_provider_permission_required`; compatible clients may use authenticated
 WebSocket in Automatic mode, but must not label that fallback as successful TURN.
 
@@ -73,15 +73,15 @@ unavailability. None contains upstream response bodies, credentials or SDP.
 
 `POST /internal/v1/connectors/CONNECTOR_ID/turn-credentials` requires the existing
 `x-workload-token` header. Query tokens are rejected for this operation. The
-request repeats the normal connector dial scope and adds `session_id`, `peer`
+request repeats the normal relay connection dial scope and adds `session_id`, `peer`
 (`client` or `agent`), and `ttl` (60–300 seconds). Admission must expire no more
-than 300 seconds ahead. A live connector must exist. Responses use `no-store`.
+than 300 seconds ahead. A live relay connection must exist. Responses use `no-store`.
 
 The Worker calls Cloudflare's credential-generation API, returns only the
 allowlisted ICE URLs and generated peer credentials, and rejects malformed
 responses or an issuer secret accidentally returned as a peer password. The
 account/session analytics identifier is an opaque hash. Issuance is limited
-transactionally per connector to 12 requests/minute and 120/hour, including
+transactionally per relay connection to 12 requests/minute and 120/hour, including
 provider failures. These are abuse limits, not a hard provider bandwidth cap.
 
 Free relay token holders form one trusted owner group. Use separate deployments
@@ -122,7 +122,7 @@ Prefer an available authenticated direct peer, then an eligible TURN path, with
 WebSocket as fallback. An operator can prefer WebSocket or disable TURN when its
 budget is exhausted. Do not fail over after identity or authorization denial.
 
-**Important:** this version's legacy connector WebSocket uses non-hibernating
+**Important:** this version's legacy relay connection WebSocket uses non-hibernating
 state. Keeping it open for signaling still consumes object duration even when
 payload travels over TURN. Short-lived or hibernating signaling is needed for
 the full duration saving; credential issuance alone does not provide that saving.
