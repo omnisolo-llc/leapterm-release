@@ -1,6 +1,6 @@
 # Deploy your own Cloudflare relay
 
-This standalone Worker forwards OmniTerm connector WebSocket streams. It uses a
+This standalone Worker forwards OmniTerm relay connection WebSocket streams. It uses a
 single shared relay token and a SQLite-backed Durable Object namespace for
 routing. No D1 database, external database, billing service, private source
 checkout, or OmniTerm build credentials are needed.
@@ -8,10 +8,10 @@ checkout, or OmniTerm build credentials are needed.
 This is **not a general-purpose HTTP/SOCKS proxy or a STUN/TURN server**.
 It connects compatible OmniTerm clients and agents over WebSockets.
 
-The Worker and agents must use the coordinated scoped connector protocol:
+The Worker and agents must use the coordinated scoped relay connection protocol:
 `Hello` version 2, capability `8192`, and `DialScoped` requests. Older peers fail
 closed without a legacy dial fallback. Follow the
-[coordinated update and destination policy](../README.md#coordinated-connector-updates)
+[coordinated update and destination policy](../README.md#coordinated-relay-connection-updates)
 when upgrading an existing deployment. Its HTTP discovery API remains version
 1 and the existing `v1` Durable Object migration is retained.
 
@@ -84,7 +84,7 @@ npx wrangler secret put RELAY_AUTH_TOKEN
 
 Copy the newly generated UUID into the secret prompt and save it in your password
 manager. **Do not use a UUID or password copied from documentation.** The Worker
-rejects connector traffic while the secret is absent or invalid, so the initial
+rejects relay connection traffic while the secret is absent or invalid, so the initial
 secretless deployment is not an open relay. Wrangler stores the secret on your
 own Worker and deploys the updated version.
 
@@ -128,12 +128,12 @@ of a working authenticated relay session**.
 ## 5. Connect your application and agent
 
 Configure a custom relay in your OmniTerm client using the Worker URL and your
-fresh relay token. The connector/agent must use the same relay and token. Every
+fresh relay token. The agent for the relay connection must use the same relay and token. Every
 participant holding this shared token belongs to the same trust group; deploy
 separate Workers with separate tokens for users who must not trust each other.
 
 The registration WebSocket route is `/v1/connectors/stream` and requires one
-`connector_id` query parameter. Client routes are beneath
+`connector_id` query parameter containing the enrolled relay connection ID. Client routes are beneath
 `/internal/v1/connectors/CONNECTOR_ID/`. The compatible application/agent constructs
 the protocol requests; the Worker alone is not an SSH server. Use the installed
 agent's configuration help for its endpoint and credential settings.
@@ -181,7 +181,7 @@ Object namespaces in your dashboard before deleting any stored state.
 `401` means missing/wrong client credentials. `500 server_misconfiguration` means
 invalid server configuration. `426` on a registration request with valid credentials
 means an actual WebSocket upgrade is required. `503 connector_unavailable` means
-there is no live agent for that connector ID. Check the ID, agent heartbeat,
+there is no live agent for that relay connection ID. Check the ID, agent heartbeat,
 network reachability and Cloudflare usage limits.
 
 Use the Cloudflare dashboard's deployment and usage views. Do not post raw logs
@@ -199,7 +199,7 @@ URL. It includes `webrtc` only when `NATIVE_PUBLIC_RTC_ENABLED`, the independent
 public, contain no credentials, and are marked `Cache-Control: no-store`.
 The canonical registration endpoint `/relay/api/v1/connect?connector_id=ID`
 and the original `/v1/connectors/stream?connector_id=ID` have the same token
-and connector-scope checks.
+and relay connection scope checks.
 
 A request that explicitly requires an unavailable transport is rejected rather
 than silently accepted on WebSocket. To enable the native RTC path, deploy the
@@ -242,14 +242,14 @@ The operator can send an empty `POST` to either endpoint with the
 Successful requests return `204`. Query strings, request bodies, incorrect
 methods and unrelated credentials are rejected. Revocation closes established
 agent/client streams and pending streams, invalidates unused browser tickets,
-and persists a revocation marker in that connector's existing Durable Object.
+and persists a revocation marker in that relay connection's existing Durable Object.
 Subsequent traffic is denied with `403 connector_revoked`, including after the
-object or local service restarts. A storage failure leaves the connector closed
+object or local service restarts. A storage failure leaves the relay connection closed
 and returns an unavailable error instead of claiming durable success.
 
 Restoration is an explicit operator action. It permits a fresh authenticated
 connection; it does not resurrect old streams or tickets. Keep an operator-owned
-connector inventory and revoke affected connectors before rotating credentials.
+relay connection inventory and revoke affected relay connections before rotating credentials.
 Changing a token alone must not be assumed to terminate every already-open
 connection. If the operator key is unavailable during an incident, stop the
 relay until trusted control is restored instead of weakening authentication.

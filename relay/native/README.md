@@ -1,6 +1,6 @@
 # Self-hosted ordinary-process relay
 
-This package runs the public connector protocol in a Node.js process. It does
+This package runs the public relay connection protocol in a Node.js process. It does
 not use Durable Objects, D1, an OmniTerm account database, or OmniTerm billing.
 The existing Cloudflare Worker relay remains a separate deployment option.
 
@@ -10,11 +10,11 @@ Use Node.js 24.21.0 or newer, install this package with `npm ci --ignore-scripts
 and run `npm start`. The public kit must include the sibling `cloudflare/src`
 directory: the native owner uses that same public protocol engine.
 
-Update the whole sibling protocol engine and agents together. The connector
+Update the whole sibling protocol engine and agents together. The relay connection protocol
 requires `Hello` version 2 and scoped-destination capability `8192`; older
 agents fail closed without an unscoped dial fallback. The HTTP discovery API
 remains version 1. See the
-[coordinated update policy](../README.md#coordinated-connector-updates).
+[coordinated update policy](../README.md#coordinated-relay-connection-updates).
 
 The listener is deliberately restricted to loopback. Publish it through your
 own HTTPS reverse proxy with WebSocket upgrade support. Do not expose a plain
@@ -39,9 +39,9 @@ state files must be regular owner-only files. A separate SQLite exclusive
 transaction prevents two owners from opening the same state. Process exit
 releases that lock; a stale PID file is not used. Keep the database and its WAL
 on persistent local storage. Do not run independent owners behind round-robin
-routing: an active connector has one socket owner.
+routing: an active relay connection has one socket owner.
 
-The database stores connector denial state, hashed short-lived browser tickets,
+The database stores relay connection denial state, hashed short-lived browser tickets,
 and bounded issuance windows. It does not store relay credentials or stream
 contents. Missing storage, corruption, conflicting ownership, and invalid
 permissions fail closed.
@@ -64,9 +64,9 @@ admission, ingress-service signature check, and fail-closed transport rules.
 
 POST `/internal/v1/connectors/{id}/revoke` with the operator credential in
 `x-relay-management-token`. A workload credential cannot revoke or restore a
-connector. Revocation closes existing streams and persists across restart.
+relay connection. Revocation closes existing streams and persists across restart.
 POST the corresponding `/restore` endpoint with the operator credential to
-explicitly allow the connector again. Keep operator and workload credentials
+explicitly allow the relay connection again. Keep operator and workload credentials
 separate; the server rejects configurations that reuse them.
 
 ## Native RTC ingress
@@ -79,7 +79,7 @@ and is not a fallback to a WebSocket-only connection. Set
 `NATIVE_RTC_ALLOW_LOOPBACK_INGRESS=true`. Other ingress URLs must use HTTPS.
 
 The native ingress owns DTLS/data-channel negotiation while this process owns
-connector authorization, actual target streams, and revocation. Signaling
+relay connection authorization, actual target streams, and revocation. Signaling
 responses are bound to a fresh request, exact scope, offer, answer, stream, and
 admission identifier using the independently configured ingress credential.
 The ingress must also authenticate its internal backend WebSocket; an ordinary
