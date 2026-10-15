@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "repository": "omnisolo-llc/omniterm-release",
+  "repository": "omnisolo-llc/leapterm-release",
   "runners": [
     "ubuntu-24.04",
     "ubuntu-24.04-arm",

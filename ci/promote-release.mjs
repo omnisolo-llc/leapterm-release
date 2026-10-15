@@ -7,10 +7,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 
-export const STAGING_REPOSITORY = 'omnisolo-llc/omniterm';
-export const PUBLIC_REPOSITORY = 'omnisolo-llc/omniterm-release';
-export const PRIMARY_CONTAINER_REGISTRY = 'omniterm/omni';
-export const GHCR_CONTAINER_REGISTRY = 'ghcr.io/omnisolo-llc/omniterm/cloud';
+export const STAGING_REPOSITORY = 'omnisolo-llc/leapterm';
+export const PUBLIC_REPOSITORY = 'omnisolo-llc/leapterm-release';
+export const PRIMARY_CONTAINER_REGISTRY = 'leapterm/private';
+export const GHCR_CONTAINER_REGISTRY = 'ghcr.io/omnisolo-llc/leapterm/cloud';
 
 export const PUBLIC_TARGETS = Object.freeze([
   'windows',
@@ -52,15 +52,15 @@ export const FORBIDDEN_ASSET_PATTERNS = Object.freeze([
 ]);
 
 export const SELF_HOSTED_LEAK_PATTERNS = Object.freeze([
-  { label: 'production API domain', regex: /api\.omniterm\.dev/i },
-  { label: 'production app domain', regex: /app\.omniterm\.dev/i },
-  { label: 'production RTC domain', regex: /rtc\.omniterm\.dev/i },
-  { label: 'production download domain', regex: /download\.omniterm\.dev/i },
-  { label: 'production omniterm.dev domain', regex: /\bomniterm\.dev\b/i },
+  { label: 'production API domain', regex: /api\.leapterm\.com/i },
+  { label: 'production app domain', regex: /app\.leapterm\.com/i },
+  { label: 'production RTC domain', regex: /rtc\.leapterm\.com/i },
+  { label: 'production download domain', regex: /download\.leapterm\.com/i },
+  { label: 'production leapterm.com domain', regex: /\bleapterm\.com\b/i },
   { label: 'corporate omnisolo.com domain', regex: /\bomnisolo\.com\b/i },
   {
     label: 'private source repository reference',
-    regex: /omnisolo-llc\/omniterm(?!-release)/i,
+    regex: /omnisolo-llc\/leapterm(?!-release)/i,
   },
   {
     label: 'Cloudflare account or zone identifier',
@@ -422,9 +422,9 @@ export function assertNoPrivateLeakInPublicMetadata(filename, content) {
       );
     }
   }
-  if (/omnisolo-llc\/omniterm(?!-release)/i.test(text)) {
+  if (/omnisolo-llc\/leapterm(?!-release)/i.test(text)) {
     throw new Error(
-      `Public metadata ${filename} leaked private repository omnisolo-llc/omniterm`,
+      `Public metadata ${filename} leaked private repository omnisolo-llc/leapterm`,
     );
   }
 }
@@ -512,7 +512,7 @@ async function githubRequest(url, token, options = {}) {
     Accept: options.accept || 'application/vnd.github+json',
     Authorization: `Bearer ${token}`,
     'X-GitHub-Api-Version': '2022-11-28',
-    'User-Agent': 'omniterm-release-promoter',
+    'User-Agent': 'leapterm-release-promoter',
     ...(options.headers || {}),
   };
   const response = await fetch(url, {
@@ -570,7 +570,7 @@ export function createAppStoreConnectJwt({
 
 export async function verifyAppleStoreAccess({
   appleSigningConfigJson,
-  appBundleId = 'dev.omniterm.app',
+  appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
 }) {
   const signing = JSON.parse(appleSigningConfigJson || '{}');
@@ -614,7 +614,7 @@ export async function verifyAppleStoreAccess({
 
 export async function verifyGooglePlayStoreAccess({
   serviceAccountJson,
-  packageName = 'dev.omniterm.app',
+  packageName = 'com.leapterm.app',
   fetchImpl = fetch,
 }) {
   const key = JSON.parse(serviceAccountJson || '{}');
@@ -703,7 +703,7 @@ export async function promoteAppleToAppStoreConnect({
   automaticRelease = false,
   packagePath = '',
   appleSigningConfigJson,
-  appBundleId = 'dev.omniterm.app',
+  appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
 }) {
@@ -1032,7 +1032,7 @@ export async function promoteIosToAppStoreConnect({
   automaticRelease = false,
   ipaPath = '',
   iosSigningConfigJson,
-  appBundleId = 'dev.omniterm.app',
+  appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
 }) {
@@ -1057,7 +1057,7 @@ export async function promoteMacosToAppStoreConnect({
   automaticRelease = false,
   packagePath = '',
   macosSigningConfigJson,
-  appBundleId = 'dev.omniterm.app',
+  appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
 }) {
@@ -1081,7 +1081,7 @@ export async function promoteAndroidToPlayStore({
   track,
   aabPath,
   serviceAccountJson,
-  packageName = 'dev.omniterm.app',
+  packageName = 'com.leapterm.app',
   fetchImpl = fetch,
 }) {
   if (!['internal', 'alpha', 'beta', 'production'].includes(track)) {
@@ -1313,11 +1313,11 @@ export function buildEnvironmentRolloutPlan({
     cloudflare: {
       env: isStaging ? 'staging' : 'production',
       api_origin: isStaging
-        ? 'https://api.staging.omniterm.dev'
-        : 'https://api.omniterm.dev',
+        ? 'https://api.staging.leapterm.com'
+        : 'https://api.leapterm.com',
       cloud_origin: isStaging
-        ? 'https://cloud.staging.omniterm.dev'
-        : 'https://cloud.omniterm.dev',
+        ? 'https://cloud.staging.leapterm.com'
+        : 'https://cloud.leapterm.com',
     },
     container: {
       registry: normalizedRegistry,
@@ -1332,7 +1332,7 @@ export function buildEnvironmentRolloutPlan({
     k3s: {
       namespace: 'omniterm',
       deployment: isStaging ? 'omniterm-staging' : 'omniterm',
-      host: isStaging ? 'cloud.staging.omniterm.dev' : 'cloud.omniterm.dev',
+      host: isStaging ? 'cloud.staging.leapterm.com' : 'cloud.leapterm.com',
     },
     rollout_command: ['bash', 'scripts/rollout-env.sh', '--env', environment],
     prune_command: ['node', 'scripts/prune-ghcr-packages.mjs'],
@@ -1345,8 +1345,8 @@ function requireEnvironmentRolloutCredentials() {
       throw new Error(`${name} is required for environment rollout`);
     }
   }
-  if (!/^[A-Za-z0-9][A-Za-z0-9./_:-]*@sha256:[a-f0-9]{64}$/.test(String(process.env.OMNI_GATEWAY_SOURCE_IMAGE || ''))) {
-    throw new Error('OMNI_GATEWAY_SOURCE_IMAGE is required as an immutable repository@sha256 digest pin');
+  if (!/^[A-Za-z0-9][A-Za-z0-9./_:-]*@sha256:[a-f0-9]{64}$/.test(String(process.env.LEAP_GATEWAY_SOURCE_IMAGE || ''))) {
+    throw new Error('LEAP_GATEWAY_SOURCE_IMAGE is required as an immutable repository@sha256 digest pin');
   }
 }
 
@@ -1359,7 +1359,7 @@ export function executeEnvironmentRollout({
   stagingRepo = STAGING_REPOSITORY,
   privateToken = '',
   githubToken = '',
-  dockerHubUsername = 'omniterm',
+  dockerHubUsername = 'leapterm',
   dockerHubPatReadWrite = '',
   dockerHubPatReadOnly = '',
   containerRegistry = PRIMARY_CONTAINER_REGISTRY,
@@ -1500,13 +1500,13 @@ export function executeEnvironmentRollout({
       '';
     const childEnv = {
       ...rolloutEnv,
-      OMNI_REGISTRY: plan.container.registry,
+      LEAP_REGISTRY: plan.container.registry,
       PROMOTE_CONTAINER_REGISTRY: plan.container.registry,
       PROMOTE_VERSION: plan.version,
       PROMOTE_BUILD_NUMBER: plan.build_number,
       RELEASE_SOURCE_SHA: plan.source_sha,
       DOCKER_HUB_USERNAME:
-        dockerHubUsername || process.env.DOCKER_HUB_USERNAME || 'omniterm',
+        dockerHubUsername || process.env.DOCKER_HUB_USERNAME || 'leapterm',
       DOCKER_HUB_PAT_READ_WRITE:
         dockerHubPatReadWrite || process.env.DOCKER_HUB_PAT_READ_WRITE || '',
       DOCKER_HUB_PAT_READ_ONLY:
@@ -1556,7 +1556,7 @@ export async function promoteRelease({
   privateToken,
   publicToken,
   githubToken = '',
-  dockerHubUsername = 'omniterm',
+  dockerHubUsername = 'leapterm',
   dockerHubPatReadWrite = '',
   dockerHubPatReadOnly = '',
   signingConfigJson,
@@ -1818,7 +1818,7 @@ export async function promoteRelease({
             Accept: 'application/vnd.github+json',
             Authorization: `Bearer ${publicToken}`,
             'X-GitHub-Api-Version': '2022-11-28',
-            'User-Agent': 'omniterm-release-promoter',
+            'User-Agent': 'leapterm-release-promoter',
           },
         },
       );
@@ -1831,8 +1831,8 @@ export async function promoteRelease({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               tag_name: tag,
-              name: `Omniterm ${tag}`,
-              body: `Omniterm ${tag} public release.`,
+              name: `LeapTerm ${tag}`,
+              body: `LeapTerm ${tag} public release.`,
               draft: true,
               prerelease: normalizedVersion.includes('-'),
             }),
@@ -1883,14 +1883,14 @@ export async function promoteRelease({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             draft: false,
-            name: `Omniterm ${tag}`,
-            body: `Omniterm ${tag} public release.`,
+            name: `LeapTerm ${tag}`,
+            body: `LeapTerm ${tag} public release.`,
           }),
         },
       );
 
       console.log(
-        `Promoted Omniterm ${tag} (${filesToUpload.length} verified public assets) to ${publicRepo}.`,
+        `Promoted LeapTerm ${tag} (${filesToUpload.length} verified public assets) to ${publicRepo}.`,
       );
     }
 
@@ -2068,7 +2068,7 @@ if (
     privateToken: process.env.PRIVATE_RELEASE_TOKEN,
     publicToken: process.env.GH_TOKEN,
     githubToken: process.env.GITHUB_TOKEN || '',
-    dockerHubUsername: process.env.DOCKER_HUB_USERNAME || 'omniterm',
+    dockerHubUsername: process.env.DOCKER_HUB_USERNAME || 'leapterm',
     dockerHubPatReadWrite: process.env.DOCKER_HUB_PAT_READ_WRITE || '',
     dockerHubPatReadOnly: process.env.DOCKER_HUB_PAT_READ_ONLY || '',
     signingConfigJson: process.env.PACKAGE_SIGNING_CONFIG,

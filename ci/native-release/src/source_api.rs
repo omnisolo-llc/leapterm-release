@@ -32,8 +32,8 @@ impl Role {
         }
     }
     fn allows(self, method: &str, endpoint: &str) -> bool {
-        let private = "repos/omnisolo-llc/omniterm";
-        let public = "repos/omnisolo-llc/omniterm-release";
+        let private = "repos/omnisolo-llc/leapterm";
+        let public = "repos/omnisolo-llc/leapterm-release";
         if method == "GET" {
             return match self {
                 Self::PublicRead | Self::Dispatch => {
@@ -49,7 +49,7 @@ impl Role {
                         || endpoint.starts_with(&format!("{private}/pulls/"))
                         || endpoint.starts_with(&format!("{private}/compare/"))
                         || endpoint
-                            .starts_with(&format!("{private}/contents/omniterm-release?ref="))
+                            .starts_with(&format!("{private}/contents/leapterm-release?ref="))
                         || endpoint.starts_with(&format!(
                             "{private}/contents/scripts/release/public-ci-migration.json?ref="
                         ))
@@ -82,7 +82,7 @@ impl Role {
                 Self::HandoffWrite => {
                     endpoint == format!("{private}/releases")
                         || endpoint.starts_with(
-                            "https://uploads.github.com/repos/omnisolo-llc/omniterm/releases/",
+                            "https://uploads.github.com/repos/omnisolo-llc/leapterm/releases/",
                         )
                 }
                 _ => false,

@@ -11,17 +11,17 @@ fn env() -> Environment {
         ("GITHUB_EVENT_NAME".into(), "workflow_dispatch".into()),
         (
             "GITHUB_REPOSITORY".into(),
-            "omnisolo-llc/omniterm-release".into(),
+            "omnisolo-llc/leapterm-release".into(),
         ),
         ("GITHUB_REF".into(), "refs/heads/main".into()),
         (
             "GITHUB_WORKFLOW_REF".into(),
-            "omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main".into(),
+            "omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main".into(),
         ),
         ("GITHUB_SHA".into(), "b".repeat(40)),
         ("GITHUB_RUN_ID".into(), "42".into()),
         ("GITHUB_RUN_ATTEMPT".into(), "2".into()),
-        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/omniterm".into()),
+        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/leapterm".into()),
         ("SOURCE_BRANCH".into(), "main".into()),
         ("SOURCE_DEPLOY_KEY".into(), "synthetic".into()),
         ("SOURCE_KNOWN_HOSTS".into(), "synthetic".into()),
@@ -115,7 +115,7 @@ fn all_targets_validate_configuration_without_unrelated_signing_or_optional_iden
     release.insert("RESOLVED_SOURCE_SHA".into(), "a".repeat(40));
     release.insert(
         "BUILD_CONFIG".into(),
-        r#"{"OMNI_ENABLE_VPN":"true"}"#.into(),
+        r#"{"LEAP_ENABLE_VPN":"true"}"#.into(),
     );
     release.insert("STORAGE_CONFIG".into(), "{}".into());
     for stage in input::RELEASE_TARGETS.iter().filter(|s| **s != "resolve") {
@@ -138,10 +138,10 @@ fn all_targets_validate_configuration_without_unrelated_signing_or_optional_iden
         for config in [
             "",
             "{}",
-            r#"{"OMNI_ENABLE_VPN":false}"#,
-            r#"{"OMNI_ENABLE_VPN":true}"#,
-            r#"{"OMNI_ENABLE_VPN":"false"}"#,
-            r#"{"OMNI_ENABLE_VPN":"true","OMNI_ENABLE_VPN":"true"}"#,
+            r#"{"LEAP_ENABLE_VPN":false}"#,
+            r#"{"LEAP_ENABLE_VPN":true}"#,
+            r#"{"LEAP_ENABLE_VPN":"false"}"#,
+            r#"{"LEAP_ENABLE_VPN":"true","LEAP_ENABLE_VPN":"true"}"#,
         ] {
             let mut bad = release.clone();
             bad.insert("BUILD_CONFIG".into(), config.into());
@@ -189,7 +189,7 @@ fn full_release_keeps_explicit_sha_and_binds_later_jobs_to_resolver() {
     environment.insert("RESOLVED_SOURCE_SHA".into(), "c".repeat(40));
     environment.insert(
         "BUILD_CONFIG".into(),
-        r#"{"OMNI_ENABLE_VPN":"true"}"#.into(),
+        r#"{"LEAP_ENABLE_VPN":"true"}"#.into(),
     );
     environment.insert("STORAGE_CONFIG".into(), "{}".into());
     assert_eq!(

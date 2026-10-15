@@ -9,17 +9,17 @@ fn authority() -> Environment {
         ("GITHUB_EVENT_NAME".into(), "workflow_dispatch".into()),
         (
             "GITHUB_REPOSITORY".into(),
-            "omnisolo-llc/omniterm-release".into(),
+            "omnisolo-llc/leapterm-release".into(),
         ),
         ("GITHUB_REF".into(), "refs/heads/main".into()),
         (
             "GITHUB_WORKFLOW_REF".into(),
-            "omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main".into(),
+            "omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main".into(),
         ),
         ("GITHUB_SHA".into(), "b".repeat(40)),
         ("GITHUB_RUN_ID".into(), "15".into()),
         ("GITHUB_RUN_ATTEMPT".into(), "1".into()),
-        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/omniterm".into()),
+        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/leapterm".into()),
         ("SOURCE_BRANCH".into(), "main".into()),
     ])
 }
@@ -66,14 +66,14 @@ fn workflow_identity_cannot_be_forged_by_alternate_repos_or_refs() {
     validate_authority(&authority()).unwrap();
     for (key, value) in [
         ("GITHUB_EVENT_NAME", "pull_request"),
-        ("GITHUB_REPOSITORY", "fork/omniterm-release"),
+        ("GITHUB_REPOSITORY", "fork/leapterm-release"),
         ("GITHUB_REF", "refs/heads/other"),
         ("SOURCE_REPOSITORY", "other/private"),
         ("SOURCE_BRANCH", "other"),
         ("GITHUB_RUN_ID", "0"),
         (
             "GITHUB_WORKFLOW_REF",
-            "omnisolo-llc/omniterm-release/.github/workflows/other.yml@refs/heads/main",
+            "omnisolo-llc/leapterm-release/.github/workflows/other.yml@refs/heads/main",
         ),
     ] {
         let mut env = authority();
@@ -256,11 +256,11 @@ fn submodule_repo() -> (tempfile::TempDir, String, String) {
     let (seed, child_sha) = repo();
     for (name, url) in [
         (
-            "omniterm-release",
+            "leapterm-release",
             omni_release_launcher::source::PUBLIC_URL,
         ),
         (
-            "omniterm-website",
+            "leapterm-website",
             omni_release_launcher::source::WEBSITE_URL,
         ),
     ] {
@@ -289,18 +289,18 @@ fn submodule_repo() -> (tempfile::TempDir, String, String) {
     }
     git(
         root.path(),
-        &["add", ".gitmodules", "omniterm-release", "omniterm-website"],
+        &["add", ".gitmodules", "leapterm-release", "leapterm-website"],
     );
     git(root.path(), &["commit", "-qm", "pinned submodule fixture"]);
     let sha = git(root.path(), &["rev-parse", "HEAD"]);
-    for name in ["omniterm-release", "omniterm-website"] {
+    for name in ["leapterm-release", "leapterm-website"] {
         git(
             &root.path().join(name),
             &[
                 "remote",
                 "set-url",
                 "origin",
-                if name == "omniterm-release" {
+                if name == "leapterm-release" {
                     omni_release_launcher::source::PUBLIC_URL
                 } else {
                     omni_release_launcher::source::WEBSITE_URL
@@ -324,7 +324,7 @@ fn real_cached_submodules_materialize_at_exact_commits_without_network() {
     )
     .unwrap();
     verify_source(root.path(), &sha).unwrap();
-    for name in ["omniterm-release", "omniterm-website"] {
+    for name in ["leapterm-release", "leapterm-website"] {
         assert_eq!(
             git(&root.path().join(name), &["rev-parse", "HEAD"]),
             builder
@@ -349,14 +349,14 @@ fn executing_builder_must_match_source_gitlink_before_acquisition() {
         )
         .is_err()
     );
-    assert!(!root.path().join("omniterm-release/payload.txt").exists());
+    assert!(!root.path().join("leapterm-release/payload.txt").exists());
 }
 #[test]
 fn dangling_gitlink_symlink_cannot_be_treated_as_uninitialized() {
     #[cfg(unix)]
     {
         let (root, sha, _) = submodule_repo();
-        let link = root.path().join("omniterm-website");
+        let link = root.path().join("leapterm-website");
         fs::remove_dir(&link).unwrap();
         std::os::unix::fs::symlink("/nonexistent-untrusted-location", link).unwrap();
         let env = omni_release_launcher::clean_environment(&std::env::vars().collect());
@@ -371,7 +371,7 @@ fn cached_uninitialized_submodule_config_is_checked_before_fetch() {
         &[
             "config",
             "--file",
-            ".git/modules/omniterm-website/config",
+            ".git/modules/leapterm-website/config",
             "url.https://attacker.example/.insteadOf",
             "https://github.com/",
         ],
@@ -388,7 +388,7 @@ fn cached_uninitialized_submodule_config_is_checked_before_fetch() {
         .is_err()
     );
     assert!(
-        !root.path().join("omniterm-website/payload.txt").exists(),
+        !root.path().join("leapterm-website/payload.txt").exists(),
         "Private checkout happened before unsafe cache rejection"
     );
 }
@@ -420,7 +420,7 @@ fn hidden_index_flags_empty_hardlinks_replacement_refs_and_dangerous_config_are_
         "include.path",
         "filter.evil.clean",
         "http.extraheader",
-        "submodule.omniterm-website.update",
+        "submodule.leapterm-website.update",
     ] {
         let (root, sha) = repo();
         git(
@@ -449,7 +449,7 @@ fn cached_submodule_remote_cannot_redirect_a_pinned_fetch() {
         &[
             "config",
             "--file",
-            ".git/modules/omniterm-website/config",
+            ".git/modules/leapterm-website/config",
             "remote.origin.url",
             "https://attacker.invalid/website.git",
         ],
@@ -465,7 +465,7 @@ fn cached_submodule_remote_cannot_redirect_a_pinned_fetch() {
         )
         .is_err()
     );
-    assert!(!root.path().join("omniterm-website/payload.txt").exists());
+    assert!(!root.path().join("leapterm-website/payload.txt").exists());
 }
 #[test]
 fn ignored_native_compiler_input_is_rejected_before_building() {

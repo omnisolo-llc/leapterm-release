@@ -12,10 +12,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const SOURCE_REPOSITORY: &str = "omnisolo-llc/omniterm";
-pub const BUILDER_REPOSITORY: &str = "omnisolo-llc/omniterm-release";
+pub const SOURCE_REPOSITORY: &str = "omnisolo-llc/leapterm";
+pub const BUILDER_REPOSITORY: &str = "omnisolo-llc/leapterm-release";
 pub const CI_WORKFLOW: &str =
-    "omnisolo-llc/omniterm-release/.github/workflows/source-ci.yml@refs/heads/main";
+    "omnisolo-llc/leapterm-release/.github/workflows/source-ci.yml@refs/heads/main";
 pub const CI_STAGES: [&str; 13] = [
     "source",
     "security",
@@ -179,7 +179,7 @@ pub fn authorize_ci(request: &SourceCiRequest, observed: &Value) -> Result<()> {
     Ok(())
 }
 /// Reconstruct only the nonsecret stage protocol. In particular, no GITHUB_*
-/// command-file/token prefix or arbitrary OMNI_* value is inherited.
+/// command-file/token prefix or arbitrary LEAP_* value is inherited.
 pub fn ci_child_environment(
     parent: &Environment,
     request: &SourceCiRequest,
@@ -198,7 +198,7 @@ pub fn ci_child_environment(
         ("CARGO_BUILD_JOBS", "2".into()),
         ("RUST_TEST_THREADS", "1".into()),
         ("FLUTTER_SUPPRESS_ANALYTICS", "true".into()),
-        ("OMNI_REQUIRE_RELEASE_CONFIG", "true".into()),
+        ("LEAP_REQUIRE_RELEASE_CONFIG", "true".into()),
     ] {
         result.insert(name.into(), value);
     }
@@ -209,13 +209,13 @@ pub fn ci_child_environment(
         result.insert("SOURCE_CI_CATALOG_SHA256".into(), catalog.clone());
     }
     if request.stage == "agent-lifecycle"
-        && let Some(predecessor) = parent.get("OMNI_E2E_AGENT_PREDECESSOR_COMMIT")
+        && let Some(predecessor) = parent.get("LEAP_E2E_AGENT_PREDECESSOR_COMMIT")
     {
         if !valid_sha(predecessor) || *predecessor == request.identity.source_sha {
             return Err("Invalid source-CI agent predecessor");
         }
         result.insert(
-            "OMNI_E2E_AGENT_PREDECESSOR_COMMIT".into(),
+            "LEAP_E2E_AGENT_PREDECESSOR_COMMIT".into(),
             predecessor.clone(),
         );
     }

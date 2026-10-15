@@ -6,9 +6,9 @@ manifest="$here/native-release/Cargo.toml"
 guard="$(mktemp -d)"
 trap 'rm -rf -- "$guard"' EXIT
 mkdir "$guard/bin"
-export OMNI_PYTHON_GUARD_LOG="$guard/python-invocations"
+export LEAP_PYTHON_GUARD_LOG="$guard/python-invocations"
 for tool in python python2 python3 python3.12 python3.13 python3.14 pip pip3 pipx pypy pypy3 py; do
-  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$0" >> "$OMNI_PYTHON_GUARD_LOG"' 'exit 97' > "$guard/bin/$tool"
+  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$0" >> "$LEAP_PYTHON_GUARD_LOG"' 'exit 97' > "$guard/bin/$tool"
   chmod 700 "$guard/bin/$tool"
 done
 export PATH="$guard/bin:$PATH"
@@ -50,7 +50,7 @@ check format cargo +1.95.0 fmt --manifest-path "$manifest" --check
 check tests cargo +1.95.0 test --locked --manifest-path "$manifest" -- --test-threads=1
 check clippy cargo +1.95.0 clippy --locked --all-targets --manifest-path "$manifest" -- -D warnings
 sed -n '/^test result:/p' "$guard/bootstrap.log"
-if [[ -e "$OMNI_PYTHON_GUARD_LOG" ]]; then
+if [[ -e "$LEAP_PYTHON_GUARD_LOG" ]]; then
   echo 'A native test invoked a forbidden Python tool.' >&2
   exit 1
 fi

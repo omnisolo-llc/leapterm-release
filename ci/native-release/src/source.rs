@@ -491,8 +491,8 @@ pub fn verify(
     }
     Ok(())
 }
-pub const PUBLIC_URL: &str = "https://github.com/omnisolo-llc/omniterm-release.git";
-pub const WEBSITE_URL: &str = "https://github.com/omnisolo-llc/omniterm-website.git";
+pub const PUBLIC_URL: &str = "https://github.com/omnisolo-llc/leapterm-release.git";
+pub const WEBSITE_URL: &str = "https://github.com/omnisolo-llc/leapterm-website.git";
 pub fn materialize(
     root: &Path,
     sha: &str,
@@ -517,7 +517,7 @@ pub fn materialize_scoped(
     if builder.is_some_and(|builder| {
         !links
             .iter()
-            .any(|e| e.path == "omniterm-release" && e.oid == builder)
+            .any(|e| e.path == "leapterm-release" && e.oid == builder)
     }) {
         return Err("Source builder pin differs from executing builder");
     }
@@ -546,8 +546,8 @@ pub fn materialize_scoped(
     }
     for link in links {
         let url = match link.path.as_str() {
-            "omniterm-release" => PUBLIC_URL,
-            "omniterm-website" => WEBSITE_URL,
+            "leapterm-release" => PUBLIC_URL,
+            "leapterm-website" => WEBSITE_URL,
             _ => return Err("Unapproved submodule destination"),
         };
         if fields.get(&format!("submodule.{}.path", link.path)) != Some(&link.path)
@@ -619,7 +619,7 @@ pub fn materialize_scoped(
         let mut transport_url = url;
         if url == WEBSITE_URL && website_ssh.is_some() {
             scoped = website_ssh.ok_or("Submodule transport missing")?.clone();
-            transport_url = "ssh://git@ssh.github.com:443/omnisolo-llc/omniterm-website.git";
+            transport_url = "ssh://git@ssh.github.com:443/omnisolo-llc/leapterm-website.git";
         } else if url == WEBSITE_URL {
             if !(16..=4096).contains(&token.len())
                 || !token.bytes().all(|b| (0x21..=0x7e).contains(&b))

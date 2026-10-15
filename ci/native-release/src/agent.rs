@@ -16,7 +16,7 @@ pub const PLATFORMS: &[&str] = &[
     "windows-aarch64",
 ];
 pub const WORKFLOW_REF: &str =
-    "omnisolo-llc/omniterm-release/.github/workflows/omni-agent.yml@refs/heads/main";
+    "omnisolo-llc/leapterm-release/.github/workflows/omni-agent.yml@refs/heads/main";
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,10 +66,10 @@ pub fn validate_authority(env: &Environment) -> Result<()> {
     for (key, value) in [
         ("GITHUB_ACTIONS", "true"),
         ("GITHUB_EVENT_NAME", "workflow_dispatch"),
-        ("GITHUB_REPOSITORY", "omnisolo-llc/omniterm-release"),
+        ("GITHUB_REPOSITORY", "omnisolo-llc/leapterm-release"),
         ("GITHUB_REF", "refs/heads/main"),
         ("GITHUB_WORKFLOW_REF", WORKFLOW_REF),
-        ("SOURCE_REPOSITORY", "omnisolo-llc/omniterm"),
+        ("SOURCE_REPOSITORY", "omnisolo-llc/leapterm"),
         ("SOURCE_BRANCH", pin.source_branch.as_str()),
         ("RESOLVED_SOURCE_SHA", pin.source_sha.as_str()),
     ] {
@@ -88,7 +88,7 @@ pub fn validate_authority(env: &Environment) -> Result<()> {
         return Err("Invalid agent workflow identity");
     }
     let platform = env
-        .get("OMNI_AGENT_PLATFORM")
+        .get("LEAP_AGENT_PLATFORM")
         .ok_or("Agent platform missing")?;
     if env.get("RELEASE_TARGET").map(String::as_str) != Some(target(platform)?) {
         return Err("Agent target mismatch");
@@ -115,10 +115,10 @@ pub fn package_names(version: &str, platform: &str) -> Result<BTreeSet<String>> 
     {
         return Err("Invalid package version or MSI bounds");
     }
-    let stem = format!("omniterm-agent-v{version}-{platform}");
+    let stem = format!("leap-agent-v{version}-{platform}");
     let mut names = BTreeSet::from([
         format!(
-            "omniterm-agent-{platform}{}",
+            "leap-agent-{platform}{}",
             if platform.starts_with("windows-") {
                 ".exe"
             } else {
@@ -143,8 +143,8 @@ pub fn package_names(version: &str, platform: &str) -> Result<BTreeSet<String>> 
         };
         names.extend([
             format!("{stem}.tar.gz"),
-            format!("omniterm-agent_{version}_{deb}.deb"),
-            format!("omniterm-agent-{version}-1.{rpm}.rpm"),
+            format!("leap-agent_{version}_{deb}.deb"),
+            format!("leap-agent-{version}-1.{rpm}.rpm"),
         ]);
     }
     Ok(names)
@@ -152,9 +152,9 @@ pub fn package_names(version: &str, platform: &str) -> Result<BTreeSet<String>> 
 pub fn payload_names(platform: &str) -> BTreeSet<&'static str> {
     let mut names = BTreeSet::from(["README.txt", "LICENSE.txt"]);
     if platform.starts_with("windows-") {
-        names.insert("omniterm-agent.exe");
+        names.insert("leap-agent.exe");
     } else {
-        names.extend(["omniterm-agent", "omniterm-task-runner"]);
+        names.extend(["leap-agent", "omniterm-task-runner"]);
     }
     names
 }

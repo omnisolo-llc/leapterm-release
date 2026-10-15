@@ -10,7 +10,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub const REPOSITORY: &str = "omnisolo-llc/omniterm-release";
+pub const REPOSITORY: &str = "omnisolo-llc/leapterm-release";
 pub const RUNNERS: [&str; 6] = [
     "ubuntu-24.04",
     "ubuntu-24.04-arm",
@@ -24,10 +24,10 @@ const MAX_DOCUMENTS: usize = 128;
 const MAX_CELLS: usize = 256;
 type Cell = BTreeMap<String, Value>;
 
-const VERIFY_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' }}";
-const VERIFY_SDK_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' }}";
-const PUBLISH_CANDIDATE_IF: &str = "${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}";
-const SIGN_CANDIDATE_IF: &str = "${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}";
+const VERIFY_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}";
+const VERIFY_SDK_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}";
+const PUBLISH_CANDIDATE_IF: &str = "${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}";
+const SIGN_CANDIDATE_IF: &str = "${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CandidateRole {
@@ -145,13 +145,13 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
             "OMNITERM_VPN_PROVIDER_PUBLIC_KEY" => {
                 value.as_str() == Some("${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}")
             }
-            "OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64" => {
+            "LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64" => {
                 role == CandidateRole::Produce
-                    && value.as_str() == Some("${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}")
+                    && value.as_str() == Some("${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}")
             }
-            "OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64" => {
+            "LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64" => {
                 role == CandidateRole::Produce
-                    && value.as_str() == Some("${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}")
+                    && value.as_str() == Some("${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}")
             }
             "WINDOWS_PREVIEW_OUTPUT_DIR" => {
                 role == CandidateRole::Produce
@@ -160,7 +160,7 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
                             "${{ inputs.preview_windows_self_sign && matrix.target == 'windows' && format('{0}/windows-preview', runner.temp) || '' }}",
                         )
             }
-            "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB" => {
+            "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB" => {
                 role == CandidateRole::Produce
                     && value.as_str()
                         == Some(
@@ -306,7 +306,7 @@ pub fn reviewed_public_candidate_exchange(
                 )
                 || (!sdk_role
                     && steps[producer]["env"]
-                        .get("OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB")
+                        .get("LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB")
                         .is_some())
                 || index - producer > 2
                 || steps[producer + 1..index]

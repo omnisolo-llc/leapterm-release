@@ -1,6 +1,6 @@
-# OmniTerm first-party MoQT relay
+# LeapTerm first-party MoQT relay
 
-This package owns the WebTransport/HTTP/3 sessions used by OmniTerm's browser
+This package owns the WebTransport/HTTP/3 sessions used by LeapTerm's browser
 MoQ transport. The authenticated HTTPS control API and QUIC data plane run in
 one Node process so token revocation can close each admitted connection and
 wait for the transport's closed event before acknowledging cutoff.
@@ -53,7 +53,7 @@ npm run native-build
 npm start
 ```
 
-Configure the OmniTerm live-share origin/Worker with the matching public
+Configure the LeapTerm live-share origin/Worker with the matching public
 configuration:
 
 ```text

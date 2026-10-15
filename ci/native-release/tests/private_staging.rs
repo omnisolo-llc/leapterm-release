@@ -26,13 +26,13 @@ fn environment() -> Environment {
     Environment::from([
         ("GITHUB_ACTIONS".into(), "true".into()),
         ("GITHUB_EVENT_NAME".into(), "workflow_dispatch".into()),
-        ("GITHUB_REPOSITORY".into(), "omnisolo-llc/omniterm-release".into()),
+        ("GITHUB_REPOSITORY".into(), "omnisolo-llc/leapterm-release".into()),
         ("GITHUB_REF".into(), "refs/heads/main".into()),
-        ("GITHUB_WORKFLOW_REF".into(), "omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main".into()),
+        ("GITHUB_WORKFLOW_REF".into(), "omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main".into()),
         ("GITHUB_SHA".into(), "b".repeat(40)),
         ("GITHUB_RUN_ID".into(), "42".into()),
         ("GITHUB_RUN_ATTEMPT".into(), "2".into()),
-        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/omniterm".into()),
+        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/leapterm".into()),
         ("SOURCE_BRANCH".into(), "main".into()),
         ("RELEASE_TARGET".into(), "publish".into()),
         ("RESOLVED_SOURCE_SHA".into(), "a".repeat(40)),
@@ -57,13 +57,13 @@ fn candidate_with_names(env: &Environment, names: &[&str]) -> (tempfile::TempDir
         fs::write(directory.path().join(name), &bytes).unwrap();
         files.insert((*name).into(), json!({"bytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(&bytes)),"content_type":"application/octet-stream"}));
     }
-    let document = json!({"schema":1,"identity":publication_candidates::identity(env).unwrap(),"release":serde_json::from_str::<Value>(&request.normalized().unwrap()).unwrap(),"repository":"omnisolo-llc/omniterm-release","files":files});
+    let document = json!({"schema":1,"identity":publication_candidates::identity(env).unwrap(),"release":serde_json::from_str::<Value>(&request.normalized().unwrap()).unwrap(),"repository":"omnisolo-llc/leapterm-release","files":files});
     let plan = publication_candidates::read_plan(&document, env, directory.path()).unwrap();
     (directory, plan)
 }
 
 fn release(plan: &Plan, draft: bool) -> Value {
-    json!({"id":7,"tag_name":"v1.2.3","name":"Omniterm v1.2.3","draft":draft,"prerelease":false,"target_commitish":"a".repeat(40),"body":plan.notes()})
+    json!({"id":7,"tag_name":"v1.2.3","name":"LeapTerm v1.2.3","draft":draft,"prerelease":false,"target_commitish":"a".repeat(40),"body":plan.notes()})
 }
 
 #[derive(Clone)]
@@ -560,7 +560,7 @@ impl Drop for HttpFixture {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         let server_failed = self.join.take().unwrap().join().is_err();
-        if let Ok(directory) = std::env::var("OMNI_PRIVATE_STAGING_EVIDENCE") {
+        if let Ok(directory) = std::env::var("LEAP_PRIVATE_STAGING_EVIDENCE") {
             let state = self
                 .state
                 .lock()
@@ -1703,7 +1703,7 @@ fn denial_of_individual_private_release_readback_cannot_authorize_a_write() {
 
 #[test]
 fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
-    const CASE: &str = "OMNI_STAGING_MEMBERSHIP_CASE";
+    const CASE: &str = "LEAP_STAGING_MEMBERSHIP_CASE";
     const ACTOR: &str = "omni-synthetic-ci-actor";
     if let Ok(case) = std::env::var(CASE) {
         assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
@@ -1782,8 +1782,8 @@ fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
             .env("GITHUB_ACTIONS", "true")
             .env("GITHUB_ACTOR", ACTOR)
             .env(CASE, case);
-        if let Ok(evidence) = std::env::var("OMNI_PRIVATE_STAGING_EVIDENCE") {
-            child.env("OMNI_PRIVATE_STAGING_EVIDENCE", evidence);
+        if let Ok(evidence) = std::env::var("LEAP_PRIVATE_STAGING_EVIDENCE") {
+            child.env("LEAP_PRIVATE_STAGING_EVIDENCE", evidence);
         }
         let output = child.output().unwrap();
         assert!(

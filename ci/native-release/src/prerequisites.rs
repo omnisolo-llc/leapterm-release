@@ -10,7 +10,7 @@ const NAMES: [&str; 8] = [
     "BUILD_CONFIG",
     "STORAGE_CONFIG",
     "OMNITERM_VPN_PROVIDER_PUBLIC_KEY",
-    "OMNI_INTEGRATION_DEVICE",
+    "LEAP_INTEGRATION_DEVICE",
 ];
 
 pub fn check_integration(env: &Environment) -> Result<()> {

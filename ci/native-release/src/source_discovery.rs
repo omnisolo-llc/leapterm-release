@@ -304,11 +304,11 @@ fn fresh_binding(
     if head != source_sha || base != base_sha || merge != base {
         return Err("Source-CI source head or base changed");
     }
-    let gitlink = source.get_json(&format!("{root}/contents/omniterm-release?ref={head}"))?;
+    let gitlink = source.get_json(&format!("{root}/contents/leapterm-release?ref={head}"))?;
     if !["submodule", "file"].contains(&text(&gitlink, "type")?)
         || gitlink["submodule_git_url"] != crate::source::PUBLIC_URL
         || gitlink["sha"] != builder_sha
-        || gitlink["path"] != "omniterm-release"
+        || gitlink["path"] != "leapterm-release"
     {
         return Err("Source-CI builder gitlink changed");
     }

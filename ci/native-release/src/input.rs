@@ -184,13 +184,13 @@ pub fn validate_authority(env: &Environment) -> Result<()> {
     for (name, expected) in [
         ("GITHUB_ACTIONS", "true"),
         ("GITHUB_EVENT_NAME", "workflow_dispatch"),
-        ("GITHUB_REPOSITORY", "omnisolo-llc/omniterm-release"),
+        ("GITHUB_REPOSITORY", "omnisolo-llc/leapterm-release"),
         ("GITHUB_REF", "refs/heads/main"),
         (
             "GITHUB_WORKFLOW_REF",
-            "omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main",
+            "omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main",
         ),
-        ("SOURCE_REPOSITORY", "omnisolo-llc/omniterm"),
+        ("SOURCE_REPOSITORY", "omnisolo-llc/leapterm"),
         ("SOURCE_BRANCH", "main"),
     ] {
         if env.get(name).map(String::as_str) != Some(expected) {

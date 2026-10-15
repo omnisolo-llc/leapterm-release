@@ -405,7 +405,7 @@ fn complete_same_run_release_graph_keeps_all_evidence_and_approval_edges() {
         assert_eq!(needs(job), parents.into_iter().collect(), "{name}");
         let condition = job["if"].as_str().unwrap();
         assert!(
-            condition.contains("github.repository == 'omnisolo-llc/omniterm-release'")
+            condition.contains("github.repository == 'omnisolo-llc/leapterm-release'")
                 && condition.contains("github.ref == 'refs/heads/main'"),
             "{name}"
         );
@@ -606,8 +606,8 @@ fn permissions_environments_and_all_task_inputs_keep_exact_step_scope() {
                     Some("${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}")
                 );
                 for key in [
-                    "OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64",
-                    "OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64",
+                    "LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64",
+                    "LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64",
                 ] {
                     if name == "option1_signatures" {
                         assert!(env[key].is_null());
@@ -700,7 +700,7 @@ fn permissions_environments_and_all_task_inputs_keep_exact_step_scope() {
     for (key, value) in [
         ("RELEASE_REQUEST", "${{ toJSON(inputs) }}"),
         ("GITHUB_SHA", "${{ github.sha }}"),
-        ("SOURCE_REPOSITORY", "omnisolo-llc/omniterm"),
+        ("SOURCE_REPOSITORY", "omnisolo-llc/leapterm"),
         ("SOURCE_BRANCH", "main"),
     ] {
         assert_eq!(approval["env"][key].as_str(), Some(value));
@@ -768,7 +768,7 @@ fn build_integration_installation_and_provider_matrices_remain_complete() {
                 row["vpn_profile_variable"].as_str(),
                 Some(
                     format!(
-                        "OMNI_VPN_INSTALLATION_PROFILE_{}",
+                        "LEAP_VPN_INSTALLATION_PROFILE_{}",
                         platform.to_ascii_uppercase()
                     )
                     .as_str()
@@ -807,10 +807,10 @@ fn build_integration_installation_and_provider_matrices_remain_complete() {
     {
         let platform = row["platform"].as_str().unwrap();
         for (key, prefix) in [
-            ("config_variable", "OMNI_EXTERNAL_CONFIG_"),
+            ("config_variable", "LEAP_EXTERNAL_CONFIG_"),
             (
                 "candidate_guard_variable",
-                "OMNI_EXTERNAL_CANDIDATE_GUARD_CONFIG_",
+                "LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_",
             ),
         ] {
             assert_eq!(
@@ -834,38 +834,38 @@ fn fixture_trust_files_and_publication_credentials_are_scoped_to_their_stages() 
     let bindings = [
         (
             "integration",
-            "OMNI_INTEGRATION_PLATFORM",
+            "LEAP_INTEGRATION_PLATFORM",
             "${{ matrix.platform }}",
         ),
         (
             "integration",
-            "OMNI_INTEGRATION_DEVICE",
+            "LEAP_INTEGRATION_DEVICE",
             "${{ vars[matrix.device_variable] || matrix.default_device }}",
         ),
         (
             "integration",
-            "OMNI_INTEGRATION_DEFINES",
+            "LEAP_INTEGRATION_DEFINES",
             "${{ vars[matrix.defines_variable] }}",
         ),
         (
             "installation",
-            "OMNI_INSTALL_CONFIG",
+            "LEAP_INSTALL_CONFIG",
             "${{ vars[matrix.config_variable] }}",
         ),
         (
             "installation",
-            "OMNI_VPN_INSTALLATION_PROFILE_FILE",
+            "LEAP_VPN_INSTALLATION_PROFILE_FILE",
             "${{ vars[matrix.vpn_profile_variable] || '' }}",
         ),
         (
             "installation",
-            "OMNI_VPN_RECEIVER_TRUSTED_JWKS_JSON",
-            "${{ vars.OMNI_VPN_RECEIVER_TRUSTED_JWKS_JSON }}",
+            "LEAP_VPN_RECEIVER_TRUSTED_JWKS_JSON",
+            "${{ vars.LEAP_VPN_RECEIVER_TRUSTED_JWKS_JSON }}",
         ),
         (
             "installation",
-            "OMNI_VPN_TRUSTED_GATEWAY_POLICIES_JSON",
-            "${{ vars.OMNI_VPN_TRUSTED_GATEWAY_POLICIES_JSON }}",
+            "LEAP_VPN_TRUSTED_GATEWAY_POLICIES_JSON",
+            "${{ vars.LEAP_VPN_TRUSTED_GATEWAY_POLICIES_JSON }}",
         ),
         (
             "managed_rtc_provider",
@@ -879,7 +879,7 @@ fn fixture_trust_files_and_publication_credentials_are_scoped_to_their_stages() 
         ),
         (
             "vpn_container",
-            "OMNI_VPN_E2E_KERNEL_MODULE_STATE",
+            "LEAP_VPN_E2E_KERNEL_MODULE_STATE",
             "${{ matrix.kernel_state }}",
         ),
         (
@@ -889,23 +889,23 @@ fn fixture_trust_files_and_publication_credentials_are_scoped_to_their_stages() 
         ),
         (
             "external_tests",
-            "OMNI_EXTERNAL_CONFIG_FILE",
+            "LEAP_EXTERNAL_CONFIG_FILE",
             "${{ vars[matrix.config_variable] }}",
         ),
         (
             "external_tests",
-            "OMNI_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE",
+            "LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE",
             "${{ vars[matrix.candidate_guard_variable] }}",
         ),
         (
             "external_windows_signing",
-            "OMNI_EXTERNAL_PLATFORM",
+            "LEAP_EXTERNAL_PLATFORM",
             "windows-signing",
         ),
         (
             "external_windows_signing",
-            "OMNI_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE",
-            "${{ vars.OMNI_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE }}",
+            "LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE",
+            "${{ vars.LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE }}",
         ),
     ];
     for (job, key, value) in bindings {
@@ -930,8 +930,8 @@ fn fixture_trust_files_and_publication_credentials_are_scoped_to_their_stages() 
         }
         if name.as_str() != Some("installation") {
             assert!(
-                task(job)["env"]["OMNI_VPN_RECEIVER_TRUSTED_JWKS_JSON"].is_null()
-                    && task(job)["env"]["OMNI_VPN_TRUSTED_GATEWAY_POLICIES_JSON"].is_null()
+                task(job)["env"]["LEAP_VPN_RECEIVER_TRUSTED_JWKS_JSON"].is_null()
+                    && task(job)["env"]["LEAP_VPN_TRUSTED_GATEWAY_POLICIES_JSON"].is_null()
             );
         }
     }
@@ -942,16 +942,16 @@ fn fixture_trust_files_and_publication_credentials_are_scoped_to_their_stages() 
         "LIVE_SHARE_MOQ_ENABLED",
         "CLOUDFLARE_MOQ_ACCOUNT_ID",
         "CLOUDFLARE_MOQ_API_TOKEN",
-        "OMNI_E2E_EDGE_URL",
-        "OMNI_E2E_IDENTITY_URL",
-        "OMNI_E2E_IDENTITY_WORKLOAD_TOKEN",
-        "OMNI_E2E_OIDC_ISSUER_URL",
-        "OMNI_E2E_OIDC_AUTHORIZATION_ENDPOINT",
-        "OMNI_E2E_OIDC_REDIRECT_URI",
-        "OMNI_E2E_OIDC_CLIENT_ID",
-        "OMNI_E2E_OIDC_EXPECTED_SUBJECT_ID",
-        "OMNI_E2E_OIDC_TENANT_ID",
-        "OMNI_E2E_OIDC_STORAGE_STATE",
+        "LEAP_E2E_EDGE_URL",
+        "LEAP_E2E_IDENTITY_URL",
+        "LEAP_E2E_IDENTITY_WORKLOAD_TOKEN",
+        "LEAP_E2E_OIDC_ISSUER_URL",
+        "LEAP_E2E_OIDC_AUTHORIZATION_ENDPOINT",
+        "LEAP_E2E_OIDC_REDIRECT_URI",
+        "LEAP_E2E_OIDC_CLIENT_ID",
+        "LEAP_E2E_OIDC_EXPECTED_SUBJECT_ID",
+        "LEAP_E2E_OIDC_TENANT_ID",
+        "LEAP_E2E_OIDC_STORAGE_STATE",
     ] {
         assert!(task(&jobs["external_tests"])["env"][key].is_null());
     }
@@ -1122,7 +1122,7 @@ fn native_agent_matrix_pin_wix_and_complete_hash_check_precede_artifact_retentio
     );
     assert_eq!(
         s[upload]["env"]["STORAGE_CONFIG"].as_str(),
-        Some("${{ secrets.OMNI_AGENT_STORAGE_CONFIG }}")
+        Some("${{ secrets.LEAP_AGENT_STORAGE_CONFIG }}")
     );
     assert_eq!(
         s[upload]["env"]["RESOLVED_SOURCE_SHA"].as_str(),
@@ -1178,7 +1178,7 @@ fn native_agent_matrix_pin_wix_and_complete_hash_check_precede_artifact_retentio
         require_text(job, &format!("extension add -g {extension}/6.0.2"));
     }
     assert_eq!(
-        task(job)["env"]["OMNI_AGENT_OUTPUT"].as_str(),
+        task(job)["env"]["LEAP_AGENT_OUTPUT"].as_str(),
         Some("${{ runner.temp }}/agent-release")
     );
 }
@@ -1246,7 +1246,7 @@ fn pinned_actions_sdk_versions_and_real_relay_suites_remain_required() {
     for job in ["windows_download", "external_windows_signing"] {
         for c in [
             "74bd7d27e6ce1051409c38d9b46bc8df0400ecd643d51ffbf2ac00869061e40b",
-            "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB=$dlib",
+            "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB=$dlib",
         ] {
             require_text(&jobs[job], c);
         }
@@ -1331,17 +1331,17 @@ fn release_defaults_and_protected_approval_documentation_remain_explicit() {
     );
     let docs = read("README.md");
     for text in [
-        "OmniTerm client downloads",
+        "LeapTerm client downloads",
         "self-hosted relay kit",
         "# Omni Agent Native Builds",
     ] {
         assert!(docs.contains(text), "{text}");
     }
     for forbidden in [
-        "omnisolo-llc/omniterm/releases",
+        "omnisolo-llc/leapterm/releases",
         "release-source-approval",
         "APPROVED_RELEASE_SOURCE_SHA",
-        "OMNI_EXTERNAL_CONFIG_LINUX",
+        "LEAP_EXTERNAL_CONFIG_LINUX",
     ] {
         assert!(!docs.contains(forbidden), "README leaked {forbidden}");
     }

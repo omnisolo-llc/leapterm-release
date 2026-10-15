@@ -19,8 +19,8 @@ use std::{
     time::Duration,
 };
 
-pub const REPOSITORY: &str = "omnisolo-llc/omniterm-release";
-pub const STAGING_REPOSITORY: &str = "omnisolo-llc/omniterm";
+pub const REPOSITORY: &str = "omnisolo-llc/leapterm-release";
+pub const STAGING_REPOSITORY: &str = "omnisolo-llc/leapterm";
 pub const DIRECTORY: &str = "reviewed-publication";
 const MAX_ASSET: u64 = 2 * 1024 * 1024 * 1024 - 1;
 const MAX_PLAN: u64 = 65536;
@@ -88,8 +88,8 @@ pub fn verification_environment(env: &Environment) -> Environment {
         "GITHUB_RUN_ID",
         "GITHUB_RUN_ATTEMPT",
         "OMNITERM_VPN_PROVIDER_PUBLIC_KEY",
-        "OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64",
-        "OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64",
+        "LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64",
+        "LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64",
         "OMNITERM_WINDOWS_SDK_MANIFEST_SHA256",
     ] {
         if let Some(value) = env.get(name) {
@@ -103,7 +103,7 @@ pub fn verification_environment(env: &Environment) -> Environment {
             .is_some_and(|request| !request.build_only)
     {
         for name in [
-            "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB",
+            "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB",
             "ACTIONS_ID_TOKEN_REQUEST_URL",
             "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
         ] {
@@ -227,7 +227,7 @@ impl Plan {
             ""
         };
         format!(
-            "Omniterm v{} ({}).{}\n<!-- native-publication:{} -->",
+            "LeapTerm v{} ({}).{}\n<!-- native-publication:{} -->",
             self.document.release["version"].as_str().unwrap_or(""),
             self.document.identity.source_sha,
             disclosure,
@@ -332,12 +332,12 @@ pub fn read_plan(value: &Value, env: &Environment, directory: &Path) -> Result<P
         match config
             .as_object()
             .ok_or("Invalid public build configuration")?
-            .get("OMNI_WINDOWS_SELF_SIGNED")
+            .get("LEAP_WINDOWS_SELF_SIGNED")
         {
             None => false,
             Some(Value::String(value)) if value == "true" => true,
             Some(Value::String(value)) if value == "false" => false,
-            Some(_) => return Err("Invalid OMNI_WINDOWS_SELF_SIGNED in build configuration"),
+            Some(_) => return Err("Invalid LEAP_WINDOWS_SELF_SIGNED in build configuration"),
         }
     } else {
         false
@@ -471,14 +471,14 @@ pub fn verify_prepared(env: &Environment) -> Result<Plan> {
     );
     safe.insert(
         "RELEASE_INTEGRATION_SOURCE_REPOSITORY".into(),
-        "omnisolo-llc/omniterm".into(),
+        "omnisolo-llc/leapterm".into(),
     );
     safe.insert(
         "RELEASE_INTEGRATION_SOURCE_REF".into(),
         "refs/heads/main".into(),
     );
     safe.insert(
-        "OMNI_RELEASE_SOURCE_ROOT".into(),
+        "LEAP_RELEASE_SOURCE_ROOT".into(),
         root.to_string_lossy().into_owned(),
     );
     process::run(
@@ -621,7 +621,7 @@ pub fn publish(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publication> {
     let existing = release(plan, api)?;
     let info = match existing {
         Some(info) => info,
-        None => api.write_json("POST",&format!("repos/{REPOSITORY}/releases"),&json!({"tag_name":plan.tag(),"target_commitish":plan.document.identity.builder_sha,"name":format!("Omniterm {}",plan.tag()),"body":plan.notes(),"draft":true,"prerelease":false}))?,
+        None => api.write_json("POST",&format!("repos/{REPOSITORY}/releases"),&json!({"tag_name":plan.tag(),"target_commitish":plan.document.identity.builder_sha,"name":format!("LeapTerm {}",plan.tag()),"body":plan.notes(),"draft":true,"prerelease":false}))?,
     };
     let (id, draft) = check_release(plan, &info)?;
     let existing = assets(plan, api, id, !draft)?;
@@ -896,7 +896,7 @@ pub fn publish_to_staging(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publ
                 &json!({
                     "tag_name": plan.tag(),
                     "target_commitish": plan.document.identity.source_sha,
-                    "name": format!("Omniterm {}", plan.tag()),
+                    "name": format!("LeapTerm {}", plan.tag()),
                     "body": plan.notes(),
                     "draft": true,
                     "prerelease": false

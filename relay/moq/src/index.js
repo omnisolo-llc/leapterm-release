@@ -816,7 +816,7 @@ export async function createMoqRelay({
 
 if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1]) {
   const relay = await createMoqRelay();
-  process.stdout.write(`OmniTerm MoQT relay listening at ${relay.origin}\n`);
+  process.stdout.write(`LeapTerm MoQT relay listening at ${relay.origin}\n`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {
     relay.close().then(confirmed => { process.exitCode = confirmed ? 0 : 1; });
   });

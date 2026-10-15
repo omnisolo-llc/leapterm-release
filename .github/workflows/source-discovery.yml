@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   policy:
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_DISCOVERY_ENABLED == 'true'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_DISCOVERY_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -29,7 +29,7 @@ jobs:
 
   discover:
     needs: policy
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_DISCOVERY_ENABLED == 'true'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_DISCOVERY_ENABLED == 'true'
     environment: source-ci-discovery
     runs-on: ubuntu-24.04
     timeout-minutes: 30

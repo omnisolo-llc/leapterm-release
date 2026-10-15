@@ -10,17 +10,17 @@ fn environment(target: &str) -> Environment {
         ("GITHUB_EVENT_NAME".into(), "workflow_dispatch".into()),
         (
             "GITHUB_REPOSITORY".into(),
-            "omnisolo-llc/omniterm-release".into(),
+            "omnisolo-llc/leapterm-release".into(),
         ),
         ("GITHUB_REF".into(), "refs/heads/main".into()),
         (
             "GITHUB_WORKFLOW_REF".into(),
-            "omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main".into(),
+            "omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main".into(),
         ),
         ("GITHUB_SHA".into(), "b".repeat(40)),
         ("GITHUB_RUN_ID".into(), "42".into()),
         ("GITHUB_RUN_ATTEMPT".into(), "1".into()),
-        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/omniterm".into()),
+        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/leapterm".into()),
         ("SOURCE_BRANCH".into(), "main".into()),
         ("SOURCE_DEPLOY_KEY".into(), "owned fixture".into()),
         ("SOURCE_KNOWN_HOSTS".into(), "owned fixture".into()),
@@ -34,7 +34,7 @@ fn environment(target: &str) -> Environment {
             json!({"source_sha":"a".repeat(40),"builder_sha":"b".repeat(40),"version":"1.2.3","build_number":"42","build_only":false,"ios_action":"submit","release_route":"option1"}).to_string(),
         ),
         ("RESOLVED_SOURCE_SHA".into(), "a".repeat(40)),
-        ("BUILD_CONFIG".into(), json!({"OMNI_ENABLE_VPN":"true"}).to_string()),
+        ("BUILD_CONFIG".into(), json!({"LEAP_ENABLE_VPN":"true"}).to_string()),
         ("STORAGE_CONFIG".into(), "{}".into()),
     ])
 }

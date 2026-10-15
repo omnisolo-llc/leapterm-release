@@ -130,8 +130,8 @@ the full duration saving; credential issuance alone does not provide that saving
 ## Usage reporting and charges
 
 Direct customer-to-agent connections and traffic on the customer's own Cloudflare
-account do not incur OmniTerm relay-byte charges. Advisory endpoint sent/received
-counters can be recorded without moving payload through an OmniTerm server. They
+account do not incur LeapTerm relay-byte charges. Advisory endpoint sent/received
+counters can be recorded without moving payload through an LeapTerm server. They
 are never trusted as billing receipts, including for video and audio traffic.
 
 Managed TURN requires a separate existing authorization and cost-accounting path.

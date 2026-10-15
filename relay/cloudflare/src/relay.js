@@ -201,6 +201,6 @@ export class FreeNativeConnectorRelay extends RelayCore {
   }
 
   async onStreamBytes(accountId, stream, byteLength) {
-    // No OmniTerm billing; the owner's Cloudflare account limits still apply.
+    // No LeapTerm billing; the owner's Cloudflare account limits still apply.
   }
 }

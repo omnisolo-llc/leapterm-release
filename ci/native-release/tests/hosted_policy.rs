@@ -18,7 +18,7 @@ const RUNNERS: [&str; 6] = [
 fn fixture() -> TempDir {
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join(".github/workflows")).unwrap();
-    fs::write(dir.path().join("policy.json"), json!({"schema":1,"repository":"omnisolo-llc/omniterm-release","runners":RUNNERS,"prohibit_actions_storage":true}).to_string()).unwrap();
+    fs::write(dir.path().join("policy.json"), json!({"schema":1,"repository":"omnisolo-llc/leapterm-release","runners":RUNNERS,"prohibit_actions_storage":true}).to_string()).unwrap();
     dir
 }
 fn put(root: &Path, relative: &str, text: &str) {
@@ -89,7 +89,7 @@ fn public_candidates_workflow() -> Value {
     signer["SIGNING_CONFIG"] = json!("${{ secrets.PACKAGE_SIGNING_CONFIG }}");
     json!({"jobs": {
         "verify": {
-            "if": "${{ !cancelled() && needs.resolve.result == 'success' && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' }}",
+            "if": "${{ !cancelled() && needs.resolve.result == 'success' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}",
             "needs": "resolve",
             "continue-on-error": true,
             "environment": "downloads",
@@ -107,7 +107,7 @@ fn public_candidates_workflow() -> Value {
             ]
         },
         "publish": {
-            "if": "${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}",
+            "if": "${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}",
             "needs": ["resolve", "verify"],
             "environment": "public-release",
             "permissions": {"contents": "write"},
@@ -120,7 +120,7 @@ fn public_candidates_workflow() -> Value {
             ]
         },
         "option1_signatures": {
-            "if": "${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}",
+            "if": "${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}",
             "needs": ["resolve", "verify"],
             "environment": "package-signing",
             "permissions": {"contents": "read"},
@@ -157,18 +157,18 @@ fn direct_public_candidate_pair_is_explicitly_admitted_without_general_storage()
         doc["defaults"] = json!({"run": {"shell": "bash"}});
         if sdk {
             doc["jobs"]["verify"]["if"] = json!(
-                "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' }}"
+                "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}"
             );
             doc["jobs"]["verify"]["needs"] = json!(["resolve", "windows_sdk"]);
             doc["jobs"]["verify"]["permissions"]["id-token"] = json!("write");
-            doc["jobs"]["verify"]["steps"][0]["env"]["OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB"] = json!(
+            doc["jobs"]["verify"]["steps"][0]["env"]["LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB"] = json!(
                 "${{ !inputs.build_only && matrix.target == 'windows' && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}"
             );
             let mut env = doc["jobs"]["verify"]["steps"][0]["env"].clone();
             for key in [
                 "DIAGNOSTICS_PUBLIC_KEY",
                 "BUILD_CONFIG",
-                "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB",
+                "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB",
             ] {
                 env.as_object_mut().unwrap().remove(key);
             }
@@ -617,7 +617,7 @@ fn public_candidate_producer_oidc_and_signing_dlib_are_scoped_to_the_sdk_role() 
         ),
     ] {
         let mut doc = public_candidates_workflow();
-        doc["jobs"]["verify"]["steps"][0]["env"]["OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB"] = value;
+        doc["jobs"]["verify"]["steps"][0]["env"]["LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB"] = value;
         candidate_rejected(&doc);
     }
 }

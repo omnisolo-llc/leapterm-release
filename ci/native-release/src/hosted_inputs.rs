@@ -17,11 +17,11 @@ fn origin(env: &Environment) -> Result<()> {
     for (name, expected) in [
         ("GITHUB_ACTIONS", "true"),
         ("GITHUB_EVENT_NAME", "workflow_dispatch"),
-        ("GITHUB_REPOSITORY", "omnisolo-llc/omniterm-release"),
+        ("GITHUB_REPOSITORY", "omnisolo-llc/leapterm-release"),
         ("GITHUB_REF", "refs/heads/main"),
         (
             "GITHUB_WORKFLOW_REF",
-            "omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main",
+            "omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main",
         ),
     ] {
         if env.get(name).map(String::as_str) != Some(expected) {
@@ -214,7 +214,7 @@ pub fn run(command: &str, env: &Environment) -> Result<()> {
     let runner = PathBuf::from(required(env, "RUNNER_TEMP")?)
         .canonicalize()
         .map_err(|_| "Hosted input runner unavailable")?;
-    let platform = required(env, "OMNI_INTEGRATION_PLATFORM")?;
+    let platform = required(env, "LEAP_INTEGRATION_PLATFORM")?;
     if platform == "web" {
         return Ok(());
     }
@@ -223,20 +223,20 @@ pub fn run(command: &str, env: &Environment) -> Result<()> {
     }
     let (input, prefix, name, output, pin) = match command {
         "prepare-installed-control" => (
-            "OMNI_VPN_INSTALLED_CONTROL_JSON",
+            "LEAP_VPN_INSTALLED_CONTROL_JSON",
             "omni-installed-control-",
             "control.json",
             "control_file",
             None,
         ),
         "prepare-protected-source-pair" => (
-            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON",
+            "LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON",
             "omni-protected-source-pair-",
             "profile.json",
             "profile_file",
             Some(required(
                 env,
-                "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256",
+                "LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256",
             )?),
         ),
         _ => return Err("Unknown protected hosted input command"),
@@ -274,12 +274,12 @@ pub fn cleanup(env: &Environment) -> Result<()> {
         .map_err(|_| "Hosted input runner unavailable")?;
     for (name, prefix, filename) in [
         (
-            "OMNI_VPN_INSTALLED_CONTROL_FILE",
+            "LEAP_VPN_INSTALLED_CONTROL_FILE",
             "omni-installed-control-",
             "control.json",
         ),
         (
-            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE",
+            "LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE",
             "omni-protected-source-pair-",
             "profile.json",
         ),

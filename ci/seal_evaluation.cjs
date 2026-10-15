@@ -12,7 +12,7 @@ function validateIdentity(identity) {
   const number = (value, max) => typeof value === 'string' && value.length <= max && /^[1-9][0-9]*$/.test(value);
   if (!identity || typeof identity !== 'object' || Array.isArray(identity) ||
       Object.keys(identity).length !== KEYS.length || KEYS.some(key => !Object.hasOwn(identity, key)) ||
-      identity.source_repository !== 'omnisolo-llc/omniterm' || identity.builder_repository !== 'omnisolo-llc/omniterm-release' ||
+      identity.source_repository !== 'omnisolo-llc/leapterm' || identity.builder_repository !== 'omnisolo-llc/leapterm-release' ||
       !sha(identity.source_sha) || !sha(identity.builder_sha) || !number(identity.run_id, 32) || !number(identity.attempt, 16)) {
     throw Error('Invalid evaluation identity');
   }
