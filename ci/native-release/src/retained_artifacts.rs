@@ -18,7 +18,7 @@ pub struct Artifact {
 }
 pub fn pipeline_kind(env: &Environment) -> Result<&'static str> {
     match env.get("GITHUB_WORKFLOW_REF").map(String::as_str) {
-        Some("omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main") => {
+        Some("omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main") => {
             Ok("application")
         }
         Some(crate::agent::WORKFLOW_REF) => Ok("agent"),

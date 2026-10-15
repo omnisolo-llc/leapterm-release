@@ -82,22 +82,22 @@ function makeStagingFixtures(version = '0.1.1') {
       name,
       bytes: 1000 + idx,
       sha256: `${String(idx).padStart(2, '0')}${'a'.repeat(62)}`,
-      url: `https://github.com/omnisolo-llc/omniterm/releases/download/v${version}/${name}`,
-      checksum_url: `https://github.com/omnisolo-llc/omniterm/releases/download/v${version}/${name}.sha256`,
-      signature_url: `https://github.com/omnisolo-llc/omniterm/releases/download/v${version}/${name}.sha256.sig`,
+      url: `https://github.com/omnisolo-llc/leapterm/releases/download/v${version}/${name}`,
+      checksum_url: `https://github.com/omnisolo-llc/leapterm/releases/download/v${version}/${name}.sha256`,
+      signature_url: `https://github.com/omnisolo-llc/leapterm/releases/download/v${version}/${name}.sha256.sig`,
     })),
     self_hosted: {
       name: `omniterm-${version}-self-hosted.zip`,
       bytes: 4096,
       sha256: 'f'.repeat(64),
-      url: `https://github.com/omnisolo-llc/omniterm/releases/download/v${version}/omniterm-${version}-self-hosted.zip`,
-      sha256_url: `https://github.com/omnisolo-llc/omniterm/releases/download/v${version}/omniterm-${version}-self-hosted.zip.sha256`,
-      signature_url: `https://github.com/omnisolo-llc/omniterm/releases/download/v${version}/omniterm-${version}-self-hosted.zip.sha256.sig`,
+      url: `https://github.com/omnisolo-llc/leapterm/releases/download/v${version}/omniterm-${version}-self-hosted.zip`,
+      sha256_url: `https://github.com/omnisolo-llc/leapterm/releases/download/v${version}/omniterm-${version}-self-hosted.zip.sha256`,
+      signature_url: `https://github.com/omnisolo-llc/leapterm/releases/download/v${version}/omniterm-${version}-self-hosted.zip.sha256.sig`,
     },
     ios_delivery: {
       action: 'upload',
       artifact: `omniterm-${version}-ios-private.ipa`,
-      url: `https://github.com/omnisolo-llc/omniterm/releases/download/v${version}/omniterm-${version}-ios-private.ipa`,
+      url: `https://github.com/omnisolo-llc/leapterm/releases/download/v${version}/omniterm-${version}-ios-private.ipa`,
     },
   };
 
@@ -146,10 +146,10 @@ test('filterPublicDownloadLinks strips all private targets and rewrites URLs to 
   }
   const serialized = JSON.stringify(pubLinks);
   assertNoPrivateLeakInPublicMetadata('download-links.json', serialized);
-  assert.ok(!serialized.includes('omnisolo-llc/omniterm/releases'));
+  assert.ok(!serialized.includes('omnisolo-llc/leapterm/releases'));
   assert.ok(
     serialized.includes(
-      'omnisolo-llc/omniterm-release/releases/download/v0.1.1/',
+      'omnisolo-llc/leapterm-release/releases/download/v0.1.1/',
     ),
   );
 });
@@ -297,7 +297,7 @@ test('promoteIosToAppStoreConnect and promoteMacosToAppStoreConnect support test
         zipExecCalls.push({ cmd, args });
         if (cmd === 'ditto') {
           const extractDir = args[3];
-          fs.mkdirSync(path.join(extractDir, 'OmniTerm.app'), {
+          fs.mkdirSync(path.join(extractDir, 'LeapTerm.app'), {
             recursive: true,
           });
         }
@@ -339,7 +339,7 @@ test('promoteIosToAppStoreConnect and promoteMacosToAppStoreConnect support test
           [`${prefix}_CERTIFICATE_PASSWORD`]: '',
         }),
         execFileImpl: (cmd, args) => {
-          if (cmd === 'ditto') fs.mkdirSync(path.join(args[3], 'OmniTerm.app'));
+          if (cmd === 'ditto') fs.mkdirSync(path.join(args[3], 'LeapTerm.app'));
           if (cmd === 'security' && args[0] === 'import') {
             imported = true;
             assert.equal(args[args.indexOf('-P') + 1], '');
@@ -366,7 +366,7 @@ test('promoteIosToAppStoreConnect and promoteMacosToAppStoreConnect support test
           failureCalls.push({ cmd, args });
           if (cmd === 'ditto') {
             privateDir = path.dirname(args[3]);
-            fs.mkdirSync(path.join(args[3], 'OmniTerm.app'));
+            fs.mkdirSync(path.join(args[3], 'LeapTerm.app'));
           }
           if (cmd === 'security' && args[0] === 'create-keychain') {
             keychainPassword = args[args.indexOf('-p') + 1];
@@ -588,7 +588,7 @@ test('self-hosted repository files and zip archive pass leak scanner and reject 
       leakyZipPath,
       createZipBuffer({
         'START-HERE.md': '# Self-host relay kit\n',
-        'relay/README.md': 'UPSTREAM_URL=https://api.omniterm.dev/internal\n',
+        'relay/README.md': 'UPSTREAM_URL=https://api.leapterm.com/internal\n',
       }),
     );
     assert.throws(
@@ -681,7 +681,7 @@ test('buildEnvironmentRolloutPlan targets Docker Hub omniterm/omni primary regis
   assert.equal(PRIMARY_CONTAINER_REGISTRY, 'omniterm/omni');
   assert.equal(
     GHCR_CONTAINER_REGISTRY,
-    'ghcr.io/omnisolo-llc/omniterm/cloud',
+    'ghcr.io/omnisolo-llc/leapterm/cloud',
   );
 
   const stagingPlan = buildEnvironmentRolloutPlan({
@@ -698,11 +698,11 @@ test('buildEnvironmentRolloutPlan targets Docker Hub omniterm/omni primary regis
   );
   assert.equal(
     stagingPlan.cloudflare.api_origin,
-    'https://api.staging.omniterm.dev',
+    'https://api.staging.leapterm.com',
   );
   assert.equal(
     stagingPlan.cloudflare.cloud_origin,
-    'https://cloud.staging.omniterm.dev',
+    'https://cloud.staging.leapterm.com',
   );
   assert.equal(
     stagingPlan.container.image,
@@ -737,8 +737,8 @@ test('buildEnvironmentRolloutPlan targets Docker Hub omniterm/omni primary regis
   assert.equal(prodPlan.environment, 'production');
   assert.equal(prodPlan.containerTag, 'cloud-latest');
   assert.equal(prodPlan.containerImage, 'omniterm/omni:cloud-latest');
-  assert.equal(prodPlan.cloudflare.api_origin, 'https://api.omniterm.dev');
-  assert.equal(prodPlan.cloudflare.cloud_origin, 'https://cloud.omniterm.dev');
+  assert.equal(prodPlan.cloudflare.api_origin, 'https://api.leapterm.com');
+  assert.equal(prodPlan.cloudflare.cloud_origin, 'https://cloud.leapterm.com');
   assert.equal(prodPlan.container.image, 'omniterm/omni:cloud-latest');
   assert.equal(prodPlan.container.alias_image, 'omniterm/omni:latest');
   assert.equal(prodPlan.container.client_image, 'omniterm/omni:client-latest');
@@ -759,7 +759,7 @@ test('buildEnvironmentRolloutPlan targets Docker Hub omniterm/omni primary regis
   });
   assert.equal(
     ghcrPlan.container.image,
-    'ghcr.io/omnisolo-llc/omniterm/cloud:cloud-staging-latest',
+    'ghcr.io/omnisolo-llc/leapterm/cloud:cloud-staging-latest',
   );
 });
 
@@ -999,7 +999,7 @@ test('rollout acquisition keeps checkout credentials out of Git arguments and su
   assert.equal(mock.calls.some(({ args }) => args.some((arg) => String(arg).includes(mockToken))), false,
     'Checkout credentials must not appear in Git arguments');
   const remote = mock.calls.find(({ args }) => args.includes('remote'));
-  assert.equal(remote.args.at(-1), 'https://github.com/omnisolo-llc/omniterm.git');
+  assert.equal(remote.args.at(-1), 'https://github.com/omnisolo-llc/leapterm.git');
   const fetch = mock.calls.find(({ args }) => args.includes('fetch'));
   assert.equal(fetch.args.at(-1), 'a'.repeat(40));
   assert.equal(fetch.opts.env.GIT_TERMINAL_PROMPT, '0');

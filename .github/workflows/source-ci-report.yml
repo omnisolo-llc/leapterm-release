@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   policy:
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_REPORT_ENABLED == 'true'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_REPORT_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -40,7 +40,7 @@ jobs:
 
   report:
     needs: policy
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_REPORT_ENABLED == 'true'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_REPORT_ENABLED == 'true'
     environment: source-ci-reporter
     runs-on: ubuntu-24.04
     timeout-minutes: 30

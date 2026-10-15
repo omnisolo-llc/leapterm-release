@@ -31,7 +31,7 @@ concurrency:
 jobs:
   policy:
     name: policy
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -42,7 +42,7 @@ jobs:
   source_ci:
     name: ci [${{ matrix.stage }}]
     needs: policy
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     environment: source-ci-authority
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -67,9 +67,9 @@ jobs:
         run: bash ci/native-release/run.sh source-ci
         env:
           SOURCE_CI_REQUEST: >-
-            {"identity":{"source_repository":"omnisolo-llc/omniterm","source_sha":${{ toJSON(inputs.source_sha) }},"builder_repository":"omnisolo-llc/omniterm-release","builder_sha":${{ toJSON(inputs.builder_sha) }},"run_id":"${{ github.run_id }}","attempt":"${{ github.run_attempt }}"},"source_ref":${{ toJSON(inputs.source_ref) }},"stage":"${{ matrix.stage }}","shard_index":0,"shard_count":1}
+            {"identity":{"source_repository":"omnisolo-llc/leapterm","source_sha":${{ toJSON(inputs.source_sha) }},"builder_repository":"omnisolo-llc/leapterm-release","builder_sha":${{ toJSON(inputs.builder_sha) }},"run_id":"${{ github.run_id }}","attempt":"${{ github.run_attempt }}"},"source_ref":${{ toJSON(inputs.source_ref) }},"stage":"${{ matrix.stage }}","shard_index":0,"shard_count":1}
           INPUT_CATALOG_SHA256: ${{ inputs.catalog_sha256 }}
-          SOURCE_REPOSITORY: omnisolo-llc/omniterm
+          SOURCE_REPOSITORY: omnisolo-llc/leapterm
           SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
           SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
           SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}

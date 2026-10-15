@@ -1,12 +1,12 @@
 # Deploy your own Cloudflare relay
 
-This standalone Worker forwards OmniTerm relay connection WebSocket streams. It uses a
+This standalone Worker forwards LeapTerm relay connection WebSocket streams. It uses a
 single shared relay token and a SQLite-backed Durable Object namespace for
 routing. No D1 database, external database, billing service, private source
-checkout, or OmniTerm build credentials are needed.
+checkout, or LeapTerm build credentials are needed.
 
 This is **not a general-purpose HTTP/SOCKS proxy or a STUN/TURN server**.
-It connects compatible OmniTerm clients and agents over WebSockets.
+It connects compatible LeapTerm clients and agents over WebSockets.
 
 The Worker and agents must use the coordinated scoped relay connection protocol:
 `Hello` version 2, capability `8192`, and `DialScoped` requests. Older peers fail
@@ -20,7 +20,7 @@ An optional [Cloudflare TURN credential issuer](TURN.md) is also included and is
 issues short-lived credentials to authenticated sessions. Turning it on does not
 add WebRTC support to an old client or agent. Test compatible peers before enabling
 it. The linked guide explains free-tier limits, direct-first routing and why
-customer-owned traffic is not an OmniTerm relay charge.
+customer-owned traffic is not an LeapTerm relay charge.
 
 This public kit does not expose native RTC offer signaling or advertise a
 WebRTC relay transport. TURN credential issuance remains separate from the
@@ -48,7 +48,7 @@ and [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing
 ## 1. Get only the public relay kit
 
 ```bash
-git clone https://github.com/omnisolo-llc/omniterm-release.git
+git clone https://github.com/omnisolo-llc/leapterm-release.git
 cd omniterm-release/relay/cloudflare
 npm ci
 npm test
@@ -127,7 +127,7 @@ of a working authenticated relay session**.
 
 ## 5. Connect your application and agent
 
-Configure a custom relay in your OmniTerm client using the Worker URL and your
+Configure a custom relay in your LeapTerm client using the Worker URL and your
 fresh relay token. The agent for the relay connection must use the same relay and token. Every
 participant holding this shared token belongs to the same trust group; deploy
 separate Workers with separate tokens for users who must not trust each other.

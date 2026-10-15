@@ -4,7 +4,7 @@ The first-party browser live-share MoQT provider is a separate service in
 [moq](moq/README.md). It owns real HTTP/3 sessions and provides the protected
 token-control endpoint required for authoritative participant cutoff.
 
-The [Cloudflare relay](cloudflare/README.md) connects compatible OmniTerm clients
+The [Cloudflare relay](cloudflare/README.md) connects compatible LeapTerm clients
 and agents over WebSockets, with optional native WebRTC signaling through a
 separately deployed RTC ingress. Deploy it to your own Cloudflare account and
 create your own access token; no private source or maintainer credentials are

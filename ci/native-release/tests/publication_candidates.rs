@@ -15,13 +15,13 @@ fn environment() -> Environment {
     Environment::from([
         ("GITHUB_ACTIONS".into(), "true".into()),
         ("GITHUB_EVENT_NAME".into(), "workflow_dispatch".into()),
-        ("GITHUB_REPOSITORY".into(), "omnisolo-llc/omniterm-release".into()),
+        ("GITHUB_REPOSITORY".into(), "omnisolo-llc/leapterm-release".into()),
         ("GITHUB_REF".into(), "refs/heads/main".into()),
-        ("GITHUB_WORKFLOW_REF".into(), "omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main".into()),
+        ("GITHUB_WORKFLOW_REF".into(), "omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main".into()),
         ("GITHUB_SHA".into(), "b".repeat(40)),
         ("GITHUB_RUN_ID".into(), "42".into()),
         ("GITHUB_RUN_ATTEMPT".into(), "2".into()),
-        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/omniterm".into()),
+        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/leapterm".into()),
         ("SOURCE_BRANCH".into(), "main".into()),
         ("RELEASE_TARGET".into(), "publish".into()),
         ("RESOLVED_SOURCE_SHA".into(), "a".repeat(40)),
@@ -37,7 +37,7 @@ fn plan(directory: &Path) -> Value {
         fs::write(directory.join(name), &bytes).unwrap();
         files.insert(name.into(), json!({"bytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(&bytes)),"content_type":"application/octet-stream"}));
     }
-    json!({"schema":1,"identity":publication_candidates::identity(&env).unwrap(),"release":serde_json::from_str::<Value>(&release.normalized().unwrap()).unwrap(),"repository":"omnisolo-llc/omniterm-release","files":files})
+    json!({"schema":1,"identity":publication_candidates::identity(&env).unwrap(),"release":serde_json::from_str::<Value>(&release.normalized().unwrap()).unwrap(),"repository":"omnisolo-llc/leapterm-release","files":files})
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn public_plan_binds_real_files_and_rejects_empty_changed_or_unsafe_inputs() {
     fs::write(directory.path().join(name), original).unwrap();
     for (field, replacement) in [
         ("schema", json!(true)),
-        ("repository", json!("omnisolo-llc/omniterm")),
+        ("repository", json!("omnisolo-llc/leapterm")),
         ("files", json!({})),
         ("extra", json!(true)),
     ] {
@@ -83,7 +83,7 @@ fn public_plan_defaults_to_normal_notes_and_preserves_existing_plan_identity() {
     let legacy = publication_candidates::read_plan(&value, &env, directory.path()).unwrap();
     assert_eq!(
         legacy.notes(),
-        "Omniterm v1.2.3 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa).\n<!-- native-publication:f6e8ca24bae85886c52aea348850d2bbfd6c0823f5480ceea71d239e3df1f1f5 -->"
+        "LeapTerm v1.2.3 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa).\n<!-- native-publication:4b102a50deb48ce723f490f9e29612962283b52b6bedf96194c9e45d006875b5 -->"
     );
     env.insert("BUILD_CONFIG".into(), json!({}).to_string());
     assert_eq!(
@@ -124,7 +124,7 @@ fn public_plan_self_signed_notes_disclose_windows_trust_and_openpgp_verification
     assert!(notes.contains("reviewed release signing key"));
     assert!(notes.contains("omniterm-windows-signing.cer as a public DER certificate"));
     assert!(notes.contains("no private key material is included"));
-    assert!(notes.starts_with(&format!("Omniterm v1.2.3 ({}).\n", "a".repeat(40))));
+    assert!(notes.starts_with(&format!("LeapTerm v1.2.3 ({}).\n", "a".repeat(40))));
     assert!(notes.ends_with(" -->"));
     assert!(notes.contains("<!-- native-publication:"));
 }
@@ -450,7 +450,7 @@ impl ReleaseApi for HttpFixture {
     ) -> omni_release_launcher::Result<Value> {
         serde_json::from_slice(&self.exchange(
             "POST",
-            &format!("repos/omnisolo-llc/omniterm-release/releases/{release}/assets?name={name}"),
+            &format!("repos/omnisolo-llc/leapterm-release/releases/{release}/assets?name={name}"),
             &fs::read(path).unwrap(),
         )?)
         .map_err(|_| "Fixture JSON failure")
@@ -460,7 +460,7 @@ impl ReleaseApi for HttpFixture {
             output,
             self.exchange(
                 "GET",
-                &format!("repos/omnisolo-llc/omniterm-release/releases/assets/{asset}"),
+                &format!("repos/omnisolo-llc/leapterm-release/releases/assets/{asset}"),
                 &[],
             )?,
         )
@@ -487,8 +487,8 @@ fn existing_public_release_is_verified_by_download_and_never_overwritten() {
         publication_candidates::read_plan(&value, &environment(), directory.path()).unwrap();
     let mut assets = Vec::new();
     let mut replies = vec![
-        ("GET /repos/omnisolo-llc/omniterm-release HTTP/1.1".into(), json!({"full_name":"omnisolo-llc/omniterm-release","private":false}).to_string().into_bytes()),
-        ("GET /repos/omnisolo-llc/omniterm-release/releases?per_page=100&page=1 HTTP/1.1".into(), json!([{"id":7,"tag_name":"v1.2.3","draft":false,"prerelease":false,"target_commitish":"b".repeat(40),"body":checked.notes()}]).to_string().into_bytes()),
+        ("GET /repos/omnisolo-llc/leapterm-release HTTP/1.1".into(), json!({"full_name":"omnisolo-llc/leapterm-release","private":false}).to_string().into_bytes()),
+        ("GET /repos/omnisolo-llc/leapterm-release/releases?per_page=100&page=1 HTTP/1.1".into(), json!([{"id":7,"tag_name":"v1.2.3","draft":false,"prerelease":false,"target_commitish":"b".repeat(40),"body":checked.notes()}]).to_string().into_bytes()),
     ];
     let mut downloads = BTreeMap::new();
     for (index, (name, record)) in checked.files().iter().enumerate() {
@@ -497,12 +497,12 @@ fn existing_public_release_is_verified_by_download_and_never_overwritten() {
         downloads.insert(id, fs::read(directory.path().join(name)).unwrap());
     }
     replies.push((
-        "GET /repos/omnisolo-llc/omniterm-release/releases/7/assets?per_page=100 HTTP/1.1".into(),
+        "GET /repos/omnisolo-llc/leapterm-release/releases/7/assets?per_page=100 HTTP/1.1".into(),
         Value::Array(assets).to_string().into_bytes(),
     ));
     for (id, bytes) in downloads {
         replies.push((
-            format!("GET /repos/omnisolo-llc/omniterm-release/releases/assets/{id} HTTP/1.1"),
+            format!("GET /repos/omnisolo-llc/leapterm-release/releases/assets/{id} HTTP/1.1"),
             bytes,
         ));
     }
@@ -523,8 +523,8 @@ fn response(method: &str, endpoint: &str, value: Value) -> (String, Vec<u8>) {
 fn public_repository() -> (String, Vec<u8>) {
     response(
         "GET",
-        "repos/omnisolo-llc/omniterm-release",
-        json!({"full_name":"omnisolo-llc/omniterm-release","private":false}),
+        "repos/omnisolo-llc/leapterm-release",
+        json!({"full_name":"omnisolo-llc/leapterm-release","private":false}),
     )
 }
 fn existing(plan: &publication_candidates::Plan, draft: bool) -> Value {
@@ -541,12 +541,12 @@ fn ambiguous_create_failure_never_uploads_over_existing_release_bytes() {
         public_repository(),
         response(
             "GET",
-            "repos/omnisolo-llc/omniterm-release/releases?per_page=100&page=1",
+            "repos/omnisolo-llc/leapterm-release/releases?per_page=100&page=1",
             json!([]),
         ),
         response(
             "POST",
-            "repos/omnisolo-llc/omniterm-release/releases",
+            "repos/omnisolo-llc/leapterm-release/releases",
             json!({"status":502}),
         ),
     ]);
@@ -566,7 +566,7 @@ fn api_denial_does_not_look_like_absence_or_authorize_creation() {
         publication_candidates::read_plan(&value, &environment(), directory.path()).unwrap();
     let mut fixture = HttpFixture::start(vec![response(
         "GET",
-        "repos/omnisolo-llc/omniterm-release",
+        "repos/omnisolo-llc/leapterm-release",
         json!({"status":403}),
     )]);
     assert!(publication_candidates::publish(&checked, &mut fixture).is_err());
@@ -589,16 +589,16 @@ fn changed_or_incomplete_published_assets_fail_without_mutation() {
             public_repository(),
             response(
                 "GET",
-                "repos/omnisolo-llc/omniterm-release/releases?per_page=100&page=1",
+                "repos/omnisolo-llc/leapterm-release/releases?per_page=100&page=1",
                 json!([existing(&checked, false)]),
             ),
             response(
                 "GET",
-                "repos/omnisolo-llc/omniterm-release/releases/7/assets?per_page=100",
+                "repos/omnisolo-llc/leapterm-release/releases/7/assets?per_page=100",
                 json!([{"id":11,"name":name,"state":"uploaded","size":record.bytes}]),
             ),
             (
-                "GET /repos/omnisolo-llc/omniterm-release/releases/assets/11 HTTP/1.1".into(),
+                "GET /repos/omnisolo-llc/leapterm-release/releases/assets/11 HTTP/1.1".into(),
                 bytes,
             ),
         ]);
@@ -624,21 +624,21 @@ fn a_matching_draft_only_adds_missing_files_and_promotes_after_readback() {
         public_repository(),
         response(
             "GET",
-            "repos/omnisolo-llc/omniterm-release/releases?per_page=100&page=1",
+            "repos/omnisolo-llc/leapterm-release/releases?per_page=100&page=1",
             json!([existing(&checked, true)]),
         ),
         response(
             "GET",
-            "repos/omnisolo-llc/omniterm-release/releases/7/assets?per_page=100",
+            "repos/omnisolo-llc/leapterm-release/releases/7/assets?per_page=100",
             json!([first_asset]),
         ),
         (
-            "GET /repos/omnisolo-llc/omniterm-release/releases/assets/11 HTTP/1.1".into(),
+            "GET /repos/omnisolo-llc/leapterm-release/releases/assets/11 HTTP/1.1".into(),
             first_bytes.clone(),
         ),
         response(
             "POST",
-            &format!("repos/omnisolo-llc/omniterm-release/releases/7/assets?name={last}"),
+            &format!("repos/omnisolo-llc/leapterm-release/releases/7/assets?name={last}"),
             last_asset.clone(),
         ),
     ];
@@ -646,15 +646,15 @@ fn a_matching_draft_only_adds_missing_files_and_promotes_after_readback() {
         vec![
             response(
                 "GET",
-                "repos/omnisolo-llc/omniterm-release/releases/7/assets?per_page=100",
+                "repos/omnisolo-llc/leapterm-release/releases/7/assets?per_page=100",
                 json!([first_asset, last_asset]),
             ),
             (
-                "GET /repos/omnisolo-llc/omniterm-release/releases/assets/11 HTTP/1.1".into(),
+                "GET /repos/omnisolo-llc/leapterm-release/releases/assets/11 HTTP/1.1".into(),
                 first_bytes.clone(),
             ),
             (
-                "GET /repos/omnisolo-llc/omniterm-release/releases/assets/12 HTTP/1.1".into(),
+                "GET /repos/omnisolo-llc/leapterm-release/releases/assets/12 HTTP/1.1".into(),
                 last_bytes.clone(),
             ),
         ]
@@ -662,12 +662,12 @@ fn a_matching_draft_only_adds_missing_files_and_promotes_after_readback() {
     replies.extend(complete());
     replies.push(response(
         "PATCH",
-        "repos/omnisolo-llc/omniterm-release/releases/7",
+        "repos/omnisolo-llc/leapterm-release/releases/7",
         existing(&checked, false),
     ));
     replies.push(response(
         "GET",
-        "repos/omnisolo-llc/omniterm-release/releases/7",
+        "repos/omnisolo-llc/leapterm-release/releases/7",
         existing(&checked, false),
     ));
     replies.extend(complete());
@@ -698,14 +698,14 @@ fn an_unreviewed_asset_or_other_attempt_release_cannot_be_adopted() {
             public_repository(),
             response(
                 "GET",
-                "repos/omnisolo-llc/omniterm-release/releases?per_page=100&page=1",
+                "repos/omnisolo-llc/leapterm-release/releases?per_page=100&page=1",
                 json!([release]),
             ),
         ];
         if !changed_body {
             replies.push(response(
                 "GET",
-                "repos/omnisolo-llc/omniterm-release/releases/7/assets?per_page=100",
+                "repos/omnisolo-llc/leapterm-release/releases/7/assets?per_page=100",
                 json!([{"id":11,"name":"ios-private-artifact.json","state":"uploaded","size":99}]),
             ));
         }
@@ -743,12 +743,12 @@ fn a_current_proof_legacy_draft_binds_notes_only_after_every_asset_matches() {
             public_repository(),
             response(
                 "GET",
-                "repos/omnisolo-llc/omniterm-release/releases?per_page=100&page=1",
+                "repos/omnisolo-llc/leapterm-release/releases?per_page=100&page=1",
                 json!([legacy]),
             ),
             response(
                 "GET",
-                "repos/omnisolo-llc/omniterm-release/releases/7/assets?per_page=100",
+                "repos/omnisolo-llc/leapterm-release/releases/7/assets?per_page=100",
                 json!(assets),
             ),
         ];
@@ -760,7 +760,7 @@ fn a_current_proof_legacy_draft_binds_notes_only_after_every_asset_matches() {
             }
             replies.push((
                 format!(
-                    "GET /repos/omnisolo-llc/omniterm-release/releases/assets/{} HTTP/1.1",
+                    "GET /repos/omnisolo-llc/leapterm-release/releases/assets/{} HTTP/1.1",
                     index + 11
                 ),
                 bytes,
@@ -772,19 +772,19 @@ fn a_current_proof_legacy_draft_binds_notes_only_after_every_asset_matches() {
         if !tamper {
             replies.push(response(
                 "PATCH",
-                "repos/omnisolo-llc/omniterm-release/releases/7",
+                "repos/omnisolo-llc/leapterm-release/releases/7",
                 existing(&checked, true),
             ));
             for phase in 0..2 {
                 replies.push(response(
                     "GET",
-                    "repos/omnisolo-llc/omniterm-release/releases/7/assets?per_page=100",
+                    "repos/omnisolo-llc/leapterm-release/releases/7/assets?per_page=100",
                     json!(assets),
                 ));
                 for (index, asset) in assets.iter().enumerate() {
                     replies.push((
                         format!(
-                            "GET /repos/omnisolo-llc/omniterm-release/releases/assets/{} HTTP/1.1",
+                            "GET /repos/omnisolo-llc/leapterm-release/releases/assets/{} HTTP/1.1",
                             index + 11
                         ),
                         fs::read(directory.path().join(asset["name"].as_str().unwrap())).unwrap(),
@@ -793,12 +793,12 @@ fn a_current_proof_legacy_draft_binds_notes_only_after_every_asset_matches() {
                 if phase == 0 {
                     replies.push(response(
                         "PATCH",
-                        "repos/omnisolo-llc/omniterm-release/releases/7",
+                        "repos/omnisolo-llc/leapterm-release/releases/7",
                         existing(&checked, false),
                     ));
                     replies.push(response(
                         "GET",
-                        "repos/omnisolo-llc/omniterm-release/releases/7",
+                        "repos/omnisolo-llc/leapterm-release/releases/7",
                         existing(&checked, false),
                     ));
                 }

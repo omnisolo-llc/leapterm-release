@@ -49,8 +49,8 @@ fn source_ci_runs_every_canonical_cell_under_protected_authority() {
 
 #[test]
 fn legacy_release_policy_debt_does_not_replace_source_ci_authority_checks() {
-    let request = serde_json::json!({"identity":{"source_repository":"omnisolo-llc/omniterm","source_sha":"a".repeat(40),
-        "builder_repository":"omnisolo-llc/omniterm-release","builder_sha":"b".repeat(40),"run_id":"123","attempt":"1"},
+    let request = serde_json::json!({"identity":{"source_repository":"omnisolo-llc/leapterm","source_sha":"a".repeat(40),
+        "builder_repository":"omnisolo-llc/leapterm-release","builder_sha":"b".repeat(40),"run_id":"123","attempt":"1"},
         "source_ref":"refs/heads/main","stage":"source","shard_index":0,"shard_count":1});
     let env = Environment::from([
         ("SOURCE_CI_REQUEST".into(), request.to_string()),
@@ -131,12 +131,12 @@ fn hosted_environment(runner: &Path, output: &Path) -> Environment {
         ("GITHUB_EVENT_NAME".into(), "workflow_dispatch".into()),
         (
             "GITHUB_REPOSITORY".into(),
-            "omnisolo-llc/omniterm-release".into(),
+            "omnisolo-llc/leapterm-release".into(),
         ),
         ("GITHUB_REF".into(), "refs/heads/main".into()),
         (
             "GITHUB_WORKFLOW_REF".into(),
-            "omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main".into(),
+            "omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main".into(),
         ),
         ("GITHUB_SHA".into(), "b".repeat(40)),
         ("RUNNER_TEMP".into(), runner.to_string_lossy().into_owned()),

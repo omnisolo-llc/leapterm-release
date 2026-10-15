@@ -9,17 +9,17 @@ fn authority() -> Environment {
         ("GITHUB_EVENT_NAME".into(), "workflow_dispatch".into()),
         (
             "GITHUB_REPOSITORY".into(),
-            "omnisolo-llc/omniterm-release".into(),
+            "omnisolo-llc/leapterm-release".into(),
         ),
         ("GITHUB_REF".into(), "refs/heads/main".into()),
         (
             "GITHUB_WORKFLOW_REF".into(),
-            "omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main".into(),
+            "omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main".into(),
         ),
         ("GITHUB_SHA".into(), "b".repeat(40)),
         ("GITHUB_RUN_ID".into(), "15".into()),
         ("GITHUB_RUN_ATTEMPT".into(), "1".into()),
-        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/omniterm".into()),
+        ("SOURCE_REPOSITORY".into(), "omnisolo-llc/leapterm".into()),
         ("SOURCE_BRANCH".into(), "main".into()),
     ])
 }
@@ -73,7 +73,7 @@ fn workflow_identity_cannot_be_forged_by_alternate_repos_or_refs() {
         ("GITHUB_RUN_ID", "0"),
         (
             "GITHUB_WORKFLOW_REF",
-            "omnisolo-llc/omniterm-release/.github/workflows/other.yml@refs/heads/main",
+            "omnisolo-llc/leapterm-release/.github/workflows/other.yml@refs/heads/main",
         ),
     ] {
         let mut env = authority();

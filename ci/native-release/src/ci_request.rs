@@ -12,10 +12,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const SOURCE_REPOSITORY: &str = "omnisolo-llc/omniterm";
-pub const BUILDER_REPOSITORY: &str = "omnisolo-llc/omniterm-release";
+pub const SOURCE_REPOSITORY: &str = "omnisolo-llc/leapterm";
+pub const BUILDER_REPOSITORY: &str = "omnisolo-llc/leapterm-release";
 pub const CI_WORKFLOW: &str =
-    "omnisolo-llc/omniterm-release/.github/workflows/source-ci.yml@refs/heads/main";
+    "omnisolo-llc/leapterm-release/.github/workflows/source-ci.yml@refs/heads/main";
 pub const CI_STAGES: [&str; 13] = [
     "source",
     "security",

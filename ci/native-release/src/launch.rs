@@ -654,7 +654,7 @@ pub fn run(command: &str) -> Result<()> {
                 "remote",
                 "add",
                 "origin",
-                "ssh://git@ssh.github.com:443/omnisolo-llc/omniterm.git",
+                "ssh://git@ssh.github.com:443/omnisolo-llc/leapterm.git",
             ]),
             &acquisition,
         )?;

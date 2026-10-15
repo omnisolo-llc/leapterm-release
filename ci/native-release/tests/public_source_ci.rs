@@ -28,7 +28,7 @@ fn sha(value: &Value) -> String {
     format!("{:x}", Sha256::digest(serde_json::to_vec(value).unwrap()))
 }
 fn identity() -> Value {
-    json!({"source_repository":"omnisolo-llc/omniterm","source_sha":"a".repeat(40),"builder_repository":"omnisolo-llc/omniterm-release","builder_sha":"b".repeat(40),"run_id":"123","attempt":"1"})
+    json!({"source_repository":"omnisolo-llc/leapterm","source_sha":"a".repeat(40),"builder_repository":"omnisolo-llc/leapterm-release","builder_sha":"b".repeat(40),"run_id":"123","attempt":"1"})
 }
 fn request(stage: &str) -> SourceCiRequest {
     SourceCiRequest::parse(&json!({"identity":identity(),"source_ref":"refs/heads/main","stage":stage,"shard_index":0,"shard_count":1})).unwrap()
@@ -45,7 +45,7 @@ fn approval() -> Approval {
     Approval::parse_at(&approval_value(), 1500).unwrap()
 }
 fn metadata() -> Value {
-    json!({"source_repository":{"full_name":"omnisolo-llc/omniterm","private":true,"default_branch":"main"},"builder_repository":{"full_name":"omnisolo-llc/omniterm-release","private":false,"default_branch":"main"},"candidates":[{"source_ref":"refs/heads/main","source_sha":"a".repeat(40),"base_sha":"a".repeat(40),"builder_sha":"b".repeat(40),"catalog_sha256":"c".repeat(64),"workflow_inventory_sha256":"d".repeat(64),"head_repository":"omnisolo-llc/omniterm","state":"main"}]})
+    json!({"source_repository":{"full_name":"omnisolo-llc/leapterm","private":true,"default_branch":"main"},"builder_repository":{"full_name":"omnisolo-llc/leapterm-release","private":false,"default_branch":"main"},"candidates":[{"source_ref":"refs/heads/main","source_sha":"a".repeat(40),"base_sha":"a".repeat(40),"builder_sha":"b".repeat(40),"catalog_sha256":"c".repeat(64),"workflow_inventory_sha256":"d".repeat(64),"head_repository":"omnisolo-llc/leapterm","state":"main"}]})
 }
 fn run() -> Value {
     json!({"identity":identity(),"source_ref":"refs/heads/main","catalog_sha256":"c".repeat(64),"status":"completed","conclusion":"success","jobs":std::iter::once(json!({"name":"policy","status":"completed","conclusion":"success"})).chain(CI_STAGES.iter().map(|s| json!({"name":format!("ci [{s}]"),"status":"completed","conclusion":"success"}))).collect::<Vec<_>>()})
@@ -323,28 +323,28 @@ impl Fixture {
                     .cloned();
                 let (status, response) = if let Some(response) = override_response {
                     response
-                } else if path == "/repos/omnisolo-llc/omniterm" {
-                    (200,json!({"full_name":"omnisolo-llc/omniterm","private":p.load(Ordering::Relaxed),"default_branch":"main"}).to_string().into_bytes())
-                } else if path.starts_with("/repos/omnisolo-llc/omniterm/releases?") {
+                } else if path == "/repos/omnisolo-llc/leapterm" {
+                    (200,json!({"full_name":"omnisolo-llc/leapterm","private":p.load(Ordering::Relaxed),"default_branch":"main"}).to_string().into_bytes())
+                } else if path.starts_with("/repos/omnisolo-llc/leapterm/releases?") {
                     (
                         200,
                         if created { json!([release]) } else { json!([]) }
                             .to_string()
                             .into_bytes(),
                     )
-                } else if path == "/repos/omnisolo-llc/omniterm/releases" && method == "POST" {
+                } else if path == "/repos/omnisolo-llc/leapterm/releases" && method == "POST" {
                     assert_eq!(
                         serde_json::from_slice::<Value>(&body).unwrap()["body"],
                         marker.to_string()
                     );
                     created = true;
                     (201, release.to_string().into_bytes())
-                } else if path.starts_with("/repos/omnisolo-llc/omniterm/releases/7/assets?")
+                } else if path.starts_with("/repos/omnisolo-llc/leapterm/releases/7/assets?")
                     && method == "GET"
                 {
                     let rows=a.lock().unwrap().iter().enumerate().map(|(i,(name,bytes))|json!({"id":i+20,"name":name,"size":bytes.len(),"state":"uploaded","label":labels[name]})).collect::<Vec<_>>();
                     (200, json!(rows).to_string().into_bytes())
-                } else if path.starts_with("/repos/omnisolo-llc/omniterm/releases/7/assets?name=")
+                } else if path.starts_with("/repos/omnisolo-llc/leapterm/releases/7/assets?name=")
                     && method == "POST"
                 {
                     let name = path
@@ -366,17 +366,17 @@ impl Fixture {
                         (201, b"{}".to_vec())
                     }
                 } else if let Some(id) =
-                    path.strip_prefix("/repos/omnisolo-llc/omniterm/releases/assets/")
+                    path.strip_prefix("/repos/omnisolo-llc/leapterm/releases/assets/")
                 {
                     let offset = id.parse::<usize>().unwrap() - 20;
                     (200, a.lock().unwrap().values().nth(offset).unwrap().clone())
                 } else if path
-                    == "/repos/omnisolo-llc/omniterm/statuses/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    == "/repos/omnisolo-llc/leapterm/statuses/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     && method == "POST"
                 {
                     (201, body)
                 } else if path
-                    == "/repos/omnisolo-llc/omniterm-release/actions/workflows/source-ci.yml/dispatches"
+                    == "/repos/omnisolo-llc/leapterm-release/actions/workflows/source-ci.yml/dispatches"
                     && method == "POST"
                 {
                     dispatched = accept_dispatch.load(Ordering::Relaxed);
@@ -386,12 +386,12 @@ impl Fixture {
                         (204, Vec::new())
                     }
                 } else if path.starts_with(
-                    "/repos/omnisolo-llc/omniterm-release/actions/workflows/source-ci.yml/runs?",
+                    "/repos/omnisolo-llc/leapterm-release/actions/workflows/source-ci.yml/runs?",
                 ) && method == "GET"
                 {
                     let runs = if dispatched {
                         vec![
-                            json!({"id":789,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/omniterm-release"},"head_sha":"b".repeat(40),"display_title":format!("source-ci:{}:{}:{}:ci","a".repeat(40),"b".repeat(40),"c".repeat(64))}),
+                            json!({"id":789,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/leapterm-release"},"head_sha":"b".repeat(40),"display_title":format!("source-ci:{}:{}:{}:ci","a".repeat(40),"b".repeat(40),"c".repeat(64))}),
                         ]
                     } else {
                         vec![]
@@ -551,28 +551,28 @@ fn forbidden_files_and_visibility_changes_cannot_reach_an_upload() {
 }
 
 fn trusted_metadata(fixture: &Fixture, approval: &Value) {
-    fixture.response("GET","/repos/omnisolo-llc/omniterm-release",json!({"full_name":"omnisolo-llc/omniterm-release","private":false,"default_branch":"main"}));
+    fixture.response("GET","/repos/omnisolo-llc/leapterm-release",json!({"full_name":"omnisolo-llc/leapterm-release","private":false,"default_branch":"main"}));
     fixture.response(
         "GET",
-        "/repos/omnisolo-llc/omniterm-release/git/ref/heads/main",
+        "/repos/omnisolo-llc/leapterm-release/git/ref/heads/main",
         json!({"ref":"refs/heads/main","object":{"type":"commit","sha":"b".repeat(40)}}),
     );
-    fixture.response("GET","/repos/omnisolo-llc/omniterm-release/environments/source-ci-authority/variables/SOURCE_CI_APPROVAL_123_1",json!({"name":"SOURCE_CI_APPROVAL_123_1","value":approval.to_string()}));
-    fixture.response("GET","/repos/omnisolo-llc/omniterm-release/environments/source-ci-authority",json!({"id":10,"name":"source-ci-authority","can_admins_bypass":false,"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false},"protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","reviewer":{"id":99,"login":"fixture-reviewer"}}]}]}));
-    fixture.response("GET","/repos/omnisolo-llc/omniterm-release/actions/runs/123",json!({"id":123,"run_attempt":1,"event":"workflow_dispatch","head_branch":"main","head_sha":"b".repeat(40),"path":".github/workflows/source-ci.yml","repository":{"full_name":"omnisolo-llc/omniterm-release","private":false},"head_repository":{"full_name":"omnisolo-llc/omniterm-release","fork":false},"actor":{"id":55},"status":"completed","conclusion":"success","display_title":format!("source-ci:{}:{}:{}:ci","a".repeat(40),"b".repeat(40),"c".repeat(64))}));
-    fixture.response("GET","/repos/omnisolo-llc/omniterm-release/actions/runs/123/approvals",json!([{"state":"approved","user":{"id":99},"comment":format!("omniterm-source-ci-approval:{}",sha(approval)),"environments":[{"id":10,"name":"source-ci-authority"}]}]));
+    fixture.response("GET","/repos/omnisolo-llc/leapterm-release/environments/source-ci-authority/variables/SOURCE_CI_APPROVAL_123_1",json!({"name":"SOURCE_CI_APPROVAL_123_1","value":approval.to_string()}));
+    fixture.response("GET","/repos/omnisolo-llc/leapterm-release/environments/source-ci-authority",json!({"id":10,"name":"source-ci-authority","can_admins_bypass":false,"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false},"protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","reviewer":{"id":99,"login":"fixture-reviewer"}}]}]}));
+    fixture.response("GET","/repos/omnisolo-llc/leapterm-release/actions/runs/123",json!({"id":123,"run_attempt":1,"event":"workflow_dispatch","head_branch":"main","head_sha":"b".repeat(40),"path":".github/workflows/source-ci.yml","repository":{"full_name":"omnisolo-llc/leapterm-release","private":false},"head_repository":{"full_name":"omnisolo-llc/leapterm-release","fork":false},"actor":{"id":55},"status":"completed","conclusion":"success","display_title":format!("source-ci:{}:{}:{}:ci","a".repeat(40),"b".repeat(40),"c".repeat(64))}));
+    fixture.response("GET","/repos/omnisolo-llc/leapterm-release/actions/runs/123/approvals",json!([{"state":"approved","user":{"id":99},"comment":format!("omniterm-source-ci-approval:{}",sha(approval)),"environments":[{"id":10,"name":"source-ci-authority"}]}]));
     fixture.response(
         "GET",
-        "/repos/omnisolo-llc/omniterm/git/ref/heads/main",
+        "/repos/omnisolo-llc/leapterm/git/ref/heads/main",
         json!({"ref":"refs/heads/main","object":{"type":"commit","sha":"a".repeat(40)}}),
     );
-    fixture.response("GET",&format!("/repos/omnisolo-llc/omniterm/contents/omniterm-release?ref={}","a".repeat(40)),json!({"type":"submodule","sha":"b".repeat(40),"path":"omniterm-release","submodule_git_url":"https://github.com/omnisolo-llc/omniterm-release.git"}));
+    fixture.response("GET",&format!("/repos/omnisolo-llc/leapterm/contents/omniterm-release?ref={}","a".repeat(40)),json!({"type":"submodule","sha":"b".repeat(40),"path":"omniterm-release","submodule_git_url":"https://github.com/omnisolo-llc/leapterm-release.git"}));
     let mapping=json!({"schema":1,"source_revision":"a".repeat(40),"inventory_sha256":"d".repeat(64),"jobs":[{"id":"fixture-only"}]}).to_string();
-    fixture.response("GET",&format!("/repos/omnisolo-llc/omniterm/contents/scripts/release/public-ci-migration.json?ref={}","a".repeat(40)),json!({"type":"file","encoding":"base64","size":mapping.len(),"content":base64::engine::general_purpose::STANDARD.encode(mapping)}));
+    fixture.response("GET",&format!("/repos/omnisolo-llc/leapterm/contents/scripts/release/public-ci-migration.json?ref={}","a".repeat(40)),json!({"type":"file","encoding":"base64","size":mapping.len(),"content":base64::engine::general_purpose::STANDARD.encode(mapping)}));
     let jobs=std::iter::once("policy".to_owned()).chain(CI_STAGES.iter().map(|s|format!("ci [{s}]"))).enumerate().map(|(i,name)|json!({"id":i+100,"run_id":123,"run_attempt":1,"head_sha":"b".repeat(40),"name":name,"status":"completed","conclusion":"success","labels":["ubuntu-24.04"],"runner_group_name":"GitHub Actions","runner_name":format!("fixture-runner-{i}")})).collect::<Vec<_>>();
     fixture.response(
         "GET",
-        "/repos/omnisolo-llc/omniterm-release/actions/runs/123/attempts/1/jobs?per_page=100&page=1",
+        "/repos/omnisolo-llc/leapterm-release/actions/runs/123/attempts/1/jobs?per_page=100&page=1",
         json!({"total_count":jobs.len(),"jobs":jobs}),
     );
 }
@@ -584,7 +584,7 @@ fn owned_http_protected_review_binds_exact_record_and_fresh_metadata() {
     let mut public = fixture.api(dir.path(), Role::PublicRead);
     let mut protected = fixture.api(dir.path(), Role::ApprovalRead);
     assert!(acquire_approval(&mut public, &mut protected, "123", "1", 1500).is_ok());
-    fixture.response("GET","/repos/omnisolo-llc/omniterm-release/actions/runs/123/approvals",json!([{"state":"approved","user":{"id":99},"comment":format!("omniterm-source-ci-approval:{}","e".repeat(64)),"environments":[{"id":10,"name":"source-ci-authority"}]}]));
+    fixture.response("GET","/repos/omnisolo-llc/leapterm-release/actions/runs/123/approvals",json!([{"state":"approved","user":{"id":99},"comment":format!("omniterm-source-ci-approval:{}","e".repeat(64)),"environments":[{"id":10,"name":"source-ci-authority"}]}]));
     assert!(acquire_approval(&mut public, &mut protected, "123", "1", 1500).is_err());
     assert!(
         fixture
@@ -612,7 +612,7 @@ fn owned_http_changed_head_and_fork_are_denied_before_source_contents() {
     fixture.requests.lock().unwrap().clear();
     fixture.response(
         "GET",
-        "/repos/omnisolo-llc/omniterm/git/ref/heads/main",
+        "/repos/omnisolo-llc/leapterm/git/ref/heads/main",
         json!({"ref":"refs/heads/main","object":{"type":"commit","sha":"e".repeat(40)}}),
     );
     assert!(fresh_source(&mut source, &request("rust"), &approval()).is_err());
@@ -636,7 +636,7 @@ fn owned_http_changed_head_and_fork_are_denied_before_source_contents() {
     let mut req = request("rust");
     req.source_ref = "refs/pull/42/head".into();
     fixture.requests.lock().unwrap().clear();
-    fixture.response("GET","/repos/omnisolo-llc/omniterm/pulls/42",json!({"state":"open","head":{"sha":"a".repeat(40),"repo":{"full_name":"fork/source","private":true}},"base":{"sha":"c".repeat(40),"ref":"main","repo":{"full_name":"omnisolo-llc/omniterm"}}}));
+    fixture.response("GET","/repos/omnisolo-llc/leapterm/pulls/42",json!({"state":"open","head":{"sha":"a".repeat(40),"repo":{"full_name":"fork/source","private":true}},"base":{"sha":"c".repeat(40),"ref":"main","repo":{"full_name":"omnisolo-llc/leapterm"}}}));
     assert!(fresh_source(&mut source, &req, &approved).is_err());
     assert!(
         fixture
@@ -664,11 +664,11 @@ fn owned_http_reporter_cannot_green_missing_evidence_or_execute_source() {
     let mut env = fixture.environment(dir.path());
     for (key, value) in [
         ("GITHUB_ACTIONS", "true"),
-        ("GITHUB_REPOSITORY", "omnisolo-llc/omniterm-release"),
+        ("GITHUB_REPOSITORY", "omnisolo-llc/leapterm-release"),
         ("GITHUB_REF", "refs/heads/main"),
         (
             "GITHUB_WORKFLOW_REF",
-            "omnisolo-llc/omniterm-release/.github/workflows/source-ci-report.yml@refs/heads/main",
+            "omnisolo-llc/leapterm-release/.github/workflows/source-ci-report.yml@refs/heads/main",
         ),
         ("GITHUB_EVENT_NAME", "workflow_run"),
         ("RUNNER_ENVIRONMENT", "github-hosted"),
@@ -699,7 +699,7 @@ fn owned_http_reporter_cannot_green_missing_evidence_or_execute_source() {
     fixture.requests.lock().unwrap().clear();
     fixture.response(
         "GET",
-        "/repos/omnisolo-llc/omniterm/git/ref/heads/main",
+        "/repos/omnisolo-llc/leapterm/git/ref/heads/main",
         json!({"ref":"refs/heads/main","object":{"type":"commit","sha":"e".repeat(40)}}),
     );
     assert!(report_cli(&[], &env).is_err());
@@ -720,17 +720,17 @@ fn api_capabilities_cannot_select_another_purpose() {
     assert!(
         reader
             .post_json(
-                "repos/omnisolo-llc/omniterm/releases",
+                "repos/omnisolo-llc/leapterm/releases",
                 &json!({"draft":true})
             )
             .is_err()
     );
     let mut status = fixture.api(dir.path(), Role::Status);
-    assert!(status.get_json("repos/omnisolo-llc/omniterm").is_err());
+    assert!(status.get_json("repos/omnisolo-llc/leapterm").is_err());
     assert!(
         status
             .post_json(
-                "repos/omnisolo-llc/omniterm-release/actions/workflows/source-ci.yml/dispatches",
+                "repos/omnisolo-llc/leapterm-release/actions/workflows/source-ci.yml/dispatches",
                 &json!({"ref":"main"})
             )
             .is_err()
@@ -763,7 +763,7 @@ fn cleanup_plan_preserves_live_referenced_foreign_and_published_data() {
         }
         releases.push(release);
     }
-    let metadata = json!({"repository":{"full_name":"omnisolo-llc/omniterm","private":true},"observed_epoch":now,"releases":releases});
+    let metadata = json!({"repository":{"full_name":"omnisolo-llc/leapterm","private":true},"observed_epoch":now,"releases":releases});
     let plan = cleanup_candidates(&metadata, now).unwrap();
     assert_eq!(plan["deletions"].as_array().unwrap().len(), 1);
     assert_eq!(plan["deletions"][0]["release_id"], 7);
@@ -777,15 +777,15 @@ fn discovery_environment(fixture: &Fixture, dir: &std::path::Path) -> Environmen
         .unwrap()
         .as_secs();
     let selection = json!({"schema":"omniterm.source-ci.discovery.v1","builder_sha":"b".repeat(40),"not_before_epoch":now-10,"expires_epoch":now+600,"candidates":[{"source_ref":"refs/heads/main","source_sha":"a".repeat(40),"base_sha":"a".repeat(40),"catalog_sha256":"c".repeat(64),"workflow_inventory_sha256":"d".repeat(64)}]});
-    fixture.response("GET","/repos/omnisolo-llc/omniterm-release/environments/source-ci-discovery/variables/SOURCE_CI_DISCOVERY",json!({"name":"SOURCE_CI_DISCOVERY","value":selection.to_string()}));
+    fixture.response("GET","/repos/omnisolo-llc/leapterm-release/environments/source-ci-discovery/variables/SOURCE_CI_DISCOVERY",json!({"name":"SOURCE_CI_DISCOVERY","value":selection.to_string()}));
     let mut env = fixture.environment(dir);
     for (key, value) in [
         ("GITHUB_ACTIONS", "true"),
-        ("GITHUB_REPOSITORY", "omnisolo-llc/omniterm-release"),
+        ("GITHUB_REPOSITORY", "omnisolo-llc/leapterm-release"),
         ("GITHUB_REF", "refs/heads/main"),
         (
             "GITHUB_WORKFLOW_REF",
-            "omnisolo-llc/omniterm-release/.github/workflows/source-discovery.yml@refs/heads/main",
+            "omnisolo-llc/leapterm-release/.github/workflows/source-discovery.yml@refs/heads/main",
         ),
         ("GITHUB_EVENT_NAME", "schedule"),
         ("RUNNER_ENVIRONMENT", "github-hosted"),
@@ -837,10 +837,10 @@ fn owned_http_discovery_reads_all_pages_and_rate_limits_before_dispatch() {
     let fixture = Fixture::start();
     let dir = tempfile::tempdir().unwrap();
     let env = discovery_environment(&fixture, dir.path());
-    let first=(1..=100).map(|id|json!({"id":id,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/omniterm-release"},"head_sha":"b".repeat(40),"display_title":"other-reviewed-request"})).collect::<Vec<_>>();
-    let second = json!({"id":101,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/omniterm-release"},"head_sha":"b".repeat(40),"display_title":format!("source-ci:{}:{}:{}:ci","a".repeat(40),"b".repeat(40),"c".repeat(64))});
-    let page1 = "/repos/omnisolo-llc/omniterm-release/actions/workflows/source-ci.yml/runs?event=workflow_dispatch&branch=main&per_page=100&page=1";
-    let page2 = "/repos/omnisolo-llc/omniterm-release/actions/workflows/source-ci.yml/runs?event=workflow_dispatch&branch=main&per_page=100&page=2";
+    let first=(1..=100).map(|id|json!({"id":id,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/leapterm-release"},"head_sha":"b".repeat(40),"display_title":"other-reviewed-request"})).collect::<Vec<_>>();
+    let second = json!({"id":101,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/leapterm-release"},"head_sha":"b".repeat(40),"display_title":format!("source-ci:{}:{}:{}:ci","a".repeat(40),"b".repeat(40),"c".repeat(64))});
+    let page1 = "/repos/omnisolo-llc/leapterm-release/actions/workflows/source-ci.yml/runs?event=workflow_dispatch&branch=main&per_page=100&page=1";
+    let page2 = "/repos/omnisolo-llc/leapterm-release/actions/workflows/source-ci.yml/runs?event=workflow_dispatch&branch=main&per_page=100&page=2";
     fixture.response(
         "GET",
         page1,

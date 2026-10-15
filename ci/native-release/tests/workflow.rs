@@ -405,7 +405,7 @@ fn complete_same_run_release_graph_keeps_all_evidence_and_approval_edges() {
         assert_eq!(needs(job), parents.into_iter().collect(), "{name}");
         let condition = job["if"].as_str().unwrap();
         assert!(
-            condition.contains("github.repository == 'omnisolo-llc/omniterm-release'")
+            condition.contains("github.repository == 'omnisolo-llc/leapterm-release'")
                 && condition.contains("github.ref == 'refs/heads/main'"),
             "{name}"
         );
@@ -700,7 +700,7 @@ fn permissions_environments_and_all_task_inputs_keep_exact_step_scope() {
     for (key, value) in [
         ("RELEASE_REQUEST", "${{ toJSON(inputs) }}"),
         ("GITHUB_SHA", "${{ github.sha }}"),
-        ("SOURCE_REPOSITORY", "omnisolo-llc/omniterm"),
+        ("SOURCE_REPOSITORY", "omnisolo-llc/leapterm"),
         ("SOURCE_BRANCH", "main"),
     ] {
         assert_eq!(approval["env"][key].as_str(), Some(value));
@@ -1331,14 +1331,14 @@ fn release_defaults_and_protected_approval_documentation_remain_explicit() {
     );
     let docs = read("README.md");
     for text in [
-        "OmniTerm client downloads",
+        "LeapTerm client downloads",
         "self-hosted relay kit",
         "# Omni Agent Native Builds",
     ] {
         assert!(docs.contains(text), "{text}");
     }
     for forbidden in [
-        "omnisolo-llc/omniterm/releases",
+        "omnisolo-llc/leapterm/releases",
         "release-source-approval",
         "APPROVED_RELEASE_SOURCE_SHA",
         "OMNI_EXTERNAL_CONFIG_LINUX",

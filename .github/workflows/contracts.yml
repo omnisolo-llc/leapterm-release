@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   policy:
-    if: github.repository == 'omnisolo-llc/omniterm-release'
+    if: github.repository == 'omnisolo-llc/leapterm-release'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

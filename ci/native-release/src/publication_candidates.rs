@@ -19,8 +19,8 @@ use std::{
     time::Duration,
 };
 
-pub const REPOSITORY: &str = "omnisolo-llc/omniterm-release";
-pub const STAGING_REPOSITORY: &str = "omnisolo-llc/omniterm";
+pub const REPOSITORY: &str = "omnisolo-llc/leapterm-release";
+pub const STAGING_REPOSITORY: &str = "omnisolo-llc/leapterm";
 pub const DIRECTORY: &str = "reviewed-publication";
 const MAX_ASSET: u64 = 2 * 1024 * 1024 * 1024 - 1;
 const MAX_PLAN: u64 = 65536;
@@ -227,7 +227,7 @@ impl Plan {
             ""
         };
         format!(
-            "Omniterm v{} ({}).{}\n<!-- native-publication:{} -->",
+            "LeapTerm v{} ({}).{}\n<!-- native-publication:{} -->",
             self.document.release["version"].as_str().unwrap_or(""),
             self.document.identity.source_sha,
             disclosure,
@@ -471,7 +471,7 @@ pub fn verify_prepared(env: &Environment) -> Result<Plan> {
     );
     safe.insert(
         "RELEASE_INTEGRATION_SOURCE_REPOSITORY".into(),
-        "omnisolo-llc/omniterm".into(),
+        "omnisolo-llc/leapterm".into(),
     );
     safe.insert(
         "RELEASE_INTEGRATION_SOURCE_REF".into(),
@@ -621,7 +621,7 @@ pub fn publish(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publication> {
     let existing = release(plan, api)?;
     let info = match existing {
         Some(info) => info,
-        None => api.write_json("POST",&format!("repos/{REPOSITORY}/releases"),&json!({"tag_name":plan.tag(),"target_commitish":plan.document.identity.builder_sha,"name":format!("Omniterm {}",plan.tag()),"body":plan.notes(),"draft":true,"prerelease":false}))?,
+        None => api.write_json("POST",&format!("repos/{REPOSITORY}/releases"),&json!({"tag_name":plan.tag(),"target_commitish":plan.document.identity.builder_sha,"name":format!("LeapTerm {}",plan.tag()),"body":plan.notes(),"draft":true,"prerelease":false}))?,
     };
     let (id, draft) = check_release(plan, &info)?;
     let existing = assets(plan, api, id, !draft)?;
@@ -896,7 +896,7 @@ pub fn publish_to_staging(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publ
                 &json!({
                     "tag_name": plan.tag(),
                     "target_commitish": plan.document.identity.source_sha,
-                    "name": format!("Omniterm {}", plan.tag()),
+                    "name": format!("LeapTerm {}", plan.tag()),
                     "body": plan.notes(),
                     "draft": true,
                     "prerelease": false

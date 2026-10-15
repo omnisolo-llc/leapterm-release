@@ -6,19 +6,19 @@ use std::{
 };
 
 fn identity() -> Value {
-    json!({"source_repository":"omnisolo-llc/omniterm","source_sha":"a".repeat(40),"builder_repository":"omnisolo-llc/omniterm-release","builder_sha":"b".repeat(40),"run_id":"123456789","attempt":"1"})
+    json!({"source_repository":"omnisolo-llc/leapterm","source_sha":"a".repeat(40),"builder_repository":"omnisolo-llc/leapterm-release","builder_sha":"b".repeat(40),"run_id":"123456789","attempt":"1"})
 }
 fn request() -> Value {
     json!({"identity":identity(),"source_ref":"refs/heads/main","stage":"rust","shard_index":0,"shard_count":2})
 }
 fn observed() -> Value {
     json!({
-        "execution_repository":{"full_name":"omnisolo-llc/omniterm-release","private":false,"default_branch":"main"},
-        "source_repository":{"full_name":"omnisolo-llc/omniterm","private":true,"default_branch":"main"},
+        "execution_repository":{"full_name":"omnisolo-llc/leapterm-release","private":false,"default_branch":"main"},
+        "source_repository":{"full_name":"omnisolo-llc/leapterm","private":true,"default_branch":"main"},
         "github_actions":true,"event_name":"workflow_dispatch","execution_ref":"refs/heads/main",
-        "workflow_ref":"omnisolo-llc/omniterm-release/.github/workflows/source-ci.yml@refs/heads/main",
+        "workflow_ref":"omnisolo-llc/leapterm-release/.github/workflows/source-ci.yml@refs/heads/main",
         "builder_sha":"b".repeat(40),"run_id":"123456789","attempt":"1",
-        "source_ref":"refs/heads/main","source_head_repository":"omnisolo-llc/omniterm","source_state":"main",
+        "source_ref":"refs/heads/main","source_head_repository":"omnisolo-llc/leapterm","source_state":"main",
         "head_sha":"a".repeat(40),"base_sha":"a".repeat(40),"merge_base_sha":"a".repeat(40),"source_builder_sha":"b".repeat(40),
         "approved_source_sha":"a".repeat(40),"approved_builder_sha":"b".repeat(40),"approved_source_ref":"refs/heads/main","approved_base_sha":"a".repeat(40)
     })
@@ -73,7 +73,7 @@ fn ci_child_cannot_inherit_source_signing_writer_or_command_file_credentials() {
     for key in forbidden {
         assert!(!child.contains_key(key), "credential boundary: {key}");
     }
-    assert_eq!(child["GITHUB_REPOSITORY"], "omnisolo-llc/omniterm-release");
+    assert_eq!(child["GITHUB_REPOSITORY"], "omnisolo-llc/leapterm-release");
     assert_eq!(child["CARGO_BUILD_JOBS"], "2");
     assert_eq!(
         serde_json::from_str::<Value>(&child["SOURCE_CI_REQUEST"]).unwrap(),
@@ -147,13 +147,13 @@ fn foreign_execution_repository_or_workflow_does_not_borrow_public_privileges() 
         ),
         (
             "source_repository",
-            json!({"full_name":"omnisolo-llc/omniterm","private":false,"default_branch":"main"}),
+            json!({"full_name":"omnisolo-llc/leapterm","private":false,"default_branch":"main"}),
         ),
         ("event_name", json!("pull_request_target")),
         ("github_actions", json!(false)),
         (
             "workflow_ref",
-            json!("omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main"),
+            json!("omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main"),
         ),
         ("execution_ref", json!("refs/pull/1/merge")),
         ("attempt", json!("2")),

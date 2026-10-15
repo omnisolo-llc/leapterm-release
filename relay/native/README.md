@@ -1,7 +1,7 @@
 # Self-hosted ordinary-process relay
 
 This package runs the public relay connection protocol in a Node.js process. It does
-not use Durable Objects, D1, an OmniTerm account database, or OmniTerm billing.
+not use Durable Objects, D1, an LeapTerm account database, or LeapTerm billing.
 The existing Cloudflare Worker relay remains a separate deployment option.
 
 ## Runtime and storage

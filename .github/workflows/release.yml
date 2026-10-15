@@ -74,7 +74,7 @@ jobs:
     # Historical job ID retained for existing status/dependency consumers.
     # Access is enforced by the admin-only GitHub Actions execution policy.
     name: Validate release request automatically
-    if: ${{ github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only }}
+    if: ${{ github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only }}
     environment: release-source-approval
     permissions:
       contents: read
@@ -93,13 +93,13 @@ jobs:
         env:
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           GITHUB_SHA: ${{ github.sha }}
-          SOURCE_REPOSITORY: omnisolo-llc/omniterm
+          SOURCE_REPOSITORY: omnisolo-llc/leapterm
           SOURCE_BRANCH: main
 
   resolve:
     name: Resolve release inputs
     needs: [release_source_approval]
-    if: ${{ !cancelled() && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && (inputs.build_only || needs.release_source_approval.result == 'success') }}
+    if: ${{ !cancelled() && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && (inputs.build_only || needs.release_source_approval.result == 'success') }}
     environment: downloads
     permissions:
       contents: read
@@ -128,7 +128,7 @@ jobs:
   windows_sdk:
     name: Build and retain source-bound Windows SDK
     needs: resolve
-    if: ${{ !cancelled() && needs.resolve.result == 'success' && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && (!inputs.build_only || inputs.verify_target == 'all' || inputs.verify_target == 'windows') }}
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && (!inputs.build_only || inputs.verify_target == 'all' || inputs.verify_target == 'windows') }}
     environment: downloads
     permissions:
       contents: read
@@ -197,7 +197,7 @@ jobs:
   integration:
     name: Actual ${{ matrix.platform }} application integration
     needs: [resolve, windows_sdk]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: downloads
     permissions:
       contents: read
@@ -327,7 +327,7 @@ jobs:
   verify:
     name: Verify ${{ matrix.target }} build (${{ needs.resolve.outputs.workflow_id }})
     needs: [resolve, windows_sdk]
-    if: ${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' }}
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
     continue-on-error: true
     environment: downloads
     permissions:
@@ -442,7 +442,7 @@ jobs:
     permissions:
       contents: write
     needs: [resolve, integration]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: downloads
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -511,7 +511,7 @@ jobs:
     permissions:
       contents: write
     needs: [resolve, validate]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: downloads
     strategy:
       fail-fast: false
@@ -584,7 +584,7 @@ jobs:
   windows_download:
     name: Build and sign Windows candidate (${{ needs.resolve.outputs.workflow_id }})
     needs: [resolve, validate, windows_sdk]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: downloads
     runs-on: windows-2025
     timeout-minutes: 180
@@ -668,7 +668,7 @@ jobs:
     permissions:
       contents: write
     needs: [resolve, validate]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
     environment: app-store
     runs-on: macos-26
     timeout-minutes: 180
@@ -725,7 +725,7 @@ jobs:
     permissions:
       contents: read
     needs: [resolve, validate, downloads, windows_download]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: package-signing
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -782,7 +782,7 @@ jobs:
     permissions:
       contents: write
     needs: [resolve, validate, ios]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
     environment: app-store
     runs-on: macos-26
     timeout-minutes: 180
@@ -837,7 +837,7 @@ jobs:
   installation:
     name: Install and launch actual ${{ matrix.platform }} candidate
     needs: [resolve, validate, downloads, windows_download, ios, package_signatures, apple_testflight]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: ${{ matrix.attestation_environment }}
     permissions:
       contents: read
@@ -956,7 +956,7 @@ jobs:
   vpn_container:
     name: Managed VPN container E2E (${{ matrix.kernel_state }})
     needs: [resolve, validate, downloads, windows_download, ios, package_signatures, apple_testflight, installation]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: vpn-container
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
@@ -1042,7 +1042,7 @@ jobs:
     permissions:
       contents: write
     needs: [resolve, validate, ios, apple_testflight, installation, vpn_container]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
     environment: app-store
     runs-on: macos-26
     timeout-minutes: 180
@@ -1097,7 +1097,7 @@ jobs:
   publication_prepare:
     name: Freeze verified candidates in private storage
     needs: [resolve, validate, downloads, windows_download, ios, package_signatures, apple_testflight, installation, vpn_container, ios_delivery]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: public-release
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -1153,7 +1153,7 @@ jobs:
   managed_rtc_provider:
     name: Live managed RTC provider acceptance (${{ needs.resolve.outputs.workflow_id }})
     needs: [resolve, publication_prepare]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: managed-rtc-provider
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -1208,7 +1208,7 @@ jobs:
   external_tests:
     name: Actual ${{ matrix.platform }} artifact and provider acceptance
     needs: [resolve, publication_prepare, managed_rtc_provider]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: external-tests
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
@@ -1352,7 +1352,7 @@ jobs:
   external_windows_signing:
     name: Actual Windows Azure signing acceptance
     needs: [resolve, publication_prepare, external_tests]
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
     environment: external-windows-signing
     runs-on: windows-2025
     timeout-minutes: 180
@@ -1435,7 +1435,7 @@ jobs:
   apple_submission:
     name: Submit accepted iOS candidate for public review
     needs: [resolve, validate, ios_delivery, publication_prepare, vpn_container, external_tests, external_windows_signing]
-    if: ${{ !cancelled() && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action == 'submit' && needs.ios_delivery.result == 'success' && needs.vpn_container.result == 'success' && needs.external_tests.result == 'success' && needs.external_windows_signing.result == 'success' && inputs.release_route == 'legacy-acceptance' }}
+    if: ${{ !cancelled() && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action == 'submit' && needs.ios_delivery.result == 'success' && needs.vpn_container.result == 'success' && needs.external_tests.result == 'success' && needs.external_windows_signing.result == 'success' && inputs.release_route == 'legacy-acceptance' }}
     environment: app-store
     runs-on: macos-26
     timeout-minutes: 180
@@ -1493,7 +1493,7 @@ jobs:
   option1_signatures:
     name: Sign exact verified public candidate bytes
     needs: [resolve, verify]
-    if: ${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}
+    if: ${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}
     environment: package-signing
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -1553,7 +1553,7 @@ jobs:
 
   publish:
     name: Publish release (${{ needs.resolve.outputs.workflow_id }})
-    if: ${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}
+    if: ${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}
     needs: [resolve, verify, option1_signatures]
     environment: public-release
     runs-on: ubuntu-24.04
@@ -1655,7 +1655,7 @@ jobs:
       - name: Auto-promote candidates to internal store tracks
         if: ${{ inputs.auto_promote }}
         run: |
-          echo "Auto-promoting release candidate to pre-release tracks and staging environment (TestFlight, Google Play Internal, staging Cloudflare, and ghcr.io/omnisolo-llc/omniterm/cloud:latest-staging)..."
+          echo "Auto-promoting release candidate to pre-release tracks and staging environment (TestFlight, Google Play Internal, staging Cloudflare, and ghcr.io/omnisolo-llc/leapterm/cloud:latest-staging)..."
           gh workflow run promote-release.yml \
             --ref main \
             -f version="${{ needs.resolve.outputs.version }}" \

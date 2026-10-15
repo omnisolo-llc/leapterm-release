@@ -7,10 +7,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 
-export const STAGING_REPOSITORY = 'omnisolo-llc/omniterm';
-export const PUBLIC_REPOSITORY = 'omnisolo-llc/omniterm-release';
+export const STAGING_REPOSITORY = 'omnisolo-llc/leapterm';
+export const PUBLIC_REPOSITORY = 'omnisolo-llc/leapterm-release';
 export const PRIMARY_CONTAINER_REGISTRY = 'omniterm/omni';
-export const GHCR_CONTAINER_REGISTRY = 'ghcr.io/omnisolo-llc/omniterm/cloud';
+export const GHCR_CONTAINER_REGISTRY = 'ghcr.io/omnisolo-llc/leapterm/cloud';
 
 export const PUBLIC_TARGETS = Object.freeze([
   'windows',
@@ -52,15 +52,15 @@ export const FORBIDDEN_ASSET_PATTERNS = Object.freeze([
 ]);
 
 export const SELF_HOSTED_LEAK_PATTERNS = Object.freeze([
-  { label: 'production API domain', regex: /api\.omniterm\.dev/i },
-  { label: 'production app domain', regex: /app\.omniterm\.dev/i },
-  { label: 'production RTC domain', regex: /rtc\.omniterm\.dev/i },
-  { label: 'production download domain', regex: /download\.omniterm\.dev/i },
-  { label: 'production omniterm.dev domain', regex: /\bomniterm\.dev\b/i },
+  { label: 'production API domain', regex: /api\.leapterm\.com/i },
+  { label: 'production app domain', regex: /app\.leapterm\.com/i },
+  { label: 'production RTC domain', regex: /rtc\.leapterm\.com/i },
+  { label: 'production download domain', regex: /download\.leapterm\.com/i },
+  { label: 'production leapterm.com domain', regex: /\bleapterm\.com\b/i },
   { label: 'corporate omnisolo.com domain', regex: /\bomnisolo\.com\b/i },
   {
     label: 'private source repository reference',
-    regex: /omnisolo-llc\/omniterm(?!-release)/i,
+    regex: /omnisolo-llc\/leapterm(?!-release)/i,
   },
   {
     label: 'Cloudflare account or zone identifier',
@@ -422,9 +422,9 @@ export function assertNoPrivateLeakInPublicMetadata(filename, content) {
       );
     }
   }
-  if (/omnisolo-llc\/omniterm(?!-release)/i.test(text)) {
+  if (/omnisolo-llc\/leapterm(?!-release)/i.test(text)) {
     throw new Error(
-      `Public metadata ${filename} leaked private repository omnisolo-llc/omniterm`,
+      `Public metadata ${filename} leaked private repository omnisolo-llc/leapterm`,
     );
   }
 }
@@ -1313,11 +1313,11 @@ export function buildEnvironmentRolloutPlan({
     cloudflare: {
       env: isStaging ? 'staging' : 'production',
       api_origin: isStaging
-        ? 'https://api.staging.omniterm.dev'
-        : 'https://api.omniterm.dev',
+        ? 'https://api.staging.leapterm.com'
+        : 'https://api.leapterm.com',
       cloud_origin: isStaging
-        ? 'https://cloud.staging.omniterm.dev'
-        : 'https://cloud.omniterm.dev',
+        ? 'https://cloud.staging.leapterm.com'
+        : 'https://cloud.leapterm.com',
     },
     container: {
       registry: normalizedRegistry,
@@ -1332,7 +1332,7 @@ export function buildEnvironmentRolloutPlan({
     k3s: {
       namespace: 'omniterm',
       deployment: isStaging ? 'omniterm-staging' : 'omniterm',
-      host: isStaging ? 'cloud.staging.omniterm.dev' : 'cloud.omniterm.dev',
+      host: isStaging ? 'cloud.staging.leapterm.com' : 'cloud.leapterm.com',
     },
     rollout_command: ['bash', 'scripts/rollout-env.sh', '--env', environment],
     prune_command: ['node', 'scripts/prune-ghcr-packages.mjs'],
@@ -1831,8 +1831,8 @@ export async function promoteRelease({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               tag_name: tag,
-              name: `Omniterm ${tag}`,
-              body: `Omniterm ${tag} public release.`,
+              name: `LeapTerm ${tag}`,
+              body: `LeapTerm ${tag} public release.`,
               draft: true,
               prerelease: normalizedVersion.includes('-'),
             }),
@@ -1883,14 +1883,14 @@ export async function promoteRelease({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             draft: false,
-            name: `Omniterm ${tag}`,
-            body: `Omniterm ${tag} public release.`,
+            name: `LeapTerm ${tag}`,
+            body: `LeapTerm ${tag} public release.`,
           }),
         },
       );
 
       console.log(
-        `Promoted Omniterm ${tag} (${filesToUpload.length} verified public assets) to ${publicRepo}.`,
+        `Promoted LeapTerm ${tag} (${filesToUpload.length} verified public assets) to ${publicRepo}.`,
       );
     }
 

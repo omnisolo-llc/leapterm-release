@@ -82,7 +82,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: package-signing
-    if: ${{ !cancelled() && (needs.promote_apple.result == 'success' || needs.promote_apple.result == 'skipped') && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && (inputs.verify_store_credentials_only || inputs.publish_github_release || inputs.android_store_action != 'none' || inputs.rollout_environment != 'none') }}
+    if: ${{ !cancelled() && (needs.promote_apple.result == 'success' || needs.promote_apple.result == 'skipped') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && (inputs.verify_store_credentials_only || inputs.publish_github_release || inputs.android_store_action != 'none' || inputs.rollout_environment != 'none') }}
     permissions:
       contents: write
       packages: write
@@ -158,7 +158,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     environment: app-store
-    if: ${{ !cancelled() && github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main' && (inputs.verify_store_credentials_only || inputs.ios_store_action != 'none' || inputs.macos_store_action != 'none') }}
+    if: ${{ !cancelled() && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && (inputs.verify_store_credentials_only || inputs.ios_store_action != 'none' || inputs.macos_store_action != 'none') }}
     permissions:
       contents: read
     steps:

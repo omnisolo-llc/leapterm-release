@@ -115,7 +115,7 @@ pub fn run(env: &Environment) -> Result<()> {
                 "remote".into(),
                 "add".into(),
                 "origin".into(),
-                "ssh://git@ssh.github.com:443/omnisolo-llc/omniterm.git".into(),
+                "ssh://git@ssh.github.com:443/omnisolo-llc/leapterm.git".into(),
             ],
         ] {
             source::git(&src, &args, &acquisition)?;

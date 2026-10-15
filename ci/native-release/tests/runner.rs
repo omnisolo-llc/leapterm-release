@@ -52,7 +52,7 @@ fn main(){
     assert_eq!(env::var("SOURCE").unwrap(),args[2]);
     assert_eq!(env::var("PUBLIC_BUILDER_SHA").unwrap(),env::var("GITHUB_SHA").unwrap());
     assert_eq!(env::var("GITHUB_RUN_ATTEMPT").unwrap(),"2");
-    assert_eq!(env::var("RELEASE_INTEGRATION_SOURCE_REPOSITORY").unwrap(),"omnisolo-llc/omniterm");
+    assert_eq!(env::var("RELEASE_INTEGRATION_SOURCE_REPOSITORY").unwrap(),"omnisolo-llc/leapterm");
     assert_eq!(env::var("RELEASE_INTEGRATION_SOURCE_REF").unwrap(),"refs/heads/main");
     let request=env::var("RELEASE_REQUEST").unwrap();assert!(!request.contains("builder_sha") && !request.contains("verify_target") && !request.contains("preview_windows_self_sign"));
     for key in ["SOURCE_DEPLOY_KEY","SOURCE_KNOWN_HOSTS","SOURCE_SUBMODULE_TOKEN","SOURCE_SUBMODULE_DEPLOY_KEY_BASE64","GITHUB_OUTPUT","GITHUB_ENV","NODE_OPTIONS","RUSTFLAGS"]{assert!(env::var_os(key).is_none(),"{key}");}
@@ -145,7 +145,7 @@ for ((i=0;i<${{#args[@]}};i++)); do
   if [[ "${{args[i]}}" == submodule.omniterm-release.url=* ]]; then args[i]=submodule.omniterm-release.url={builder}; fi
 done
 /usr/bin/git -c protocol.file.allow=always "${{args[@]}}"
-if [[ -f omniterm-release/payload ]]; then /usr/bin/git -C omniterm-release remote set-url origin https://github.com/omnisolo-llc/omniterm-release.git; fi
+if [[ -f omniterm-release/payload ]]; then /usr/bin/git -C omniterm-release remote set-url origin https://github.com/omnisolo-llc/leapterm-release.git; fi
 "#,
             source = quoted(&source),
             builder = quoted(&builder)
@@ -173,8 +173,8 @@ if [[ -f omniterm-release/payload ]]; then /usr/bin/git -C omniterm-release remo
         let env=Environment::from([
             ("PATH".into(),format!("{}:{}",bin.display(),std::env::var("PATH").unwrap())),("HOME".into(),std::env::var("HOME").unwrap()),("RUSTUP_HOME".into(),std::env::var("RUSTUP_HOME").unwrap_or_else(|_|format!("{}/.rustup",std::env::var("HOME").unwrap()))),
             ("RUNNER_TEMP".into(),runner.to_str().unwrap().into()),("TMPDIR".into(),root.to_str().unwrap().into()),("GITHUB_OUTPUT".into(),output.to_str().unwrap().into()),
-            ("GITHUB_ACTIONS".into(),"true".into()),("GITHUB_EVENT_NAME".into(),"workflow_dispatch".into()),("GITHUB_REPOSITORY".into(),"omnisolo-llc/omniterm-release".into()),("GITHUB_REF".into(),"refs/heads/main".into()),("GITHUB_WORKFLOW_REF".into(),"omnisolo-llc/omniterm-release/.github/workflows/release.yml@refs/heads/main".into()),("GITHUB_SHA".into(),builder_sha.clone()),("GITHUB_RUN_ID".into(),"42".into()),("GITHUB_RUN_ATTEMPT".into(),"2".into()),
-            ("SOURCE_REPOSITORY".into(),"omnisolo-llc/omniterm".into()),("SOURCE_BRANCH".into(),"main".into()),("SOURCE_DEPLOY_KEY".into(),"-----BEGIN SYNTHETIC PRIVATE KEY-----\nfixture\n-----END SYNTHETIC PRIVATE KEY-----".into()),("SOURCE_KNOWN_HOSTS".into(),"synthetic-host fixture".into()),("SOURCE_SUBMODULE_DEPLOY_KEY_BASE64".into(),base64::Engine::encode(&base64::engine::general_purpose::STANDARD,"-----BEGIN SYNTHETIC PRIVATE KEY-----\nfixture\n-----END SYNTHETIC PRIVATE KEY-----")),
+            ("GITHUB_ACTIONS".into(),"true".into()),("GITHUB_EVENT_NAME".into(),"workflow_dispatch".into()),("GITHUB_REPOSITORY".into(),"omnisolo-llc/leapterm-release".into()),("GITHUB_REF".into(),"refs/heads/main".into()),("GITHUB_WORKFLOW_REF".into(),"omnisolo-llc/leapterm-release/.github/workflows/release.yml@refs/heads/main".into()),("GITHUB_SHA".into(),builder_sha.clone()),("GITHUB_RUN_ID".into(),"42".into()),("GITHUB_RUN_ATTEMPT".into(),"2".into()),
+            ("SOURCE_REPOSITORY".into(),"omnisolo-llc/leapterm".into()),("SOURCE_BRANCH".into(),"main".into()),("SOURCE_DEPLOY_KEY".into(),"-----BEGIN SYNTHETIC PRIVATE KEY-----\nfixture\n-----END SYNTHETIC PRIVATE KEY-----".into()),("SOURCE_KNOWN_HOSTS".into(),"synthetic-host fixture".into()),("SOURCE_SUBMODULE_DEPLOY_KEY_BASE64".into(),base64::Engine::encode(&base64::engine::general_purpose::STANDARD,"-----BEGIN SYNTHETIC PRIVATE KEY-----\nfixture\n-----END SYNTHETIC PRIVATE KEY-----")),
             ("SOURCE_SUBMODULE_TOKEN".into(),"synthetic-read-token".into()),("SIGNING_CONFIG".into(),"synthetic-signing-config".into()),("STORAGE_CONFIG".into(),"synthetic-storage-config".into()),("BUILD_CONFIG".into(),r#"{"OMNI_ENABLE_VPN":"true"}"#.into()),("APPROVED_RELEASE_SOURCE_SHA".into(),sha.clone()),("APPROVED_RELEASE_BUILDER_SHA".into(),builder_sha),
             ("OMNITERM_VPN_PROVIDER_PUBLIC_KEY".into(),base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD,[1u8;32])),
             // Forwarding placeholders only: genuine native archive retention would refuse these inputs.
@@ -255,7 +255,7 @@ fn actual_ci_dispatch_uses_distinct_request_and_cleans_privileged_environment() 
             omni_release_launcher::source::PUBLIC_URL,
         ],
     );
-    let request=SourceCiRequest::parse(&json!({"identity":{"source_repository":"omnisolo-llc/omniterm","source_sha":sha,"builder_repository":"omnisolo-llc/omniterm-release","builder_sha":fixture.env["GITHUB_SHA"],"run_id":"42","attempt":"2"},"source_ref":"refs/heads/main","stage":"rust","shard_index":0,"shard_count":1})).unwrap();
+    let request=SourceCiRequest::parse(&json!({"identity":{"source_repository":"omnisolo-llc/leapterm","source_sha":sha,"builder_repository":"omnisolo-llc/leapterm-release","builder_sha":fixture.env["GITHUB_SHA"],"run_id":"42","attempt":"2"},"source_ref":"refs/heads/main","stage":"rust","shard_index":0,"shard_count":1})).unwrap();
     let mut env = fixture.env.clone();
     env.insert(
         "SOURCE_METADATA_READ_TOKEN".into(),

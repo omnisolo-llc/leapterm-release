@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   native-agent:
-    if: github.repository == 'omnisolo-llc/omniterm-release' && github.ref == 'refs/heads/main'
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main'
     environment: downloads
     timeout-minutes: 120
     defaults:

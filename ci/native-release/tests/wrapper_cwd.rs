@@ -19,7 +19,7 @@ fn actual_shell_wrapper_keeps_relative_arguments_bound_to_the_callers_directory(
         root.join("ci/policy.json"),
         json!({
             "schema": 1,
-            "repository": "omnisolo-llc/omniterm-release",
+            "repository": "omnisolo-llc/leapterm-release",
             "runners": omni_release_launcher::runner_policy::RUNNERS,
             "prohibit_actions_storage": true
         })

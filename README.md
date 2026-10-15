@@ -1,10 +1,10 @@
-# OmniTerm
+# LeapTerm
 
-This is the public home for **OmniTerm client downloads**, **Omni Agent packages**, and the **self-hosted relay kit**.
+This is the public home for **LeapTerm client downloads**, **Omni Agent packages**, and the **self-hosted relay kit**.
 
 ## Run your own relay
 
-The relay lets compatible OmniTerm clients and agents connect through your own
+The relay lets compatible LeapTerm clients and agents connect through your own
 Cloudflare account or self-hosted infrastructure. You control the deployment and
 its shared access token.
 
@@ -18,7 +18,7 @@ the tools, deploying the Worker, creating a fresh token, and checking connection
 
 ## Download the app
 
-Open **[Releases](https://github.com/omnisolo-llc/omniterm-release/releases)** to download the latest public release assets:
+Open **[Releases](https://github.com/omnisolo-llc/leapterm-release/releases)** to download the latest public release assets:
 
 | Platform | File to look for |
 | --- | --- |
