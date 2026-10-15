@@ -56,7 +56,7 @@ jobs:
           dotnet tool install --tool-path "$RUNNER_TEMP/agent-wix" wix --version 6.0.2
           "$RUNNER_TEMP/agent-wix/wix.exe" extension add -g WixToolset.UI.wixext/6.0.2
           "$RUNNER_TEMP/agent-wix/wix.exe" extension add -g WixToolset.BootstrapperApplications.wixext/6.0.2
-          printf 'OMNI_AGENT_WIX=%s/agent-wix/wix.exe\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'LEAP_AGENT_WIX=%s/agent-wix/wix.exe\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Read the pinned agent source
         id: approved
         run: bash ci/native-release/run.sh agent-source
@@ -72,9 +72,9 @@ jobs:
           SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
           SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
-          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.OMNI_AGENT_DIAGNOSTICS_PUBLIC_KEY }}
-          OMNI_AGENT_PLATFORM: ${{ matrix.platform }}
-          OMNI_AGENT_OUTPUT: ${{ runner.temp }}/agent-release
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.LEAP_AGENT_DIAGNOSTICS_PUBLIC_KEY }}
+          LEAP_AGENT_PLATFORM: ${{ matrix.platform }}
+          LEAP_AGENT_OUTPUT: ${{ runner.temp }}/agent-release
       - name: Require every platform package and verify exact output hashes
         run: |
           bash ci/native-release/run.sh verify-agent-handoff --directory "$RUNNER_TEMP/agent-release" \
@@ -91,8 +91,8 @@ jobs:
           SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
           SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
-          STORAGE_CONFIG: ${{ secrets.OMNI_AGENT_STORAGE_CONFIG }}
-          OMNI_AGENT_PLATFORM: ${{ matrix.platform }}
+          STORAGE_CONFIG: ${{ secrets.LEAP_AGENT_STORAGE_CONFIG }}
+          LEAP_AGENT_PLATFORM: ${{ matrix.platform }}
           RELEASE_ARTIFACT_KIND: agent-packages
           RELEASE_ARTIFACT_SCOPE: ${{ matrix.artifact_scope }}
       - name: Retain encrypted agent diagnostics privately
@@ -108,7 +108,7 @@ jobs:
           SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
           SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
-          STORAGE_CONFIG: ${{ secrets.OMNI_AGENT_STORAGE_CONFIG }}
-          OMNI_AGENT_PLATFORM: ${{ matrix.platform }}
+          STORAGE_CONFIG: ${{ secrets.LEAP_AGENT_STORAGE_CONFIG }}
+          LEAP_AGENT_PLATFORM: ${{ matrix.platform }}
           RELEASE_ARTIFACT_KIND: diagnostics
           RELEASE_ARTIFACT_SCOPE: ${{ matrix.artifact_scope }}

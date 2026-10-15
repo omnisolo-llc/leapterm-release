@@ -49,7 +49,7 @@ and [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing
 
 ```bash
 git clone https://github.com/omnisolo-llc/leapterm-release.git
-cd omniterm-release/relay/cloudflare
+cd leapterm-release/relay/cloudflare
 npm ci
 npm test
 npm run check

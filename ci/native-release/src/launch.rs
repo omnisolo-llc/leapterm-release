@@ -160,7 +160,7 @@ pub fn task_environment(parent: &Environment) -> Environment {
                 "GITHUB_STEP_SUMMARY",
             ]
             .contains(&key.as_str()))
-            || key.starts_with("OMNI_")
+            || key.starts_with("LEAP_")
             || key.starts_with("OMNITERM_")
             || key.starts_with("APP_STORE_CONNECT_")
             || key.starts_with("RESOLVED_")
@@ -245,11 +245,11 @@ pub fn validate_configuration(env: &Environment, command: &str) -> Result<Reques
         if target != "resolve" && !["windows-sdk", "retain-artifacts"].contains(&command) {
             let config = crate::json::parse(required(env, "BUILD_CONFIG")?.as_bytes())?;
             if config
-                .get("OMNI_ENABLE_VPN")
+                .get("LEAP_ENABLE_VPN")
                 .and_then(serde_json::Value::as_str)
                 != Some("true")
             {
-                return Err("Full releases require OMNI_ENABLE_VPN=true");
+                return Err("Full releases require LEAP_ENABLE_VPN=true");
             }
             required(env, "STORAGE_CONFIG")?;
         }
@@ -1026,14 +1026,14 @@ fn build_native_stage(
             );
             let args = if crate::private_final_archive::command(command) {
                 task.insert(
-                    "OMNI_RELEASE_SOURCE_ROOT".into(),
+                    "LEAP_RELEASE_SOURCE_ROOT".into(),
                     src.to_string_lossy().into_owned(),
                 );
                 crate::private_final_archive::arguments(command, env, &work)?
             } else if *command == "sign-public-candidates" {
                 crate::publication_candidates::request(env)?;
                 task.insert(
-                    "OMNI_RELEASE_SOURCE_ROOT".into(),
+                    "LEAP_RELEASE_SOURCE_ROOT".into(),
                     src.to_string_lossy().into_owned(),
                 );
                 vec![
@@ -1054,7 +1054,7 @@ fn build_native_stage(
                 }
                 directory(&publication)?;
                 task.insert(
-                    "OMNI_RELEASE_SOURCE_ROOT".into(),
+                    "LEAP_RELEASE_SOURCE_ROOT".into(),
                     src.to_string_lossy().into_owned(),
                 );
                 vec![
@@ -1116,7 +1116,7 @@ fn build_native_stage(
                 .map_err(|_| "SDK runner directory invalid")?;
             let prefix = runner.join("windows-native-sdk");
             task.insert(
-                "OMNI_RELEASE_SOURCE_ROOT".into(),
+                "LEAP_RELEASE_SOURCE_ROOT".into(),
                 src.to_string_lossy().into_owned(),
             );
             (
@@ -1144,7 +1144,7 @@ fn build_native_stage(
                         "--directory".into(),
                         artifact.path.to_string_lossy().into_owned(),
                         "--platform".into(),
-                        required(env, "OMNI_AGENT_PLATFORM")?.into(),
+                        required(env, "LEAP_AGENT_PLATFORM")?.into(),
                         "--version".into(),
                         request.version.clone(),
                         "--scope".into(),
@@ -1188,7 +1188,7 @@ fn build_native_stage(
         && cfg!(windows)
         && (required(env, "RELEASE_TARGET")? == "windows"
             || (required(env, "RELEASE_TARGET")? == "integration"
-                && env.get("OMNI_INTEGRATION_PLATFORM").map(String::as_str) == Some("windows")))
+                && env.get("LEAP_INTEGRATION_PLATFORM").map(String::as_str) == Some("windows")))
     {
         let runner = PathBuf::from(required(env, "RUNNER_TEMP")?)
             .canonicalize()

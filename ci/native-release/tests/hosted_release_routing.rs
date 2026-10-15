@@ -90,7 +90,7 @@ fn desktop_devices_have_automatic_defaults_but_mobile_never_fakes_a_physical_dev
         .find(|step| step["env"]["RELEASE_TARGET"].as_str() == Some("integration"))
         .unwrap();
     assert_eq!(
-        task["env"]["OMNI_INTEGRATION_DEVICE"].as_str(),
+        task["env"]["LEAP_INTEGRATION_DEVICE"].as_str(),
         Some("${{ vars[matrix.device_variable] || matrix.default_device }}")
     );
 }
@@ -127,14 +127,14 @@ fn integration_prerequisites_fail_before_private_source_execution() {
         "BUILD_CONFIG",
         "STORAGE_CONFIG",
         "OMNITERM_VPN_PROVIDER_PUBLIC_KEY",
-        "OMNI_INTEGRATION_DEVICE",
+        "LEAP_INTEGRATION_DEVICE",
     ] {
         assert!(flags.contains(name), "missing configuration check: {name}");
     }
     assert!(flags.contains("secrets.STORAGE_CONFIG != ''"));
     assert!(flags.contains("(vars[matrix.device_variable] || matrix.default_device) != ''"));
     assert!(
-        !flags.contains("OMNI_INTEGRATION_DEFINES"),
+        !flags.contains("LEAP_INTEGRATION_DEFINES"),
         "optional fixture override must not become an unconditional prerequisite"
     );
     assert!(job["continue-on-error"].is_null());

@@ -9,7 +9,7 @@ const NAMES: [&str; 8] = [
     "BUILD_CONFIG",
     "STORAGE_CONFIG",
     "OMNITERM_VPN_PROVIDER_PUBLIC_KEY",
-    "OMNI_INTEGRATION_DEVICE",
+    "LEAP_INTEGRATION_DEVICE",
 ];
 fn check(raw: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_omni-release-launcher"))
@@ -46,7 +46,7 @@ fn reports_every_missing_name_without_printing_values() {
     for name in [
         "STORAGE_CONFIG",
         "OMNITERM_VPN_PROVIDER_PUBLIC_KEY",
-        "OMNI_INTEGRATION_DEVICE",
+        "LEAP_INTEGRATION_DEVICE",
     ] {
         value[name] = json!(false);
     }
@@ -56,7 +56,7 @@ fn reports_every_missing_name_without_printing_values() {
     for name in [
         "STORAGE_CONFIG",
         "OMNITERM_VPN_PROVIDER_PUBLIC_KEY",
-        "OMNI_INTEGRATION_DEVICE",
+        "LEAP_INTEGRATION_DEVICE",
     ] {
         assert!(
             errors.contains(&format!("Missing integration prerequisite: {name}")),

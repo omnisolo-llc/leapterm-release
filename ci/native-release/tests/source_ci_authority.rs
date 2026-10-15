@@ -53,7 +53,7 @@ fn ci_child_cannot_inherit_source_signing_writer_or_command_file_credentials() {
         "SOURCE_DEPLOY_KEY",
         "SIGNING_CONFIG",
         "STORAGE_CONFIG",
-        "OMNI_PRIVATE_KEY",
+        "LEAP_PRIVATE_KEY",
         "APP_STORE_CONNECT_API_KEY_BASE64",
         "GITHUB_ENV",
         "GITHUB_OUTPUT",

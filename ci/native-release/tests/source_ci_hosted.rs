@@ -86,7 +86,7 @@ fn all_native_installation_cells_forward_the_materialized_control_path() {
     );
     assert!(
         prepare["env"]
-            .get("OMNI_VPN_INSTALLED_CONTROL_JSON")
+            .get("LEAP_VPN_INSTALLED_CONTROL_JSON")
             .is_some()
     );
     let execute = steps
@@ -94,7 +94,7 @@ fn all_native_installation_cells_forward_the_materialized_control_path() {
         .find(|step| step["env"]["RELEASE_TARGET"] == "installation")
         .unwrap();
     assert_eq!(
-        execute["env"]["OMNI_VPN_INSTALLED_CONTROL_FILE"],
+        execute["env"]["LEAP_VPN_INSTALLED_CONTROL_FILE"],
         "${{ steps.installed_vpn_control.outputs.control_file }}"
     );
     let cells = job["strategy"]["matrix"]["include"].as_array().unwrap();
@@ -120,7 +120,7 @@ fn hosted_integration_provides_original_source_pair_profile() {
         .find(|step| step["env"]["RELEASE_TARGET"] == "integration")
         .unwrap();
     assert_eq!(
-        execute["env"]["OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE"],
+        execute["env"]["LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE"],
         "${{ steps.protected_source_pair.outputs.profile_file }}"
     );
 }
@@ -144,7 +144,7 @@ fn hosted_environment(runner: &Path, output: &Path) -> Environment {
             "GITHUB_OUTPUT".into(),
             output.to_string_lossy().into_owned(),
         ),
-        ("OMNI_INTEGRATION_PLATFORM".into(), "android".into()),
+        ("LEAP_INTEGRATION_PLATFORM".into(), "android".into()),
     ])
 }
 
@@ -187,7 +187,7 @@ fn hosted_input_custody_preserves_original_bytes_and_removes_its_exact_file() {
     fs::write(&output, "").unwrap();
     let raw = "{\n  \"schema\":1, \"campaigns\":[{},{},{},{}]\n}\n";
     let mut env = hosted_environment(runner.path(), &output);
-    env.insert("OMNI_VPN_INSTALLED_CONTROL_JSON".into(), raw.into());
+    env.insert("LEAP_VPN_INSTALLED_CONTROL_JSON".into(), raw.into());
     input_boundary(
         "prepare-control",
         hosted_inputs::run("prepare-installed-control", &env),
@@ -218,7 +218,7 @@ fn hosted_input_custody_preserves_original_bytes_and_removes_its_exact_file() {
         );
     }
     env.insert(
-        "OMNI_VPN_INSTALLED_CONTROL_FILE".into(),
+        "LEAP_VPN_INSTALLED_CONTROL_FILE".into(),
         path.to_string_lossy().into_owned(),
     );
     input_boundary("cleanup-control", hosted_inputs::cleanup(&env)).unwrap();
@@ -293,7 +293,7 @@ fn hosted_cleanup_cannot_delete_an_unrecognized_file_inside_a_matching_prefix() 
     fs::rename(&input, &foreign).unwrap();
     let mut env = hosted_environment(runner.path(), &output);
     env.insert(
-        "OMNI_VPN_INSTALLED_CONTROL_FILE".into(),
+        "LEAP_VPN_INSTALLED_CONTROL_FILE".into(),
         foreign.to_string_lossy().into_owned(),
     );
     assert!(hosted_inputs::cleanup(&env).is_err());
@@ -305,12 +305,12 @@ fn failed_workflow_output_publication_removes_the_protected_input() {
     for (command, input, raw) in [
         (
             "prepare-installed-control",
-            "OMNI_VPN_INSTALLED_CONTROL_JSON",
+            "LEAP_VPN_INSTALLED_CONTROL_JSON",
             "{\"schema\":1,\"campaigns\":[{},{},{},{}]}",
         ),
         (
             "prepare-protected-source-pair",
-            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON",
+            "LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON",
             "{\"schema\":\"omniterm.protected-desktop.source-profile.v1\",\"platform\":\"android\"}",
         ),
     ] {
@@ -324,7 +324,7 @@ fn failed_workflow_output_publication_removes_the_protected_input() {
             let mut env = hosted_environment(runner.path(), &output);
             env.insert(input.into(), raw.into());
             env.insert(
-                "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256".into(),
+                "LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256".into(),
                 format!("{:x}", Sha256::digest(raw.as_bytes())),
             );
             if failure == "missing-output-variable" {
@@ -364,7 +364,7 @@ fn hosted_input_identity_and_acl_tools_ignore_inert_path_shadows() {
     let mut env = omni_release_launcher::clean_environment(&std::env::vars().collect());
     env.extend(hosted_environment(runner.path(), &output_file));
     env.insert("PATH".into(), shadow.to_string_lossy().into_owned());
-    env.insert("OMNI_VPN_INSTALLED_CONTROL_JSON".into(), raw.into());
+    env.insert("LEAP_VPN_INSTALLED_CONTROL_JSON".into(), raw.into());
     let prepared = Command::new(env!("CARGO_BIN_EXE_omni-release-launcher"))
         .arg("prepare-installed-control")
         .current_dir(runner.path())
@@ -385,7 +385,7 @@ fn hosted_input_identity_and_acl_tools_ignore_inert_path_shadows() {
         Some(canonical_runner.as_path())
     );
     env.insert(
-        "OMNI_VPN_INSTALLED_CONTROL_FILE".into(),
+        "LEAP_VPN_INSTALLED_CONTROL_FILE".into(),
         path.to_string_lossy().into_owned(),
     );
     let cleanup = Command::new(env!("CARGO_BIN_EXE_omni-release-launcher"))
@@ -412,11 +412,11 @@ fn hosted_profile_admission_preserves_original_bytes_for_each_supported_version(
         let held_pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
         let mut env = hosted_environment(runner.path(), &output);
         env.insert(
-            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON".into(),
+            "LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON".into(),
             raw.clone(),
         );
         env.insert(
-            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256".into(),
+            "LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256".into(),
             held_pin,
         );
         input_boundary(
@@ -434,7 +434,7 @@ fn hosted_profile_admission_preserves_original_bytes_for_each_supported_version(
             "{version}"
         );
         env.insert(
-            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE".into(),
+            "LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE".into(),
             path.to_string_lossy().into_owned(),
         );
         hosted_inputs::cleanup(&env).unwrap();
@@ -469,9 +469,9 @@ fn hosted_profile_admission_refuses_wrong_platform_unknown_version_and_changed_o
             original
         };
         let mut env = hosted_environment(runner.path(), &output);
-        env.insert("OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON".into(), raw);
+        env.insert("LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON".into(), raw);
         env.insert(
-            "OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256".into(),
+            "LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256".into(),
             held_pin,
         );
         let expected = if ["pin", "original-bytes"].contains(&change) {

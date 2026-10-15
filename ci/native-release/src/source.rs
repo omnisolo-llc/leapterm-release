@@ -517,7 +517,7 @@ pub fn materialize_scoped(
     if builder.is_some_and(|builder| {
         !links
             .iter()
-            .any(|e| e.path == "omniterm-release" && e.oid == builder)
+            .any(|e| e.path == "leapterm-release" && e.oid == builder)
     }) {
         return Err("Source builder pin differs from executing builder");
     }
@@ -546,8 +546,8 @@ pub fn materialize_scoped(
     }
     for link in links {
         let url = match link.path.as_str() {
-            "omniterm-release" => PUBLIC_URL,
-            "omniterm-website" => WEBSITE_URL,
+            "leapterm-release" => PUBLIC_URL,
+            "leapterm-website" => WEBSITE_URL,
             _ => return Err("Unapproved submodule destination"),
         };
         if fields.get(&format!("submodule.{}.path", link.path)) != Some(&link.path)

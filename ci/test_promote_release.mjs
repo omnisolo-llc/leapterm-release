@@ -37,7 +37,7 @@ const mockRolloutCredentials = {
   CLOUDFLARE_API_TOKEN: 'mock-cloudflare-rollout-token',
   CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
   KUBECONFIG: 'apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n',
-  OMNI_GATEWAY_SOURCE_IMAGE: `omniterm/gateway@sha256:${'b'.repeat(64)}`,
+  LEAP_GATEWAY_SOURCE_IMAGE: `omniterm/gateway@sha256:${'b'.repeat(64)}`,
 };
 
 test.beforeEach((t) => {
@@ -677,8 +677,8 @@ test('resolveRolloutEnvironment maps candidate and production promotion inputs',
   );
 });
 
-test('buildEnvironmentRolloutPlan targets Docker Hub omniterm/omni primary registry and supports GHCR', () => {
-  assert.equal(PRIMARY_CONTAINER_REGISTRY, 'omniterm/omni');
+test('buildEnvironmentRolloutPlan targets Docker Hub leapterm/private primary registry and supports GHCR', () => {
+  assert.equal(PRIMARY_CONTAINER_REGISTRY, 'leapterm/private');
   assert.equal(
     GHCR_CONTAINER_REGISTRY,
     'ghcr.io/omnisolo-llc/leapterm/cloud',
@@ -694,7 +694,7 @@ test('buildEnvironmentRolloutPlan targets Docker Hub omniterm/omni primary regis
   assert.equal(stagingPlan.containerTag, 'cloud-staging-latest');
   assert.equal(
     stagingPlan.containerImage,
-    'omniterm/omni:cloud-staging-latest',
+    'leapterm/private:cloud-staging-latest',
   );
   assert.equal(
     stagingPlan.cloudflare.api_origin,
@@ -706,15 +706,15 @@ test('buildEnvironmentRolloutPlan targets Docker Hub omniterm/omni primary regis
   );
   assert.equal(
     stagingPlan.container.image,
-    'omniterm/omni:cloud-staging-latest',
+    'leapterm/private:cloud-staging-latest',
   );
   assert.equal(
     stagingPlan.container.alias_image,
-    'omniterm/omni:latest-staging',
+    'leapterm/private:latest-staging',
   );
   assert.equal(
     stagingPlan.container.client_image,
-    'omniterm/omni:client-staging-latest',
+    'leapterm/private:client-staging-latest',
   );
   assert.equal(stagingPlan.k3s.deployment, 'omniterm-staging');
   assert.deepEqual(stagingPlan.rollout_command, [
@@ -736,12 +736,12 @@ test('buildEnvironmentRolloutPlan targets Docker Hub omniterm/omni primary regis
   });
   assert.equal(prodPlan.environment, 'production');
   assert.equal(prodPlan.containerTag, 'cloud-latest');
-  assert.equal(prodPlan.containerImage, 'omniterm/omni:cloud-latest');
+  assert.equal(prodPlan.containerImage, 'leapterm/private:cloud-latest');
   assert.equal(prodPlan.cloudflare.api_origin, 'https://api.leapterm.com');
   assert.equal(prodPlan.cloudflare.cloud_origin, 'https://cloud.leapterm.com');
-  assert.equal(prodPlan.container.image, 'omniterm/omni:cloud-latest');
-  assert.equal(prodPlan.container.alias_image, 'omniterm/omni:latest');
-  assert.equal(prodPlan.container.client_image, 'omniterm/omni:client-latest');
+  assert.equal(prodPlan.container.image, 'leapterm/private:cloud-latest');
+  assert.equal(prodPlan.container.alias_image, 'leapterm/private:latest');
+  assert.equal(prodPlan.container.client_image, 'leapterm/private:client-latest');
   assert.equal(prodPlan.k3s.deployment, 'omniterm');
   assert.deepEqual(prodPlan.rollout_command, [
     'bash',
@@ -786,7 +786,7 @@ test('executeEnvironmentRollout invokes rollout-env.sh and prune-ghcr-packages.m
       sourceSha: 'a'.repeat(40),
       sourceRoot: tempRoot,
       githubToken: 'ghs_test_token',
-      dockerHubUsername: 'omniterm',
+      dockerHubUsername: 'leapterm',
       dockerHubPatReadWrite: 'dckr_pat_rw_test',
       dockerHubPatReadOnly: 'dckr_pat_ro_test',
       execFileImpl: (cmd, args, opts) => {
@@ -807,8 +807,8 @@ test('executeEnvironmentRollout invokes rollout-env.sh and prune-ghcr-packages.m
       '--env',
       'staging',
     ]);
-    assert.equal(calls[0].env.OMNI_REGISTRY, 'omniterm/omni');
-    assert.equal(calls[0].env.DOCKER_HUB_USERNAME, 'omniterm');
+    assert.equal(calls[0].env.LEAP_REGISTRY, 'leapterm/private');
+    assert.equal(calls[0].env.DOCKER_HUB_USERNAME, 'leapterm');
     assert.equal(calls[0].env.DOCKER_HUB_PAT_READ_WRITE, 'dckr_pat_rw_test');
     assert.equal(calls[0].env.DOCKER_HUB_PAT_READ_ONLY, 'dckr_pat_ro_test');
     assert.equal(calls[0].env.GITHUB_TOKEN, 'ghs_test_token');
@@ -835,8 +835,8 @@ test('release and promote-release workflows wire staging/production rollout and 
 
   assert.match(promoteYml, /rollout_environment:/);
   assert.match(promoteYml, /packages:\s*write/);
-  assert.match(promoteYml, /PROMOTE_CONTAINER_REGISTRY:\s*omniterm\/omni/);
-  assert.match(promoteYml, /DOCKER_HUB_USERNAME:\s*omniterm/);
+  assert.match(promoteYml, /PROMOTE_CONTAINER_REGISTRY:\s*leapterm\/private/);
+  assert.match(promoteYml, /DOCKER_HUB_USERNAME:\s*leapterm/);
   assert.match(
     promoteYml,
     /DOCKER_HUB_PAT_READ_WRITE:\s*\$\{\{\s*secrets\.DOCKER_HUB_PAT_READ_WRITE\s*\}\}/,
@@ -1133,7 +1133,7 @@ test('Linux promotion waits for requested Apple promotions to succeed', () => {
 test('Linux promotion forwards the approved gateway source image repository variable', () => {
   const job = releaseWorkflowJob('promote-release.yml', 'promote');
   const promotion = releaseWorkflowStep(job, 'Promote verified public release, Play Store track, and environment rollout');
-  assert.match(promotion, /^          OMNI_GATEWAY_SOURCE_IMAGE: \$\{\{ vars\.OMNI_GATEWAY_SOURCE_IMAGE \}\}$/m);
+  assert.match(promotion, /^          LEAP_GATEWAY_SOURCE_IMAGE: \$\{\{ vars\.LEAP_GATEWAY_SOURCE_IMAGE \}\}$/m);
 });
 
 for (const name of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) {
@@ -1327,18 +1327,18 @@ for (const [label, pin] of [
   ['leading whitespace', ` omniterm/gateway@sha256:${'b'.repeat(64)}`],
 ]) {
   test(`rollout rejects a gateway source image pin with ${label} before any subprocess`, (t) => {
-    process.env.OMNI_GATEWAY_SOURCE_IMAGE = pin;
+    process.env.LEAP_GATEWAY_SOURCE_IMAGE = pin;
     const sourceRoot = makeRolloutSourceFixture(t);
     const calls = [];
     assert.throws(() => executeEnvironmentRollout({
       environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
       execFileImpl: (cmd, args) => { calls.push({ cmd, args }); return ''; },
-    }), (error) => /OMNI_GATEWAY_SOURCE_IMAGE.*(?:required|immutable)/i.test(error.message) && !error.message.includes(pin));
+    }), (error) => /LEAP_GATEWAY_SOURCE_IMAGE.*(?:required|immutable)/i.test(error.message) && !error.message.includes(pin));
     assert.deepEqual(calls, []);
   });
 
   test(`promotion rejects a gateway source image pin with ${label} before contacting any provider`, async (t) => {
-    process.env.OMNI_GATEWAY_SOURCE_IMAGE = pin;
+    process.env.LEAP_GATEWAY_SOURCE_IMAGE = pin;
     const previousFetch = globalThis.fetch;
     let providerRequests = 0;
     globalThis.fetch = async () => {
@@ -1349,7 +1349,7 @@ for (const [label, pin] of [
     await assert.rejects(promoteRelease({
       version: '0.1.1', privateToken: 'mock-private-release-token',
       publishGithubRelease: false, rolloutEnvironment: 'staging',
-    }), (error) => /OMNI_GATEWAY_SOURCE_IMAGE.*(?:required|immutable)/i.test(error.message) && !error.message.includes(pin));
+    }), (error) => /LEAP_GATEWAY_SOURCE_IMAGE.*(?:required|immutable)/i.test(error.message) && !error.message.includes(pin));
     assert.equal(providerRequests, 0);
   });
 }
@@ -1357,14 +1357,14 @@ for (const [label, pin] of [
 for (const repository of ['omniterm/gateway', 'Registry.EXAMPLE:5000/Team/Gateway_1']) {
   test(`rollout forwards a valid gateway source image pin unchanged for ${repository}`, (t) => {
     const pin = `${repository}@sha256:${'b'.repeat(64)}`;
-    process.env.OMNI_GATEWAY_SOURCE_IMAGE = pin;
+    process.env.LEAP_GATEWAY_SOURCE_IMAGE = pin;
     const sourceRoot = makeRolloutSourceFixture(t);
     const mock = rolloutCheckoutMock(sourceRoot);
     const actions = [];
     const result = executeEnvironmentRollout({
       environment: 'staging', version: '0.1.1', sourceSha: 'a'.repeat(40), sourceRoot,
       execFileImpl: (cmd, args, opts) => {
-        assert.equal(opts.env.OMNI_GATEWAY_SOURCE_IMAGE, pin);
+        assert.equal(opts.env.LEAP_GATEWAY_SOURCE_IMAGE, pin);
         if (cmd === 'git') return mock.execFileImpl(cmd, args);
         actions.push(cmd);
       },

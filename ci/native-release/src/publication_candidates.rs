@@ -88,8 +88,8 @@ pub fn verification_environment(env: &Environment) -> Environment {
         "GITHUB_RUN_ID",
         "GITHUB_RUN_ATTEMPT",
         "OMNITERM_VPN_PROVIDER_PUBLIC_KEY",
-        "OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64",
-        "OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64",
+        "LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64",
+        "LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64",
         "OMNITERM_WINDOWS_SDK_MANIFEST_SHA256",
     ] {
         if let Some(value) = env.get(name) {
@@ -103,7 +103,7 @@ pub fn verification_environment(env: &Environment) -> Environment {
             .is_some_and(|request| !request.build_only)
     {
         for name in [
-            "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB",
+            "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB",
             "ACTIONS_ID_TOKEN_REQUEST_URL",
             "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
         ] {
@@ -332,12 +332,12 @@ pub fn read_plan(value: &Value, env: &Environment, directory: &Path) -> Result<P
         match config
             .as_object()
             .ok_or("Invalid public build configuration")?
-            .get("OMNI_WINDOWS_SELF_SIGNED")
+            .get("LEAP_WINDOWS_SELF_SIGNED")
         {
             None => false,
             Some(Value::String(value)) if value == "true" => true,
             Some(Value::String(value)) if value == "false" => false,
-            Some(_) => return Err("Invalid OMNI_WINDOWS_SELF_SIGNED in build configuration"),
+            Some(_) => return Err("Invalid LEAP_WINDOWS_SELF_SIGNED in build configuration"),
         }
     } else {
         false
@@ -478,7 +478,7 @@ pub fn verify_prepared(env: &Environment) -> Result<Plan> {
         "refs/heads/main".into(),
     );
     safe.insert(
-        "OMNI_RELEASE_SOURCE_ROOT".into(),
+        "LEAP_RELEASE_SOURCE_ROOT".into(),
         root.to_string_lossy().into_owned(),
     );
     process::run(

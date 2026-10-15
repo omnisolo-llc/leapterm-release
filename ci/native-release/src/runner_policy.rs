@@ -145,13 +145,13 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
             "OMNITERM_VPN_PROVIDER_PUBLIC_KEY" => {
                 value.as_str() == Some("${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}")
             }
-            "OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64" => {
+            "LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64" => {
                 role == CandidateRole::Produce
-                    && value.as_str() == Some("${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}")
+                    && value.as_str() == Some("${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}")
             }
-            "OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64" => {
+            "LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64" => {
                 role == CandidateRole::Produce
-                    && value.as_str() == Some("${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}")
+                    && value.as_str() == Some("${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}")
             }
             "WINDOWS_PREVIEW_OUTPUT_DIR" => {
                 role == CandidateRole::Produce
@@ -160,7 +160,7 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
                             "${{ inputs.preview_windows_self_sign && matrix.target == 'windows' && format('{0}/windows-preview', runner.temp) || '' }}",
                         )
             }
-            "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB" => {
+            "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB" => {
                 role == CandidateRole::Produce
                     && value.as_str()
                         == Some(
@@ -306,7 +306,7 @@ pub fn reviewed_public_candidate_exchange(
                 )
                 || (!sdk_role
                     && steps[producer]["env"]
-                        .get("OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB")
+                        .get("LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB")
                         .is_some())
                 || index - producer > 2
                 || steps[producer + 1..index]

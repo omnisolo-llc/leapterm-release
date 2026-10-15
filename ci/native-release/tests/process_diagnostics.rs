@@ -5,7 +5,7 @@ use std::{fs, process::Command, time::Duration};
 fn capture(mode: &str) -> std::process::Output {
     Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "process_summary_probe", "--nocapture"])
-        .env("OMNI_TEST_SUMMARY_MODE", mode)
+        .env("LEAP_TEST_SUMMARY_MODE", mode)
         .output()
         .unwrap()
 }
@@ -75,14 +75,14 @@ fn malformed_or_unknown_child_output_has_no_raw_fallback() {
 
 #[test]
 fn process_summary_probe() {
-    let Ok(mode) = std::env::var("OMNI_TEST_SUMMARY_MODE") else {
+    let Ok(mode) = std::env::var("LEAP_TEST_SUMMARY_MODE") else {
         return;
     };
     let temp = tempfile::tempdir().unwrap();
     let log_path = temp.path().join("private.log");
     let mut log = fs::File::create(&log_path).unwrap();
     let mut environment = omni_release_launcher::clean_environment(&std::env::vars().collect());
-    environment.insert("OMNI_TEST_SUMMARY_CHILD_MODE".into(), mode.clone());
+    environment.insert("LEAP_TEST_SUMMARY_CHILD_MODE".into(), mode.clone());
     let result = process::run(
         &std::env::current_exe().unwrap(),
         &[
@@ -108,7 +108,7 @@ fn process_summary_probe() {
 
 #[test]
 fn process_summary_child() {
-    let Ok(mode) = std::env::var("OMNI_TEST_SUMMARY_CHILD_MODE") else {
+    let Ok(mode) = std::env::var("LEAP_TEST_SUMMARY_CHILD_MODE") else {
         return;
     };
     if mode == "signal" {

@@ -18,7 +18,7 @@ on:
         default: true
         type: boolean
       rollout_environment:
-        description: Environment rollout target for Cloudflare backend, omniterm/omni container image, and myk3s cluster (auto, none, staging, or production)
+        description: Environment rollout target for Cloudflare backend, leapterm/private container image, and myk3s cluster (auto, none, staging, or production)
         required: false
         default: auto
         type: choice
@@ -127,12 +127,12 @@ jobs:
           PROMOTE_BUILD_NUMBER: ${{ inputs.build_number }}
           PROMOTE_GITHUB_RELEASE: ${{ inputs.publish_github_release }}
           PROMOTE_ROLLOUT_ENVIRONMENT: ${{ steps.rollout_environment.outputs.environment }}
-          PROMOTE_CONTAINER_REGISTRY: omniterm/omni
-          OMNI_GATEWAY_SOURCE_IMAGE: ${{ vars.OMNI_GATEWAY_SOURCE_IMAGE }}
+          PROMOTE_CONTAINER_REGISTRY: leapterm/private
+          LEAP_GATEWAY_SOURCE_IMAGE: ${{ vars.LEAP_GATEWAY_SOURCE_IMAGE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           KUBECONFIG: ${{ secrets.KUBECONFIG }}
-          DOCKER_HUB_USERNAME: omniterm
+          DOCKER_HUB_USERNAME: leapterm
           DOCKER_HUB_PAT_READ_WRITE: ${{ secrets.DOCKER_HUB_PAT_READ_WRITE }}
           DOCKER_HUB_PAT_READ_ONLY: ${{ secrets.DOCKER_HUB_PAT_READ_ONLY }}
           PROMOTE_IOS_STORE_ACTION: none

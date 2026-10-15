@@ -566,7 +566,7 @@ fn trusted_metadata(fixture: &Fixture, approval: &Value) {
         "/repos/omnisolo-llc/leapterm/git/ref/heads/main",
         json!({"ref":"refs/heads/main","object":{"type":"commit","sha":"a".repeat(40)}}),
     );
-    fixture.response("GET",&format!("/repos/omnisolo-llc/leapterm/contents/omniterm-release?ref={}","a".repeat(40)),json!({"type":"submodule","sha":"b".repeat(40),"path":"omniterm-release","submodule_git_url":"https://github.com/omnisolo-llc/leapterm-release.git"}));
+    fixture.response("GET",&format!("/repos/omnisolo-llc/leapterm/contents/leapterm-release?ref={}","a".repeat(40)),json!({"type":"submodule","sha":"b".repeat(40),"path":"leapterm-release","submodule_git_url":"https://github.com/omnisolo-llc/leapterm-release.git"}));
     let mapping=json!({"schema":1,"source_revision":"a".repeat(40),"inventory_sha256":"d".repeat(64),"jobs":[{"id":"fixture-only"}]}).to_string();
     fixture.response("GET",&format!("/repos/omnisolo-llc/leapterm/contents/scripts/release/public-ci-migration.json?ref={}","a".repeat(40)),json!({"type":"file","encoding":"base64","size":mapping.len(),"content":base64::engine::general_purpose::STANDARD.encode(mapping)}));
     let jobs=std::iter::once("policy".to_owned()).chain(CI_STAGES.iter().map(|s|format!("ci [{s}]"))).enumerate().map(|(i,name)|json!({"id":i+100,"run_id":123,"run_attempt":1,"head_sha":"b".repeat(40),"name":name,"status":"completed","conclusion":"success","labels":["ubuntu-24.04"],"runner_group_name":"GitHub Actions","runner_name":format!("fixture-runner-{i}")})).collect::<Vec<_>>();

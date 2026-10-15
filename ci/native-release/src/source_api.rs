@@ -49,7 +49,7 @@ impl Role {
                         || endpoint.starts_with(&format!("{private}/pulls/"))
                         || endpoint.starts_with(&format!("{private}/compare/"))
                         || endpoint
-                            .starts_with(&format!("{private}/contents/omniterm-release?ref="))
+                            .starts_with(&format!("{private}/contents/leapterm-release?ref="))
                         || endpoint.starts_with(&format!(
                             "{private}/contents/scripts/release/public-ci-migration.json?ref="
                         ))

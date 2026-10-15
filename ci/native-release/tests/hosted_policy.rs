@@ -161,14 +161,14 @@ fn direct_public_candidate_pair_is_explicitly_admitted_without_general_storage()
             );
             doc["jobs"]["verify"]["needs"] = json!(["resolve", "windows_sdk"]);
             doc["jobs"]["verify"]["permissions"]["id-token"] = json!("write");
-            doc["jobs"]["verify"]["steps"][0]["env"]["OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB"] = json!(
+            doc["jobs"]["verify"]["steps"][0]["env"]["LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB"] = json!(
                 "${{ !inputs.build_only && matrix.target == 'windows' && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}"
             );
             let mut env = doc["jobs"]["verify"]["steps"][0]["env"].clone();
             for key in [
                 "DIAGNOSTICS_PUBLIC_KEY",
                 "BUILD_CONFIG",
-                "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB",
+                "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB",
             ] {
                 env.as_object_mut().unwrap().remove(key);
             }
@@ -617,7 +617,7 @@ fn public_candidate_producer_oidc_and_signing_dlib_are_scoped_to_the_sdk_role() 
         ),
     ] {
         let mut doc = public_candidates_workflow();
-        doc["jobs"]["verify"]["steps"][0]["env"]["OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB"] = value;
+        doc["jobs"]["verify"]["steps"][0]["env"]["LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB"] = value;
         candidate_rejected(&doc);
     }
 }

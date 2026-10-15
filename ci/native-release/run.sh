@@ -7,7 +7,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 scratch="$(mktemp -d "$base/omni-native-launcher.XXXXXXXX")"
 scratch="$(cd "$scratch" && pwd -P)"
-trap 'rm -rf -- "$scratch" 2>/dev/null || true' EXIT
+trap 'rm -rf -- "$scratch" 2>/dev/null || { sleep 1; rm -rf -- "$scratch" 2>/dev/null; } || true' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 mkdir "$scratch/home" "$scratch/cargo" "$scratch/target"
@@ -43,16 +43,16 @@ esac
 env -i PATH="$PATH" HOME="$native_scratch/home" USERPROFILE="$native_scratch/home" RUSTUP_HOME="$rustup_home" \
   SYSTEMROOT="${SYSTEMROOT:-${SystemRoot:-}}" WINDIR="${WINDIR:-}" \
   SYSTEMDRIVE="${SYSTEMDRIVE:-${SystemDrive:-}}" COMSPEC="${COMSPEC:-${ComSpec:-}}" \
-  TEMP="$native_scratch" TMP="$native_scratch" \
+  TEMP="$native_scratch" TMP="$native_scratch" TMPDIR="$native_scratch" \
   CARGO_HOME="$native_scratch/cargo" CARGO_TARGET_DIR="$native_scratch/target" \
-  CARGO_BUILD_JOBS="$jobs" rustup toolchain install 1.95.0 --profile minimal --no-self-update \
+  CARGO_NET_RETRY=5 CARGO_BUILD_JOBS="$jobs" rustup toolchain install 1.95.0 --profile minimal --no-self-update \
   >"$scratch/bootstrap.log" 2>&1 || failed
 env -i PATH="$PATH" HOME="$native_scratch/home" USERPROFILE="$native_scratch/home" RUSTUP_HOME="$rustup_home" \
   SYSTEMROOT="${SYSTEMROOT:-${SystemRoot:-}}" WINDIR="${WINDIR:-}" \
   SYSTEMDRIVE="${SYSTEMDRIVE:-${SystemDrive:-}}" COMSPEC="${COMSPEC:-${ComSpec:-}}" \
-  TEMP="$native_scratch" TMP="$native_scratch" \
+  TEMP="$native_scratch" TMP="$native_scratch" TMPDIR="$native_scratch" \
   CARGO_HOME="$native_scratch/cargo" CARGO_TARGET_DIR="$native_scratch/target" \
-  CARGO_BUILD_JOBS="$jobs" cargo +1.95.0 build --locked --release \
+  CARGO_NET_RETRY=5 CARGO_BUILD_JOBS="$jobs" cargo +1.95.0 build --locked --release \
   --bin omni-release-launcher --manifest-path "$manifest" \
   >>"$scratch/bootstrap.log" 2>&1 || failed
 # Only this reviewed executable receives the original protected step environment.

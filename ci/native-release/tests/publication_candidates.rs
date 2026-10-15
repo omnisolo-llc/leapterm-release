@@ -95,7 +95,7 @@ fn public_plan_defaults_to_normal_notes_and_preserves_existing_plan_identity() {
     value["windows_self_signed"] = json!(false);
     env.insert(
         "BUILD_CONFIG".into(),
-        json!({"OMNI_WINDOWS_SELF_SIGNED":"false"}).to_string(),
+        json!({"LEAP_WINDOWS_SELF_SIGNED":"false"}).to_string(),
     );
     assert_eq!(
         publication_candidates::read_plan(&value, &env, directory.path())
@@ -113,7 +113,7 @@ fn public_plan_self_signed_notes_disclose_windows_trust_and_openpgp_verification
     let mut env = environment();
     env.insert(
         "BUILD_CONFIG".into(),
-        json!({"OMNI_WINDOWS_SELF_SIGNED":"true"}).to_string(),
+        json!({"LEAP_WINDOWS_SELF_SIGNED":"true"}).to_string(),
     );
     let checked = publication_candidates::read_plan(&value, &env, directory.path()).unwrap();
     let notes = checked.notes();
@@ -136,7 +136,7 @@ fn public_plan_self_signing_must_match_explicit_build_configuration() {
     let mut env = environment();
     env.insert(
         "BUILD_CONFIG".into(),
-        json!({"OMNI_WINDOWS_SELF_SIGNED":"true"}).to_string(),
+        json!({"LEAP_WINDOWS_SELF_SIGNED":"true"}).to_string(),
     );
     for declaration in [None, Some(false)] {
         if let Some(declaration) = declaration {
@@ -153,7 +153,7 @@ fn public_plan_self_signing_must_match_explicit_build_configuration() {
         publication_candidates::read_plan(&value, &env, directory.path()).err(),
         Some("Windows signing disclosure differs from build configuration")
     );
-    for config in [json!({}), json!({"OMNI_WINDOWS_SELF_SIGNED":"false"})] {
+    for config in [json!({}), json!({"LEAP_WINDOWS_SELF_SIGNED":"false"})] {
         env.insert("BUILD_CONFIG".into(), config.to_string());
         assert_eq!(
             publication_candidates::read_plan(&value, &env, directory.path()).err(),
@@ -180,11 +180,11 @@ fn public_plan_self_signing_requires_a_boolean_plan_field_and_string_build_flag(
     ] {
         env.insert(
             "BUILD_CONFIG".into(),
-            json!({"OMNI_WINDOWS_SELF_SIGNED":flag}).to_string(),
+            json!({"LEAP_WINDOWS_SELF_SIGNED":flag}).to_string(),
         );
         assert_eq!(
             publication_candidates::read_plan(&value, &env, directory.path()).err(),
-            Some("Invalid OMNI_WINDOWS_SELF_SIGNED in build configuration")
+            Some("Invalid LEAP_WINDOWS_SELF_SIGNED in build configuration")
         );
     }
     for raw in ["", "[]", "null", "true", "\"true\"", "not-json"] {
@@ -193,7 +193,7 @@ fn public_plan_self_signing_requires_a_boolean_plan_field_and_string_build_flag(
     }
     env.insert(
         "BUILD_CONFIG".into(),
-        json!({"OMNI_WINDOWS_SELF_SIGNED":"true"}).to_string(),
+        json!({"LEAP_WINDOWS_SELF_SIGNED":"true"}).to_string(),
     );
     for declaration in [json!(null), json!("true"), json!(1), json!([]), json!({})] {
         let mut invalid = value.clone();
@@ -214,7 +214,7 @@ fn verification_scope_drops_publication_provider_and_checkout_credentials() {
         "PRIVATE_RELEASE_TOKEN",
         "SOURCE_DEPLOY_KEY",
         "SOURCE_SUBMODULE_TOKEN",
-        "OMNI_PROVIDER_TOKEN",
+        "LEAP_PROVIDER_TOKEN",
         "APP_STORE_CONNECT_PASSWORD",
         "GITHUB_OUTPUT",
     ] {
@@ -229,7 +229,7 @@ fn verification_scope_drops_publication_provider_and_checkout_credentials() {
         "PRIVATE_RELEASE_TOKEN",
         "SOURCE_DEPLOY_KEY",
         "SOURCE_SUBMODULE_TOKEN",
-        "OMNI_PROVIDER_TOKEN",
+        "LEAP_PROVIDER_TOKEN",
         "APP_STORE_CONNECT_PASSWORD",
         "GITHUB_OUTPUT",
     ] {
@@ -835,7 +835,7 @@ fn a_current_proof_legacy_draft_binds_notes_only_after_every_asset_matches() {
 fn azure_oidc_and_dll_paths_reach_only_full_windows_signing() {
     let mut env = environment();
     for name in [
-        "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB",
+        "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB",
         "ACTIONS_ID_TOKEN_REQUEST_URL",
         "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
     ] {
@@ -848,7 +848,7 @@ fn azure_oidc_and_dll_paths_reach_only_full_windows_signing() {
     env.insert("RELEASE_TARGET".into(), "windows".into());
     let full = publication_candidates::verification_environment(&env);
     for name in [
-        "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB",
+        "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB",
         "ACTIONS_ID_TOKEN_REQUEST_URL",
         "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
     ] {
@@ -860,7 +860,7 @@ fn azure_oidc_and_dll_paths_reach_only_full_windows_signing() {
     env.insert("RELEASE_REQUEST".into(), request.to_string());
     let unsigned = publication_candidates::verification_environment(&env);
     for name in [
-        "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB",
+        "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB",
         "ACTIONS_ID_TOKEN_REQUEST_URL",
         "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
     ] {

@@ -47,13 +47,13 @@ fn agent_retention_binds_the_approved_source_version_platform_and_separate_stora
     env.insert("SOURCE_BRANCH".into(), pin.source_branch);
     env.insert("RESOLVED_SOURCE_SHA".into(), pin.source_sha.clone());
     env.insert("RELEASE_TARGET".into(), "linux".into());
-    env.insert("OMNI_AGENT_PLATFORM".into(), "linux-x86_64".into());
+    env.insert("LEAP_AGENT_PLATFORM".into(), "linux-x86_64".into());
     env.insert("RELEASE_ARTIFACT_SCOPE".into(), "agent-linux-x86-64".into());
     let child =
         retained_artifacts::storage_environment(&env, temp.path(), &pin.source_sha).unwrap();
     assert_eq!(child["RELEASE_STORAGE_KIND"], "agent");
-    assert_eq!(child["OMNI_AGENT_VERSION"], pin.version);
-    assert_eq!(child["OMNI_AGENT_PLATFORM"], "linux-x86_64");
+    assert_eq!(child["LEAP_AGENT_VERSION"], pin.version);
+    assert_eq!(child["LEAP_AGENT_PLATFORM"], "linux-x86_64");
     assert!(
         retained_artifacts::artifact(&env, &Request::parse(&raw).unwrap())
             .unwrap()
@@ -64,7 +64,7 @@ fn agent_retention_binds_the_approved_source_version_platform_and_separate_stora
         "agent-linux-aarch64".into(),
     );
     assert!(retained_artifacts::artifact(&env, &Request::parse(&raw).unwrap()).is_err());
-    env.insert("OMNI_AGENT_PLATFORM".into(), "windows-x86_64".into());
+    env.insert("LEAP_AGENT_PLATFORM".into(), "windows-x86_64".into());
     assert!(retained_artifacts::storage_environment(&env, temp.path(), &pin.source_sha).is_err());
 }
 
@@ -82,7 +82,7 @@ fn retention_child_gets_only_storage_authority_and_captured_identity() {
         "BUILD_CONFIG",
         "RELEASE_REQUEST",
         "WINDOWS_PREVIEW_OUTPUT_DIR",
-        "OMNI_PROVIDER_TOKEN",
+        "LEAP_PROVIDER_TOKEN",
         "GITHUB_OUTPUT",
     ] {
         env.insert(key.into(), "fixture-secret-not-to-inherit".into());
@@ -103,7 +103,7 @@ fn retention_child_gets_only_storage_authority_and_captured_identity() {
         "BUILD_CONFIG",
         "RELEASE_REQUEST",
         "WINDOWS_PREVIEW_OUTPUT_DIR",
-        "OMNI_PROVIDER_TOKEN",
+        "LEAP_PROVIDER_TOKEN",
         "GITHUB_OUTPUT",
     ] {
         assert!(!child.contains_key(key), "{key}");

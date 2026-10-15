@@ -560,7 +560,7 @@ impl Drop for HttpFixture {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         let server_failed = self.join.take().unwrap().join().is_err();
-        if let Ok(directory) = std::env::var("OMNI_PRIVATE_STAGING_EVIDENCE") {
+        if let Ok(directory) = std::env::var("LEAP_PRIVATE_STAGING_EVIDENCE") {
             let state = self
                 .state
                 .lock()
@@ -1703,7 +1703,7 @@ fn denial_of_individual_private_release_readback_cannot_authorize_a_write() {
 
 #[test]
 fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
-    const CASE: &str = "OMNI_STAGING_MEMBERSHIP_CASE";
+    const CASE: &str = "LEAP_STAGING_MEMBERSHIP_CASE";
     const ACTOR: &str = "omni-synthetic-ci-actor";
     if let Ok(case) = std::env::var(CASE) {
         assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
@@ -1782,8 +1782,8 @@ fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
             .env("GITHUB_ACTIONS", "true")
             .env("GITHUB_ACTOR", ACTOR)
             .env(CASE, case);
-        if let Ok(evidence) = std::env::var("OMNI_PRIVATE_STAGING_EVIDENCE") {
-            child.env("OMNI_PRIVATE_STAGING_EVIDENCE", evidence);
+        if let Ok(evidence) = std::env::var("LEAP_PRIVATE_STAGING_EVIDENCE") {
+            child.env("LEAP_PRIVATE_STAGING_EVIDENCE", evidence);
         }
         let output = child.output().unwrap();
         assert!(

@@ -208,44 +208,44 @@ jobs:
         include:
           - platform: linux
             runner: ubuntu-24.04
-            device_variable: OMNI_INTEGRATION_DEVICE_LINUX
+            device_variable: LEAP_INTEGRATION_DEVICE_LINUX
             default_device: linux
-            defines_variable: OMNI_INTEGRATION_DEFINES_LINUX
-            source_profile_secret: OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_LINUX_JSON
-            source_profile_digest_variable: OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_LINUX_SHA256
+            defines_variable: LEAP_INTEGRATION_DEFINES_LINUX
+            source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_LINUX_JSON
+            source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_LINUX_SHA256
           - platform: macos
             runner: macos-26
-            device_variable: OMNI_INTEGRATION_DEVICE_MACOS
+            device_variable: LEAP_INTEGRATION_DEVICE_MACOS
             default_device: macos
-            defines_variable: OMNI_INTEGRATION_DEFINES_MACOS
-            source_profile_secret: OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_MACOS_JSON
-            source_profile_digest_variable: OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_MACOS_SHA256
+            defines_variable: LEAP_INTEGRATION_DEFINES_MACOS
+            source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_MACOS_JSON
+            source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_MACOS_SHA256
           - platform: windows
             runner: windows-2025
-            device_variable: OMNI_INTEGRATION_DEVICE_WINDOWS
+            device_variable: LEAP_INTEGRATION_DEVICE_WINDOWS
             default_device: windows
-            defines_variable: OMNI_INTEGRATION_DEFINES_WINDOWS
-            source_profile_secret: OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_WINDOWS_JSON
-            source_profile_digest_variable: OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_WINDOWS_SHA256
+            defines_variable: LEAP_INTEGRATION_DEFINES_WINDOWS
+            source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_WINDOWS_JSON
+            source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_WINDOWS_SHA256
           - platform: android
             runner: ubuntu-24.04
-            device_variable: OMNI_INTEGRATION_DEVICE_ANDROID
+            device_variable: LEAP_INTEGRATION_DEVICE_ANDROID
             default_device: ''
-            defines_variable: OMNI_INTEGRATION_DEFINES_ANDROID
-            source_profile_secret: OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_ANDROID_JSON
-            source_profile_digest_variable: OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_ANDROID_SHA256
+            defines_variable: LEAP_INTEGRATION_DEFINES_ANDROID
+            source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_ANDROID_JSON
+            source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_ANDROID_SHA256
           - platform: ios
             runner: macos-26
-            device_variable: OMNI_INTEGRATION_DEVICE_IOS
+            device_variable: LEAP_INTEGRATION_DEVICE_IOS
             default_device: ''
-            defines_variable: OMNI_INTEGRATION_DEFINES_IOS
-            source_profile_secret: OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_IOS_JSON
-            source_profile_digest_variable: OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_IOS_SHA256
+            defines_variable: LEAP_INTEGRATION_DEFINES_IOS
+            source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_IOS_JSON
+            source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_IOS_SHA256
           - platform: web
             runner: ubuntu-24.04
-            device_variable: OMNI_INTEGRATION_DEVICE_WEB
+            device_variable: LEAP_INTEGRATION_DEVICE_WEB
             default_device: chrome
-            defines_variable: OMNI_INTEGRATION_DEFINES_WEB
+            defines_variable: LEAP_INTEGRATION_DEFINES_WEB
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     steps:
@@ -256,9 +256,9 @@ jobs:
         id: protected_source_pair
         run: bash ci/native-release/run.sh prepare-protected-source-pair
         env:
-          OMNI_INTEGRATION_PLATFORM: ${{ matrix.platform }}
-          OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON: ${{ matrix.source_profile_secret && secrets[matrix.source_profile_secret] || '' }}
-          OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256: ${{ matrix.source_profile_digest_variable && vars[matrix.source_profile_digest_variable] || '' }}
+          LEAP_INTEGRATION_PLATFORM: ${{ matrix.platform }}
+          LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON: ${{ matrix.source_profile_secret && secrets[matrix.source_profile_secret] || '' }}
+          LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256: ${{ matrix.source_profile_digest_variable && vars[matrix.source_profile_digest_variable] || '' }}
       # Presence flags are not credentials and are not execution evidence.
       # Missing physical-device/fixture inputs fail here, not after a queue timeout.
       - name: Check integration prerequisites without exposing configuration
@@ -272,15 +272,15 @@ jobs:
              "BUILD_CONFIG":${{ secrets.BUILD_CONFIG != '' }},
              "STORAGE_CONFIG":${{ secrets.STORAGE_CONFIG != '' }},
              "OMNITERM_VPN_PROVIDER_PUBLIC_KEY":${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY != '' }},
-             "OMNI_INTEGRATION_DEVICE":${{ (vars[matrix.device_variable] || matrix.default_device) != '' }}}
+             "LEAP_INTEGRATION_DEVICE":${{ (vars[matrix.device_variable] || matrix.default_device) != '' }}}
       - name: Execute genuine reviewed application journeys and retain private evidence
         run: bash ci/native-release/run.sh run
         env:
           RELEASE_TARGET: integration
           OMNITERM_WINDOWS_SDK_MANIFEST_SHA256: ${{ needs.windows_sdk.outputs.manifest_sha256 }}
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
@@ -293,18 +293,18 @@ jobs:
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
-          OMNI_INTEGRATION_PLATFORM: ${{ matrix.platform }}
-          OMNI_INTEGRATION_DEVICE: ${{ vars[matrix.device_variable] || matrix.default_device }}
-          OMNI_INTEGRATION_DEFINES: ${{ vars[matrix.defines_variable] }}
-          OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE: ${{ steps.protected_source_pair.outputs.profile_file }}
-          OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256: ${{ matrix.source_profile_digest_variable && vars[matrix.source_profile_digest_variable] || '' }}
-          OMNI_CHROMEDRIVER_PORT: ${{ vars.OMNI_CHROMEDRIVER_PORT }}
+          LEAP_INTEGRATION_PLATFORM: ${{ matrix.platform }}
+          LEAP_INTEGRATION_DEVICE: ${{ vars[matrix.device_variable] || matrix.default_device }}
+          LEAP_INTEGRATION_DEFINES: ${{ vars[matrix.defines_variable] }}
+          LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE: ${{ steps.protected_source_pair.outputs.profile_file }}
+          LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256: ${{ matrix.source_profile_digest_variable && vars[matrix.source_profile_digest_variable] || '' }}
+          LEAP_CHROMEDRIVER_PORT: ${{ vars.LEAP_CHROMEDRIVER_PORT }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
       - name: Remove the protected source pair input
         if: ${{ always() }}
         run: bash ci/native-release/run.sh cleanup-hosted-inputs
         env:
-          OMNI_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE: ${{ steps.protected_source_pair.outputs.profile_file }}
+          LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE: ${{ steps.protected_source_pair.outputs.profile_file }}
       - name: Retain encrypted diagnostics privately
         if: ${{ always() }}
         run: bash ci/native-release/run.sh retain-artifacts
@@ -382,8 +382,8 @@ jobs:
           RELEASE_TARGET: ${{ matrix.target }}
           OMNITERM_WINDOWS_SDK_MANIFEST_SHA256: ${{ needs.windows_sdk.outputs.manifest_sha256 }}
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
@@ -397,7 +397,7 @@ jobs:
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
           BUILD_CONFIG: ${{ !inputs.build_only && secrets.BUILD_CONFIG || '{}' }}
           SIGNING_CONFIG: ${{ !inputs.build_only && (matrix.target == 'windows' && secrets.WINDOWS_SIGNING_CONFIG || matrix.target == 'macos' && secrets.MACOS_SIGNING_CONFIG || matrix.target == 'android' && secrets.ANDROID_SIGNING_CONFIG || matrix.target == 'ios' && secrets.IOS_SIGNING_CONFIG || '') || '' }}
-          OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB: ${{ !inputs.build_only && matrix.target == 'windows' && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}
+          LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB: ${{ !inputs.build_only && matrix.target == 'windows' && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}
           STORAGE_CONFIG: ${{ (!inputs.build_only || matrix.target == 'windows') && secrets.STORAGE_CONFIG || '' }}
           WINDOWS_PREVIEW_OUTPUT_DIR: ${{ inputs.preview_windows_self_sign && matrix.target == 'windows' && format('{0}/windows-preview', runner.temp) || '' }}
       - name: Retain recipient-encrypted Windows evaluation privately
@@ -471,8 +471,8 @@ jobs:
         env:
           RELEASE_TARGET: validate
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
@@ -545,8 +545,8 @@ jobs:
         env:
           RELEASE_TARGET: ${{ matrix.target }}
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
@@ -614,15 +614,15 @@ jobs:
           $dlib = Join-Path $package 'bin/x64/Azure.CodeSigning.Dlib.dll'
           if (-not (Test-Path -LiteralPath $dlib -PathType Leaf)) { throw 'Artifact Signing client is incomplete' }
           if (-not ((dotnet --list-runtimes) -match '^Microsoft\.NETCore\.App 8\.')) { throw '.NET 8 runtime is required for Artifact Signing' }
-          "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB=$dlib" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB=$dlib" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Execute reviewed Windows release task
         run: bash ci/native-release/run.sh run
         env:
           RELEASE_TARGET: windows
           OMNITERM_WINDOWS_SDK_MANIFEST_SHA256: ${{ needs.windows_sdk.outputs.manifest_sha256 }}
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
@@ -684,8 +684,8 @@ jobs:
         env:
           RELEASE_TARGET: ios
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
@@ -741,8 +741,8 @@ jobs:
         env:
           RELEASE_TARGET: package-signatures
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
@@ -798,8 +798,8 @@ jobs:
         env:
           RELEASE_TARGET: apple-testflight
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
@@ -850,44 +850,44 @@ jobs:
           - platform: linux
             runner: ubuntu-24.04
             attestation_environment: vpn-installation-linux
-            device_variable: OMNI_INTEGRATION_DEVICE_LINUX
-            config_variable: OMNI_INSTALL_CONFIG_LINUX
-            vpn_profile_variable: OMNI_VPN_INSTALLATION_PROFILE_LINUX
-            vpn_control_secret: OMNI_VPN_INSTALLED_CONTROL_LINUX_JSON
+            device_variable: LEAP_INTEGRATION_DEVICE_LINUX
+            config_variable: LEAP_INSTALL_CONFIG_LINUX
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_LINUX
+            vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_LINUX_JSON
           - platform: macos
             runner: macos-26
             attestation_environment: vpn-installation-macos
-            device_variable: OMNI_INTEGRATION_DEVICE_MACOS
-            config_variable: OMNI_INSTALL_CONFIG_MACOS
-            vpn_profile_variable: OMNI_VPN_INSTALLATION_PROFILE_MACOS
-            vpn_control_secret: OMNI_VPN_INSTALLED_CONTROL_MACOS_JSON
+            device_variable: LEAP_INTEGRATION_DEVICE_MACOS
+            config_variable: LEAP_INSTALL_CONFIG_MACOS
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_MACOS
+            vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_MACOS_JSON
           - platform: windows
             runner: windows-2025
             attestation_environment: vpn-installation-windows
-            device_variable: OMNI_INTEGRATION_DEVICE_WINDOWS
-            config_variable: OMNI_INSTALL_CONFIG_WINDOWS
-            vpn_profile_variable: OMNI_VPN_INSTALLATION_PROFILE_WINDOWS
-            vpn_control_secret: OMNI_VPN_INSTALLED_CONTROL_WINDOWS_JSON
+            device_variable: LEAP_INTEGRATION_DEVICE_WINDOWS
+            config_variable: LEAP_INSTALL_CONFIG_WINDOWS
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_WINDOWS
+            vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_WINDOWS_JSON
           - platform: android
             runner: ubuntu-24.04
             attestation_environment: vpn-installation-android
-            device_variable: OMNI_INTEGRATION_DEVICE_ANDROID
-            config_variable: OMNI_INSTALL_CONFIG_ANDROID
-            vpn_profile_variable: OMNI_VPN_INSTALLATION_PROFILE_ANDROID
-            vpn_control_secret: OMNI_VPN_INSTALLED_CONTROL_ANDROID_JSON
+            device_variable: LEAP_INTEGRATION_DEVICE_ANDROID
+            config_variable: LEAP_INSTALL_CONFIG_ANDROID
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_ANDROID
+            vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_ANDROID_JSON
           - platform: ios
             runner: macos-26
             attestation_environment: vpn-installation-ios
-            device_variable: OMNI_INTEGRATION_DEVICE_IOS
-            config_variable: OMNI_INSTALL_CONFIG_IOS
-            vpn_profile_variable: OMNI_VPN_INSTALLATION_PROFILE_IOS
-            vpn_control_secret: OMNI_VPN_INSTALLED_CONTROL_IOS_JSON
+            device_variable: LEAP_INTEGRATION_DEVICE_IOS
+            config_variable: LEAP_INSTALL_CONFIG_IOS
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_IOS
+            vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_IOS_JSON
           - platform: web
             runner: ubuntu-24.04
             attestation_environment: downloads
-            device_variable: OMNI_INTEGRATION_DEVICE_WEB
-            config_variable: OMNI_INSTALL_CONFIG_WEB
-            vpn_profile_variable: OMNI_VPN_INSTALLATION_PROFILE_WEB
+            device_variable: LEAP_INTEGRATION_DEVICE_WEB
+            config_variable: LEAP_INSTALL_CONFIG_WEB
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_WEB
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     steps:
@@ -898,15 +898,15 @@ jobs:
         id: installed_vpn_control
         run: bash ci/native-release/run.sh prepare-installed-control
         env:
-          OMNI_INTEGRATION_PLATFORM: ${{ matrix.platform }}
-          OMNI_VPN_INSTALLED_CONTROL_JSON: ${{ matrix.vpn_control_secret && secrets[matrix.vpn_control_secret] || '' }}
+          LEAP_INTEGRATION_PLATFORM: ${{ matrix.platform }}
+          LEAP_VPN_INSTALLED_CONTROL_JSON: ${{ matrix.vpn_control_secret && secrets[matrix.vpn_control_secret] || '' }}
       - name: Install exact candidate and retain actual private OS evidence
         run: bash ci/native-release/run.sh run
         env:
           RELEASE_TARGET: installation
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
@@ -920,20 +920,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
-          OMNI_INTEGRATION_PLATFORM: ${{ matrix.platform }}
-          OMNI_INTEGRATION_DEVICE: ${{ vars[matrix.device_variable] }}
-          OMNI_INSTALL_CONFIG: ${{ vars[matrix.config_variable] }}
-          OMNI_VPN_INSTALLATION_PROFILE_FILE: ${{ vars[matrix.vpn_profile_variable] || '' }}
-          OMNI_VPN_INSTALLED_CONTROL_FILE: ${{ steps.installed_vpn_control.outputs.control_file }}
-          OMNI_VPN_RECEIVER_TRUSTED_JWKS_JSON: ${{ vars.OMNI_VPN_RECEIVER_TRUSTED_JWKS_JSON }}
-          OMNI_VPN_TRUSTED_GATEWAY_POLICIES_JSON: ${{ vars.OMNI_VPN_TRUSTED_GATEWAY_POLICIES_JSON }}
-          OMNI_CHROMEDRIVER_PORT: ${{ vars.OMNI_CHROMEDRIVER_PORT }}
+          LEAP_INTEGRATION_PLATFORM: ${{ matrix.platform }}
+          LEAP_INTEGRATION_DEVICE: ${{ vars[matrix.device_variable] }}
+          LEAP_INSTALL_CONFIG: ${{ vars[matrix.config_variable] }}
+          LEAP_VPN_INSTALLATION_PROFILE_FILE: ${{ vars[matrix.vpn_profile_variable] || '' }}
+          LEAP_VPN_INSTALLED_CONTROL_FILE: ${{ steps.installed_vpn_control.outputs.control_file }}
+          LEAP_VPN_RECEIVER_TRUSTED_JWKS_JSON: ${{ vars.LEAP_VPN_RECEIVER_TRUSTED_JWKS_JSON }}
+          LEAP_VPN_TRUSTED_GATEWAY_POLICIES_JSON: ${{ vars.LEAP_VPN_TRUSTED_GATEWAY_POLICIES_JSON }}
+          LEAP_CHROMEDRIVER_PORT: ${{ vars.LEAP_CHROMEDRIVER_PORT }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
       - name: Remove the installed VPN controller input
         if: ${{ always() }}
         run: bash ci/native-release/run.sh cleanup-hosted-inputs
         env:
-          OMNI_VPN_INSTALLED_CONTROL_FILE: ${{ steps.installed_vpn_control.outputs.control_file }}
+          LEAP_VPN_INSTALLED_CONTROL_FILE: ${{ steps.installed_vpn_control.outputs.control_file }}
       - name: Retain encrypted diagnostics privately
         if: ${{ always() }}
         run: bash ci/native-release/run.sh retain-artifacts
@@ -983,21 +983,21 @@ jobs:
           set -euo pipefail
           docker info >/dev/null 2>&1
           test -c /dev/net/tun
-          case "$OMNI_VPN_E2E_KERNEL_MODULE_STATE" in
+          case "$LEAP_VPN_E2E_KERNEL_MODULE_STATE" in
             present) test -d /sys/module/wireguard ;;
             absent) test ! -d /sys/module/wireguard ;;
             *) exit 1 ;;
           esac
         env:
-          OMNI_VPN_E2E_KERNEL_MODULE_STATE: ${{ matrix.kernel_state }}
+          LEAP_VPN_E2E_KERNEL_MODULE_STATE: ${{ matrix.kernel_state }}
       - name: Assemble candidate client image and execute VPN route and cutoff matrix
         run: bash ci/native-release/run.sh run
         env:
           RELEASE_TARGET: vpn-container
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
-          OMNI_VPN_E2E_KERNEL_MODULE_STATE: ${{ matrix.kernel_state }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_VPN_E2E_KERNEL_MODULE_STATE: ${{ matrix.kernel_state }}
           OMNITERM_VPN_E2E_PROFILE_FILE: ${{ vars.OMNITERM_VPN_E2E_PROFILE_FILE }}
           OMNITERM_VPN_E2E_CLIENT_BASE_IMAGE: ${{ vars.OMNITERM_VPN_E2E_CLIENT_BASE_IMAGE }}
           OMNITERM_VPN_E2E_GATEWAY_IMAGE: ${{ vars.OMNITERM_VPN_E2E_GATEWAY_IMAGE }}
@@ -1058,8 +1058,8 @@ jobs:
         env:
           RELEASE_TARGET: ios-deliver
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
@@ -1115,8 +1115,8 @@ jobs:
         env:
           RELEASE_TARGET: publication-prepare
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
@@ -1169,8 +1169,8 @@ jobs:
         env:
           RELEASE_TARGET: managed-rtc-provider
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           MANAGED_RTC_PROVIDER_ENVIRONMENT_FILE: ${{ vars.MANAGED_RTC_PROVIDER_ENVIRONMENT_FILE }}
           MANAGED_RTC_IDENTITY_FIXTURE_FILE: ${{ vars.MANAGED_RTC_IDENTITY_FIXTURE_FILE }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
@@ -1225,16 +1225,16 @@ jobs:
         include:
           - platform: linux
             runner: ubuntu-24.04
-            config_variable: OMNI_EXTERNAL_CONFIG_LINUX
-            candidate_guard_variable: OMNI_EXTERNAL_CANDIDATE_GUARD_CONFIG_LINUX
+            config_variable: LEAP_EXTERNAL_CONFIG_LINUX
+            candidate_guard_variable: LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_LINUX
           - platform: macos
             runner: macos-26
-            config_variable: OMNI_EXTERNAL_CONFIG_MACOS
-            candidate_guard_variable: OMNI_EXTERNAL_CANDIDATE_GUARD_CONFIG_MACOS
+            config_variable: LEAP_EXTERNAL_CONFIG_MACOS
+            candidate_guard_variable: LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_MACOS
           - platform: windows
             runner: windows-2025
-            config_variable: OMNI_EXTERNAL_CONFIG_WINDOWS
-            candidate_guard_variable: OMNI_EXTERNAL_CANDIDATE_GUARD_CONFIG_WINDOWS
+            config_variable: LEAP_EXTERNAL_CONFIG_WINDOWS
+            candidate_guard_variable: LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_WINDOWS
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1308,14 +1308,14 @@ jobs:
         env:
           RELEASE_TARGET: external-tests
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
-          OMNI_EXTERNAL_PLATFORM: ${{ matrix.platform }}
-          OMNI_EXTERNAL_CONFIG_FILE: ${{ vars[matrix.config_variable] }}
-          OMNI_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE: ${{ vars[matrix.candidate_guard_variable] }}
-          OMNI_MCP_STAGING_DEPLOYMENT_CONFIG_FILE: ${{ matrix.platform == 'linux' && vars.OMNI_MCP_STAGING_DEPLOYMENT_CONFIG_FILE || '' }}
-          OMNI_MCP_STAGING_READ_TOKEN: ${{ matrix.platform == 'linux' && secrets.OMNI_MCP_STAGING_READ_TOKEN || '' }}
-          OMNI_MCP_STAGING_WRITE_TOKEN: ${{ matrix.platform == 'linux' && secrets.OMNI_MCP_STAGING_WRITE_TOKEN || '' }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_EXTERNAL_PLATFORM: ${{ matrix.platform }}
+          LEAP_EXTERNAL_CONFIG_FILE: ${{ vars[matrix.config_variable] }}
+          LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE: ${{ vars[matrix.candidate_guard_variable] }}
+          LEAP_MCP_STAGING_DEPLOYMENT_CONFIG_FILE: ${{ matrix.platform == 'linux' && vars.LEAP_MCP_STAGING_DEPLOYMENT_CONFIG_FILE || '' }}
+          LEAP_MCP_STAGING_READ_TOKEN: ${{ matrix.platform == 'linux' && secrets.LEAP_MCP_STAGING_READ_TOKEN || '' }}
+          LEAP_MCP_STAGING_WRITE_TOKEN: ${{ matrix.platform == 'linux' && secrets.LEAP_MCP_STAGING_WRITE_TOKEN || '' }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
@@ -1382,16 +1382,16 @@ jobs:
           if ($libraries.Count -ne 1) { throw 'One actual x64 signing library is required' }
           $dlib = $libraries[0].FullName
           if (-not ((dotnet --list-runtimes) -match '^Microsoft\.NETCore\.App 8\.')) { throw '.NET 8 runtime is required' }
-          "OMNI_WINDOWS_ARTIFACT_SIGNING_DLIB=$dlib" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB=$dlib" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Execute only the protected Windows Azure signing case
         run: bash ci/native-release/run.sh run
         env:
           RELEASE_TARGET: external-windows-signing
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
-          OMNI_EXTERNAL_PLATFORM: windows-signing
-          OMNI_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE: ${{ vars.OMNI_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_EXTERNAL_PLATFORM: windows-signing
+          LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE: ${{ vars.LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
@@ -1454,8 +1454,8 @@ jobs:
           RELEASE_TARGET: ios-submit
           RELEASE_IOS_DELIVERY_RESULT: ${{ needs.ios_delivery.result }}
           OMNITERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.OMNITERM_VPN_PROVIDER_PUBLIC_KEY }}
-          OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
-          OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.OMNI_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}

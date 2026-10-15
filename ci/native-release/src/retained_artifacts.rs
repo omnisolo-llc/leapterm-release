@@ -62,7 +62,7 @@ pub fn artifact(env: &Environment, request: &Request) -> Result<Option<Artifact>
     }
     let pipeline = pipeline_kind(env)?;
     if pipeline == "agent" {
-        let platform = required(env, "OMNI_AGENT_PLATFORM")?;
+        let platform = required(env, "LEAP_AGENT_PLATFORM")?;
         crate::agent::target(platform)?;
         if scope != format!("agent-{}", platform.replace('_', "-")) {
             return Err("Agent artifact scope differs from its platform");
@@ -76,7 +76,7 @@ pub fn artifact(env: &Environment, request: &Request) -> Result<Option<Artifact>
         crate::agent::verify_handoff(
             &path,
             &request.version,
-            required(env, "OMNI_AGENT_PLATFORM")?,
+            required(env, "LEAP_AGENT_PLATFORM")?,
         )?;
         return Ok(Some(Artifact {
             path,
@@ -173,17 +173,17 @@ pub fn storage_environment(
     }
     safe.insert("PUBLIC_BUILDER_SHA".into(), env["GITHUB_SHA"].clone());
     safe.insert(
-        "OMNI_RELEASE_SOURCE_ROOT".into(),
+        "LEAP_RELEASE_SOURCE_ROOT".into(),
         source.to_string_lossy().into_owned(),
     );
     safe.insert("RELEASE_STORAGE_KIND".into(), pipeline_kind(env)?.into());
     if pipeline_kind(env)? == "agent" {
         safe.insert(
-            "OMNI_AGENT_PLATFORM".into(),
-            required(env, "OMNI_AGENT_PLATFORM")?.into(),
+            "LEAP_AGENT_PLATFORM".into(),
+            required(env, "LEAP_AGENT_PLATFORM")?.into(),
         );
         safe.insert(
-            "OMNI_AGENT_VERSION".into(),
+            "LEAP_AGENT_VERSION".into(),
             crate::agent::approved_source()?.version,
         );
     }

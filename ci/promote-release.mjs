@@ -9,7 +9,7 @@ import zlib from 'node:zlib';
 
 export const STAGING_REPOSITORY = 'omnisolo-llc/leapterm';
 export const PUBLIC_REPOSITORY = 'omnisolo-llc/leapterm-release';
-export const PRIMARY_CONTAINER_REGISTRY = 'omniterm/omni';
+export const PRIMARY_CONTAINER_REGISTRY = 'leapterm/private';
 export const GHCR_CONTAINER_REGISTRY = 'ghcr.io/omnisolo-llc/leapterm/cloud';
 
 export const PUBLIC_TARGETS = Object.freeze([
@@ -512,7 +512,7 @@ async function githubRequest(url, token, options = {}) {
     Accept: options.accept || 'application/vnd.github+json',
     Authorization: `Bearer ${token}`,
     'X-GitHub-Api-Version': '2022-11-28',
-    'User-Agent': 'omniterm-release-promoter',
+    'User-Agent': 'leapterm-release-promoter',
     ...(options.headers || {}),
   };
   const response = await fetch(url, {
@@ -1345,8 +1345,8 @@ function requireEnvironmentRolloutCredentials() {
       throw new Error(`${name} is required for environment rollout`);
     }
   }
-  if (!/^[A-Za-z0-9][A-Za-z0-9./_:-]*@sha256:[a-f0-9]{64}$/.test(String(process.env.OMNI_GATEWAY_SOURCE_IMAGE || ''))) {
-    throw new Error('OMNI_GATEWAY_SOURCE_IMAGE is required as an immutable repository@sha256 digest pin');
+  if (!/^[A-Za-z0-9][A-Za-z0-9./_:-]*@sha256:[a-f0-9]{64}$/.test(String(process.env.LEAP_GATEWAY_SOURCE_IMAGE || ''))) {
+    throw new Error('LEAP_GATEWAY_SOURCE_IMAGE is required as an immutable repository@sha256 digest pin');
   }
 }
 
@@ -1359,7 +1359,7 @@ export function executeEnvironmentRollout({
   stagingRepo = STAGING_REPOSITORY,
   privateToken = '',
   githubToken = '',
-  dockerHubUsername = 'omniterm',
+  dockerHubUsername = 'leapterm',
   dockerHubPatReadWrite = '',
   dockerHubPatReadOnly = '',
   containerRegistry = PRIMARY_CONTAINER_REGISTRY,
@@ -1500,13 +1500,13 @@ export function executeEnvironmentRollout({
       '';
     const childEnv = {
       ...rolloutEnv,
-      OMNI_REGISTRY: plan.container.registry,
+      LEAP_REGISTRY: plan.container.registry,
       PROMOTE_CONTAINER_REGISTRY: plan.container.registry,
       PROMOTE_VERSION: plan.version,
       PROMOTE_BUILD_NUMBER: plan.build_number,
       RELEASE_SOURCE_SHA: plan.source_sha,
       DOCKER_HUB_USERNAME:
-        dockerHubUsername || process.env.DOCKER_HUB_USERNAME || 'omniterm',
+        dockerHubUsername || process.env.DOCKER_HUB_USERNAME || 'leapterm',
       DOCKER_HUB_PAT_READ_WRITE:
         dockerHubPatReadWrite || process.env.DOCKER_HUB_PAT_READ_WRITE || '',
       DOCKER_HUB_PAT_READ_ONLY:
@@ -1556,7 +1556,7 @@ export async function promoteRelease({
   privateToken,
   publicToken,
   githubToken = '',
-  dockerHubUsername = 'omniterm',
+  dockerHubUsername = 'leapterm',
   dockerHubPatReadWrite = '',
   dockerHubPatReadOnly = '',
   signingConfigJson,
@@ -1818,7 +1818,7 @@ export async function promoteRelease({
             Accept: 'application/vnd.github+json',
             Authorization: `Bearer ${publicToken}`,
             'X-GitHub-Api-Version': '2022-11-28',
-            'User-Agent': 'omniterm-release-promoter',
+            'User-Agent': 'leapterm-release-promoter',
           },
         },
       );
@@ -2068,7 +2068,7 @@ if (
     privateToken: process.env.PRIVATE_RELEASE_TOKEN,
     publicToken: process.env.GH_TOKEN,
     githubToken: process.env.GITHUB_TOKEN || '',
-    dockerHubUsername: process.env.DOCKER_HUB_USERNAME || 'omniterm',
+    dockerHubUsername: process.env.DOCKER_HUB_USERNAME || 'leapterm',
     dockerHubPatReadWrite: process.env.DOCKER_HUB_PAT_READ_WRITE || '',
     dockerHubPatReadOnly: process.env.DOCKER_HUB_PAT_READ_ONLY || '',
     signingConfigJson: process.env.PACKAGE_SIGNING_CONFIG,

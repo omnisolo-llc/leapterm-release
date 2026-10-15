@@ -115,7 +115,7 @@ fn all_targets_validate_configuration_without_unrelated_signing_or_optional_iden
     release.insert("RESOLVED_SOURCE_SHA".into(), "a".repeat(40));
     release.insert(
         "BUILD_CONFIG".into(),
-        r#"{"OMNI_ENABLE_VPN":"true"}"#.into(),
+        r#"{"LEAP_ENABLE_VPN":"true"}"#.into(),
     );
     release.insert("STORAGE_CONFIG".into(), "{}".into());
     for stage in input::RELEASE_TARGETS.iter().filter(|s| **s != "resolve") {
@@ -138,10 +138,10 @@ fn all_targets_validate_configuration_without_unrelated_signing_or_optional_iden
         for config in [
             "",
             "{}",
-            r#"{"OMNI_ENABLE_VPN":false}"#,
-            r#"{"OMNI_ENABLE_VPN":true}"#,
-            r#"{"OMNI_ENABLE_VPN":"false"}"#,
-            r#"{"OMNI_ENABLE_VPN":"true","OMNI_ENABLE_VPN":"true"}"#,
+            r#"{"LEAP_ENABLE_VPN":false}"#,
+            r#"{"LEAP_ENABLE_VPN":true}"#,
+            r#"{"LEAP_ENABLE_VPN":"false"}"#,
+            r#"{"LEAP_ENABLE_VPN":"true","LEAP_ENABLE_VPN":"true"}"#,
         ] {
             let mut bad = release.clone();
             bad.insert("BUILD_CONFIG".into(), config.into());
@@ -189,7 +189,7 @@ fn full_release_keeps_explicit_sha_and_binds_later_jobs_to_resolver() {
     environment.insert("RESOLVED_SOURCE_SHA".into(), "c".repeat(40));
     environment.insert(
         "BUILD_CONFIG".into(),
-        r#"{"OMNI_ENABLE_VPN":"true"}"#.into(),
+        r#"{"LEAP_ENABLE_VPN":"true"}"#.into(),
     );
     environment.insert("STORAGE_CONFIG".into(), "{}".into());
     assert_eq!(

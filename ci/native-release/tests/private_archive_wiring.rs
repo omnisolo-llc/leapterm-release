@@ -34,7 +34,7 @@ fn environment(target: &str) -> Environment {
             json!({"source_sha":"a".repeat(40),"builder_sha":"b".repeat(40),"version":"1.2.3","build_number":"42","build_only":false,"ios_action":"submit","release_route":"option1"}).to_string(),
         ),
         ("RESOLVED_SOURCE_SHA".into(), "a".repeat(40)),
-        ("BUILD_CONFIG".into(), json!({"OMNI_ENABLE_VPN":"true"}).to_string()),
+        ("BUILD_CONFIG".into(), json!({"LEAP_ENABLE_VPN":"true"}).to_string()),
         ("STORAGE_CONFIG".into(), "{}".into()),
     ])
 }
