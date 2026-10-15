@@ -570,7 +570,7 @@ export function createAppStoreConnectJwt({
 
 export async function verifyAppleStoreAccess({
   appleSigningConfigJson,
-  appBundleId = 'dev.omniterm.app',
+  appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
 }) {
   const signing = JSON.parse(appleSigningConfigJson || '{}');
@@ -614,7 +614,7 @@ export async function verifyAppleStoreAccess({
 
 export async function verifyGooglePlayStoreAccess({
   serviceAccountJson,
-  packageName = 'dev.omniterm.app',
+  packageName = 'com.leapterm.app',
   fetchImpl = fetch,
 }) {
   const key = JSON.parse(serviceAccountJson || '{}');
@@ -703,7 +703,7 @@ export async function promoteAppleToAppStoreConnect({
   automaticRelease = false,
   packagePath = '',
   appleSigningConfigJson,
-  appBundleId = 'dev.omniterm.app',
+  appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
 }) {
@@ -1032,7 +1032,7 @@ export async function promoteIosToAppStoreConnect({
   automaticRelease = false,
   ipaPath = '',
   iosSigningConfigJson,
-  appBundleId = 'dev.omniterm.app',
+  appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
 }) {
@@ -1057,7 +1057,7 @@ export async function promoteMacosToAppStoreConnect({
   automaticRelease = false,
   packagePath = '',
   macosSigningConfigJson,
-  appBundleId = 'dev.omniterm.app',
+  appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
 }) {
@@ -1081,7 +1081,7 @@ export async function promoteAndroidToPlayStore({
   track,
   aabPath,
   serviceAccountJson,
-  packageName = 'dev.omniterm.app',
+  packageName = 'com.leapterm.app',
   fetchImpl = fetch,
 }) {
   if (!['internal', 'alpha', 'beta', 'production'].includes(track)) {
