@@ -397,6 +397,7 @@ jobs:
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
           BUILD_CONFIG: ${{ !inputs.build_only && secrets.BUILD_CONFIG || '{}' }}
           SIGNING_CONFIG: ${{ !inputs.build_only && (matrix.target == 'windows' && secrets.WINDOWS_SIGNING_CONFIG || matrix.target == 'macos' && secrets.MACOS_SIGNING_CONFIG || matrix.target == 'android' && secrets.ANDROID_SIGNING_CONFIG || matrix.target == 'ios' && secrets.IOS_SIGNING_CONFIG || '') || '' }}
+          APPLE_CONFIG: ${{ !inputs.build_only && (matrix.target == 'macos' || matrix.target == 'ios') && secrets.APPLE_CONFIG || '' }}
           LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB: ${{ !inputs.build_only && matrix.target == 'windows' && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}
           STORAGE_CONFIG: ${{ (!inputs.build_only || matrix.target == 'windows') && secrets.STORAGE_CONFIG || '' }}
           WINDOWS_PREVIEW_OUTPUT_DIR: ${{ inputs.preview_windows_self_sign && matrix.target == 'windows' && format('{0}/windows-preview', runner.temp) || '' }}
@@ -560,6 +561,7 @@ jobs:
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
           SIGNING_CONFIG: ${{ matrix.target == 'macos' && secrets.MACOS_SIGNING_CONFIG || matrix.target == 'android' && secrets.ANDROID_SIGNING_CONFIG || '' }}
+          APPLE_CONFIG: ${{ matrix.target == 'macos' && secrets.APPLE_CONFIG || '' }}
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
       - name: Retain encrypted diagnostics privately
@@ -699,6 +701,7 @@ jobs:
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
           SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
+          APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
       - name: Retain encrypted diagnostics privately
@@ -813,6 +816,7 @@ jobs:
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
           SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
+          APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
       - name: Retain encrypted diagnostics privately
@@ -1073,6 +1077,7 @@ jobs:
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
           SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
+          APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
       - name: Retain encrypted diagnostics privately
@@ -1468,6 +1473,7 @@ jobs:
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
           SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
+          APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           GH_TOKEN: ${{ github.token }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}

@@ -8,11 +8,14 @@ import vm from 'node:vm';
 
 import {
   GHCR_CONTAINER_REGISTRY,
+  LEGACY_KEYRING_ASSET,
   PRIMARY_CONTAINER_REGISTRY,
+  PRIMARY_KEYRING_ASSET,
   PUBLIC_TARGETS,
   FORBIDDEN_PRIVATE_TARGETS,
   assertNoPrivateLeakInPublicMetadata,
   buildEnvironmentRolloutPlan,
+  buildPrivateIosStorageKeys,
   buildPublicSha256Sums,
   canonicalJson,
   createAppStoreConnectJwt,
@@ -20,12 +23,14 @@ import {
   executeEnvironmentRollout,
   filterPublicDownloadLinks,
   filterPublicProvenance,
+  mergeAppleSigningConfig,
   promoteAndroidToPlayStore,
   promoteIosToAppStoreConnect,
   promoteMacosToAppStoreConnect,
   promoteRelease,
   resolveGpgSigningCredentials,
   resolveRolloutEnvironment,
+  resolveStagingKeyringAssetName,
   scanDirectoryForLeaks,
   scanSelfHostedZipForLeaks,
   sha256Hex,
@@ -716,7 +721,8 @@ test('buildEnvironmentRolloutPlan targets Docker Hub leapterm/private primary re
     stagingPlan.container.client_image,
     'leapterm/private:client-staging-latest',
   );
-  assert.equal(stagingPlan.k3s.deployment, 'omniterm-staging');
+  assert.equal(stagingPlan.k3s.namespace, 'leapterm');
+  assert.equal(stagingPlan.k3s.deployment, 'leapterm-staging');
   assert.deepEqual(stagingPlan.rollout_command, [
     'bash',
     'scripts/rollout-env.sh',
@@ -742,7 +748,8 @@ test('buildEnvironmentRolloutPlan targets Docker Hub leapterm/private primary re
   assert.equal(prodPlan.container.image, 'leapterm/private:cloud-latest');
   assert.equal(prodPlan.container.alias_image, 'leapterm/private:latest');
   assert.equal(prodPlan.container.client_image, 'leapterm/private:client-latest');
-  assert.equal(prodPlan.k3s.deployment, 'omniterm');
+  assert.equal(prodPlan.k3s.namespace, 'leapterm');
+  assert.equal(prodPlan.k3s.deployment, 'leapterm');
   assert.deepEqual(prodPlan.rollout_command, [
     'bash',
     'scripts/rollout-env.sh',
@@ -1373,3 +1380,169 @@ for (const repository of ['omniterm/gateway', 'Registry.EXAMPLE:5000/Team/Gatewa
     assert.deepEqual(actions, ['bash', 'node']);
   });
 }
+
+test('resolveStagingKeyringAssetName prefers omniterm-package-signing-key.gpg and falls back to omni-terminal-archive-keyring.gpg', async (t) => {
+  assert.equal(PRIMARY_KEYRING_ASSET, 'omniterm-package-signing-key.gpg');
+  assert.equal(LEGACY_KEYRING_ASSET, 'omni-terminal-archive-keyring.gpg');
+
+  assert.equal(
+    resolveStagingKeyringAssetName(
+      new Map([['omniterm-package-signing-key.gpg', { name: 'omniterm-package-signing-key.gpg' }]]),
+    ),
+    'omniterm-package-signing-key.gpg',
+  );
+  assert.equal(
+    resolveStagingKeyringAssetName(
+      new Map([
+        ['omniterm-package-signing-key.gpg', { name: 'omniterm-package-signing-key.gpg' }],
+        ['omni-terminal-archive-keyring.gpg', { name: 'omni-terminal-archive-keyring.gpg' }],
+      ]),
+    ),
+    'omniterm-package-signing-key.gpg',
+  );
+  assert.equal(
+    resolveStagingKeyringAssetName(
+      new Map([['omni-terminal-archive-keyring.gpg', { name: 'omni-terminal-archive-keyring.gpg' }]]),
+    ),
+    'omni-terminal-archive-keyring.gpg',
+  );
+  assert.equal(resolveStagingKeyringAssetName(new Map()), 'omniterm-package-signing-key.gpg');
+
+  const downloadedUrls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    downloadedUrls.push(String(url));
+    if (String(url).endsWith('/releases/tags/v0.1.1')) {
+      return new Response(
+        JSON.stringify({
+          assets: [
+            {
+              name: 'omniterm-package-signing-key.gpg',
+              url: 'https://api.github.com/repos/omnisolo-llc/leapterm/releases/assets/101',
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    }
+    if (String(url).endsWith('/releases/assets/101')) {
+      return new Response(Buffer.from('mock-gpg-keyring-bytes'), { status: 200 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+
+  await assert.rejects(
+    promoteRelease({
+      version: '0.1.1',
+      privateToken: 'mock-private-token',
+      publishGithubRelease: false,
+      rolloutEnvironment: 'none',
+    }),
+    /missing required asset: download-links\.json/,
+  );
+  assert.ok(
+    downloadedUrls.includes('https://api.github.com/repos/omnisolo-llc/leapterm/releases/assets/101'),
+    'promoteRelease must download omniterm-package-signing-key.gpg when present on the staging release',
+  );
+});
+
+test('buildPrivateIosStorageKeys supports option1 private/receipts keys and legacy fallback paths', () => {
+  const option1Keys = buildPrivateIosStorageKeys({
+    version: 'v0.1.1',
+    buildNumber: '18',
+    runId: '100',
+    runAttempt: '1',
+    proof: 'abc123proof',
+    releaseRoute: 'option1',
+  });
+  assert.equal(option1Keys.basePrefix, 'releases/v0.1.1/18/100-1');
+  assert.equal(option1Keys.prefix, 'releases/v0.1.1/18/100-1/option1');
+  assert.equal(
+    option1Keys.ipaKey,
+    'releases/v0.1.1/18/100-1/option1/private/omniterm-0.1.1-ios-private.ipa',
+  );
+  assert.equal(
+    option1Keys.receiptKey,
+    'releases/v0.1.1/18/100-1/option1/receipts/ios-private-artifact.json',
+  );
+  assert.ok(
+    option1Keys.ipaKeys.includes(
+      'releases/v0.1.1/18/100-1/option1/private/omniterm-0.1.1-ios-private.ipa',
+    ),
+  );
+  assert.ok(
+    option1Keys.ipaKeys.includes(
+      'releases/v0.1.1/18/100-1/option1/private-artifacts/omniterm-0.1.1-ios-private.ipa',
+    ),
+  );
+  assert.ok(
+    option1Keys.ipaKeys.includes(
+      'releases/v0.1.1/18/100-1/private-artifacts/omniterm-0.1.1-ios-private.ipa',
+    ),
+  );
+  assert.ok(
+    option1Keys.receiptKeys.includes(
+      'releases/v0.1.1/18/100-1/option1/receipts/ios-private-artifact.json',
+    ),
+  );
+  assert.ok(
+    option1Keys.receiptKeys.includes(
+      'releases/v0.1.1/18/100-1/github-receipts/abc123proof/ios-private-artifact-receipt.json',
+    ),
+  );
+
+  const legacyKeys = buildPrivateIosStorageKeys({
+    version: '0.1.1',
+    buildNumber: '18',
+    runId: '100',
+    attempt: '1',
+    proof: 'abc123proof',
+    releaseRoute: 'legacy-acceptance',
+  });
+  assert.equal(legacyKeys.prefix, 'releases/v0.1.1/18/100-1');
+  assert.equal(
+    legacyKeys.ipaKey,
+    'releases/v0.1.1/18/100-1/private-artifacts/omniterm-0.1.1-ios-private.ipa',
+  );
+  assert.equal(
+    legacyKeys.receiptKey,
+    'releases/v0.1.1/18/100-1/github-receipts/abc123proof/ios-private-artifact-receipt.json',
+  );
+  assert.ok(
+    legacyKeys.ipaKeys.includes(
+      'releases/v0.1.1/18/100-1/option1/private/omniterm-0.1.1-ios-private.ipa',
+    ),
+  );
+  assert.ok(
+    legacyKeys.receiptKeys.includes(
+      'releases/v0.1.1/18/100-1/option1/receipts/ios-private-artifact.json',
+    ),
+  );
+});
+
+test('mergeAppleSigningConfig overlays fresh APPLE_CONFIG credentials without clobbering existing certificates', () => {
+  const base = JSON.stringify({
+    IOS_DISTRIBUTION_CERTIFICATE_BASE64: 'existing-cert-b64',
+    APP_STORE_CONNECT_KEY_ID: 'STALEKEY12',
+    IOS_PROVISIONING_PROFILE_BASE64: 'stale-profile-b64',
+  });
+  const appleConfig = JSON.stringify({
+    APP_STORE_CONNECT_KEY_ID: 'FRESHKEY34',
+    APP_STORE_CONNECT_ISSUER_ID: 'fresh-issuer',
+    APP_STORE_CONNECT_API_KEY_BASE64: 'fresh-api-key-b64',
+    IOS_PROVISIONING_PROFILE_BASE64: 'fresh-profile-b64',
+    MACOS_TEAM_ID: '   ',
+  });
+  const merged = JSON.parse(mergeAppleSigningConfig(base, appleConfig));
+  assert.equal(merged.IOS_DISTRIBUTION_CERTIFICATE_BASE64, 'existing-cert-b64');
+  assert.equal(merged.APP_STORE_CONNECT_KEY_ID, 'FRESHKEY34');
+  assert.equal(merged.APP_STORE_CONNECT_ISSUER_ID, 'fresh-issuer');
+  assert.equal(merged.APP_STORE_CONNECT_API_KEY_BASE64, 'fresh-api-key-b64');
+  assert.equal(merged.IOS_PROVISIONING_PROFILE_BASE64, 'fresh-profile-b64');
+  assert.equal(merged.MACOS_TEAM_ID, undefined);
+  assert.equal(mergeAppleSigningConfig(base, ''), base);
+});
+

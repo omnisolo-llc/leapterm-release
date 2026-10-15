@@ -76,6 +76,7 @@ pub fn verification_environment(env: &Environment) -> Environment {
         "RESOLVED_BUILD_NUMBER",
         "BUILD_CONFIG",
         "SIGNING_CONFIG",
+        "APPLE_CONFIG",
         "STORAGE_CONFIG",
         "DIAGNOSTICS_PUBLIC_KEY",
         "RUNNER_TEMP",
@@ -463,6 +464,7 @@ pub fn verify_prepared(env: &Environment) -> Result<Plan> {
     }
     let mut safe = verification_environment(env);
     safe.remove("SIGNING_CONFIG");
+    safe.remove("APPLE_CONFIG");
     safe.remove("STORAGE_CONFIG");
     safe.insert("RELEASE_REQUEST".into(), request.normalized()?);
     safe.insert(

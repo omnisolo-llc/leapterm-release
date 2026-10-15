@@ -121,6 +121,13 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
                     || (role == CandidateRole::Sign
                         && value.as_str() == Some("${{ secrets.PACKAGE_SIGNING_CONFIG }}"))
             }
+            "APPLE_CONFIG" => {
+                role == CandidateRole::Produce
+                    && value.as_str()
+                        == Some(
+                            "${{ !inputs.build_only && (matrix.target == 'macos' || matrix.target == 'ios') && secrets.APPLE_CONFIG || '' }}",
+                        )
+            }
             "STORAGE_CONFIG" => {
                 value.as_str() == Some("${{ secrets.STORAGE_CONFIG }}")
                     || (role == CandidateRole::Produce
