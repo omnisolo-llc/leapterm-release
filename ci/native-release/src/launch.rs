@@ -1006,6 +1006,7 @@ fn build_native_stage(
             )?;
             if crate::private_final_archive::command(command) {
                 task.remove("SIGNING_CONFIG");
+                task.remove("APPLE_CONFIG");
             }
             if request.preview_windows_self_sign && required(env, "RELEASE_TARGET")? == "windows" {
                 required(env, "DIAGNOSTICS_PUBLIC_KEY")?;
@@ -1048,6 +1049,7 @@ fn build_native_stage(
             } else if *command == "prepare-publication" {
                 crate::publication_candidates::request(env)?;
                 task.remove("SIGNING_CONFIG");
+                task.remove("APPLE_CONFIG");
                 let publication = crate::publication_candidates::directory(env)?;
                 if fs::symlink_metadata(&publication).is_ok() {
                     return Err("Public publication preparation must be fresh");

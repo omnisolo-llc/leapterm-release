@@ -49,10 +49,14 @@ pub fn forward(
         );
     }
     if operation == "prepare-private-final-archive" || (operation == "run" && target == "publish") {
-        task.insert(
-            "PRIVATE_FINAL_ARCHIVE_INPUTS_FILE".into(),
-            required(env, "PRIVATE_FINAL_ARCHIVE_INPUTS_FILE")?.into(),
-        );
+        if let Some(inputs) = env
+            .get("PRIVATE_FINAL_ARCHIVE_INPUTS_FILE")
+            .filter(|s| !s.is_empty())
+        {
+            task.insert("PRIVATE_FINAL_ARCHIVE_INPUTS_FILE".into(), inputs.into());
+        } else if request.release_route != "option1" {
+            return Err("Private archive input missing");
+        }
     }
     Ok(())
 }
@@ -80,9 +84,20 @@ pub fn arguments(operation: &str, env: &Environment, work: &Path) -> Result<Vec<
         args.extend([
             "--input".into(),
             required(env, "INPUT_PUBLIC_CANDIDATES_DIR")?.into(),
-            "--operator-inputs".into(),
-            required(env, "PRIVATE_FINAL_ARCHIVE_INPUTS_FILE")?.into(),
         ]);
+        let option1 = env
+            .get("RELEASE_REQUEST")
+            .and_then(|raw| Request::parse(raw).ok())
+            .map(|req| req.release_route == "option1")
+            .unwrap_or(true);
+        if let Some(operator) = env
+            .get("PRIVATE_FINAL_ARCHIVE_INPUTS_FILE")
+            .filter(|s| !s.is_empty())
+        {
+            args.extend(["--operator-inputs".into(), operator.into()]);
+        } else if !option1 {
+            return Err("Private archive input missing");
+        }
     }
     Ok(args)
 }

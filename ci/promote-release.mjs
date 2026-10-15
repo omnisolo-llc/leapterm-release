@@ -535,6 +535,137 @@ async function downloadReleaseAsset(assetUrl, token, destinationPath) {
   fs.writeFileSync(destinationPath, Buffer.from(arrayBuffer));
 }
 
+export const PRIMARY_KEYRING_ASSET = 'omniterm-package-signing-key.gpg';
+export const LEGACY_KEYRING_ASSET = 'omni-terminal-archive-keyring.gpg';
+
+export function resolveStagingKeyringAssetName(assetsByName) {
+  const has = (name) =>
+    assetsByName instanceof Map
+      ? assetsByName.has(name)
+      : Array.isArray(assetsByName)
+        ? assetsByName.includes(name)
+        : Boolean(assetsByName && Object.hasOwn(assetsByName, name));
+  if (has(PRIMARY_KEYRING_ASSET)) {
+    return PRIMARY_KEYRING_ASSET;
+  }
+  if (has(LEGACY_KEYRING_ASSET)) {
+    return LEGACY_KEYRING_ASSET;
+  }
+  return PRIMARY_KEYRING_ASSET;
+}
+
+export function buildPrivateIosStorageKeys(
+  versionOrOptions,
+  buildNumberArg,
+  runIdArg,
+  runAttemptArg,
+  proofArg,
+  releaseRouteArg,
+) {
+  const opts =
+    versionOrOptions && typeof versionOrOptions === 'object'
+      ? versionOrOptions
+      : {
+          version: versionOrOptions,
+          buildNumber: buildNumberArg,
+          runId: runIdArg,
+          runAttempt: runAttemptArg,
+          proof: proofArg,
+          releaseRoute: releaseRouteArg,
+        };
+  const normalizedVersion = String(opts.version || '')
+    .trim()
+    .replace(/^v/, '');
+  const normalizedBuild = String(
+    opts.buildNumber ?? opts.build_number ?? '',
+  ).trim();
+  const normalizedRunId = String(opts.runId ?? opts.run_id ?? '').trim();
+  const normalizedAttempt = String(
+    opts.runAttempt ?? opts.run_attempt ?? opts.attempt ?? '1',
+  ).trim();
+  const normalizedProof = String(opts.proof || '').trim();
+  const effectiveRoute = String(
+    opts.releaseRoute || opts.release_route || 'option1',
+  ).trim();
+  const ipaName = `omniterm-${normalizedVersion}-ios-private.ipa`;
+  const basePrefix = `releases/v${normalizedVersion}/${normalizedBuild}/${normalizedRunId}-${normalizedAttempt}`;
+  const option1Prefix = `${basePrefix}/option1`;
+
+  const option1DirectCandidate = {
+    prefix: option1Prefix,
+    ipaKey: `${option1Prefix}/private/${ipaName}`,
+    receiptKey: `${option1Prefix}/receipts/ios-private-artifact.json`,
+  };
+  const option1StageCandidate = {
+    prefix: option1Prefix,
+    ipaKey: `${option1Prefix}/private-artifacts/${ipaName}`,
+    receiptKey: normalizedProof
+      ? `${option1Prefix}/github-receipts/${normalizedProof}/ios-private-artifact-receipt.json`
+      : `${option1Prefix}/receipts/ios-private-artifact.json`,
+  };
+  const option1StageShortReceiptCandidate = normalizedProof
+    ? {
+        prefix: option1Prefix,
+        ipaKey: `${option1Prefix}/private-artifacts/${ipaName}`,
+        receiptKey: `${option1Prefix}/github-receipts/${normalizedProof}/ios-private-artifact.json`,
+      }
+    : null;
+  const legacyStageCandidate = {
+    prefix: basePrefix,
+    ipaKey: `${basePrefix}/private-artifacts/${ipaName}`,
+    receiptKey: normalizedProof
+      ? `${basePrefix}/github-receipts/${normalizedProof}/ios-private-artifact-receipt.json`
+      : `${basePrefix}/receipts/ios-private-artifact.json`,
+  };
+  const legacyStageShortReceiptCandidate = normalizedProof
+    ? {
+        prefix: basePrefix,
+        ipaKey: `${basePrefix}/private-artifacts/${ipaName}`,
+        receiptKey: `${basePrefix}/github-receipts/${normalizedProof}/ios-private-artifact.json`,
+      }
+    : null;
+  const legacyDirectCandidate = {
+    prefix: basePrefix,
+    ipaKey: `${basePrefix}/private/${ipaName}`,
+    receiptKey: `${basePrefix}/receipts/ios-private-artifact.json`,
+  };
+
+  const candidates = (
+    effectiveRoute === 'legacy-acceptance'
+      ? [
+          legacyStageCandidate,
+          legacyStageShortReceiptCandidate,
+          legacyDirectCandidate,
+          option1DirectCandidate,
+          option1StageCandidate,
+          option1StageShortReceiptCandidate,
+        ]
+      : [
+          option1DirectCandidate,
+          option1StageCandidate,
+          option1StageShortReceiptCandidate,
+          legacyStageCandidate,
+          legacyStageShortReceiptCandidate,
+          legacyDirectCandidate,
+        ]
+  ).filter(Boolean);
+
+  const primary = candidates[0];
+  const ipaKeys = [...new Set(candidates.map((c) => c.ipaKey))];
+  const receiptKeys = [...new Set(candidates.map((c) => c.receiptKey))];
+
+  return {
+    ipaName,
+    basePrefix,
+    prefix: primary.prefix,
+    ipaKey: primary.ipaKey,
+    receiptKey: primary.receiptKey,
+    ipaKeys,
+    receiptKeys,
+    candidates,
+  };
+}
+
 export function createAppStoreConnectJwt({
   keyId,
   issuerId,
@@ -566,6 +697,25 @@ export function createAppStoreConnectJwt({
     })
     .toString('base64url');
   return `${unsigned}.${signature}`;
+}
+
+export function mergeAppleSigningConfig(
+  signingConfigJson = '',
+  appleConfigJson = '',
+) {
+  const trimmedApple = String(appleConfigJson || '').trim();
+  const trimmedBase = String(signingConfigJson || '').trim();
+  if (!trimmedApple) {
+    return trimmedBase;
+  }
+  const base = trimmedBase ? JSON.parse(trimmedBase) : {};
+  const overrides = JSON.parse(trimmedApple);
+  for (const [key, value] of Object.entries(overrides || {})) {
+    if (typeof value === 'string' && value.trim()) {
+      base[key] = value.trim();
+    }
+  }
+  return JSON.stringify(base);
 }
 
 export async function verifyAppleStoreAccess({
@@ -1330,8 +1480,8 @@ export function buildEnvironmentRolloutPlan({
       prune_script: 'scripts/prune-ghcr-packages.mjs',
     },
     k3s: {
-      namespace: 'omniterm',
-      deployment: isStaging ? 'omniterm-staging' : 'omniterm',
+      namespace: 'leapterm',
+      deployment: isStaging ? 'leapterm-staging' : 'leapterm',
       host: isStaging ? 'cloud.staging.leapterm.com' : 'cloud.leapterm.com',
     },
     rollout_command: ['bash', 'scripts/rollout-env.sh', '--env', environment],
@@ -1567,6 +1717,7 @@ export async function promoteRelease({
   macosStoreAction = 'none',
   macosAutomaticRelease = false,
   macosSigningConfigJson = '',
+  appleConfigJson = '',
   androidStoreAction = 'none',
   googlePlayServiceAccountJson = '',
   rolloutEnvironment = 'auto',
@@ -1578,6 +1729,14 @@ export async function promoteRelease({
   if (!privateToken) {
     throw new Error('PRIVATE_RELEASE_TOKEN is required');
   }
+  iosSigningConfigJson = mergeAppleSigningConfig(
+    iosSigningConfigJson,
+    appleConfigJson,
+  );
+  macosSigningConfigJson = mergeAppleSigningConfig(
+    macosSigningConfigJson,
+    appleConfigJson,
+  );
   const resolvedRolloutEnv = resolveRolloutEnvironment({
     rolloutEnvironment,
     publishGithubRelease,
@@ -1659,7 +1818,7 @@ export async function promoteRelease({
     };
 
     const keyringPath = await requireStagingAsset(
-      'omni-terminal-archive-keyring.gpg',
+      resolveStagingKeyringAssetName(assetsByName),
     );
     const stagingLinksPath = await requireStagingAsset('download-links.json');
     const provenanceName = `omniterm-${normalizedVersion}-release-provenance.json`;
@@ -1933,11 +2092,14 @@ export async function promoteRelease({
           const runId = String(stagingProvenance.run_id || '');
           const attempt = String(stagingProvenance.attempt || '');
           const proof = String(stagingProvenance.proof || '');
-          const routeSuffix =
-            stagingProvenance.release_route === 'option1' ? '/option1' : '';
-          const prefix = `releases/v${normalizedVersion}/${resolvedBuildNumber}/${runId}-${attempt}${routeSuffix}`;
-          const ipaKey = `${prefix}/private-artifacts/${ipaName}`;
-          const receiptKey = `${prefix}/github-receipts/${proof}/ios-private-artifact-receipt.json`;
+          const storageKeys = buildPrivateIosStorageKeys({
+            version: normalizedVersion,
+            buildNumber: resolvedBuildNumber,
+            runId,
+            runAttempt: attempt,
+            proof,
+            releaseRoute: stagingProvenance.release_route || 'option1',
+          });
           const stageTag = `ci-stage/application-${runId}-${attempt}`;
           const stageReleasesRes = await githubRequest(
             `https://api.github.com/repos/${stagingRepo}/releases?per_page=100`,
@@ -1955,11 +2117,25 @@ export async function promoteRelease({
           const stageAssets = new Map(
             (stageRelease.assets || []).map((a) => [a.name, a]),
           );
-          const ipaObjName = `object-${sha256Hex(Buffer.from(ipaKey, 'utf8'))}.bin`;
-          const receiptObjName = `object-${sha256Hex(Buffer.from(receiptKey, 'utf8'))}.bin`;
-          const ipaAsset = stageAssets.get(ipaObjName);
-          const receiptAsset = stageAssets.get(receiptObjName);
+          let ipaAsset = null;
+          for (const key of storageKeys.ipaKeys) {
+            const objName = `object-${sha256Hex(Buffer.from(key, 'utf8'))}.bin`;
+            if (stageAssets.has(objName)) {
+              ipaAsset = stageAssets.get(objName);
+              break;
+            }
+          }
+          let receiptAsset = null;
+          for (const key of storageKeys.receiptKeys) {
+            const objName = `object-${sha256Hex(Buffer.from(key, 'utf8'))}.bin`;
+            if (stageAssets.has(objName)) {
+              receiptAsset = stageAssets.get(objName);
+              break;
+            }
+          }
           if (!ipaAsset || !receiptAsset) {
+            const ipaObjName = `object-${sha256Hex(Buffer.from(storageKeys.ipaKey, 'utf8'))}.bin`;
+            const receiptObjName = `object-${sha256Hex(Buffer.from(storageKeys.receiptKey, 'utf8'))}.bin`;
             throw new Error(
               `Private stage release ${stageTag} missing signed iOS IPA (${ipaObjName}) or receipt (${receiptObjName})`,
             );
@@ -2082,6 +2258,7 @@ if (
     macosAutomaticRelease:
       String(process.env.PROMOTE_MACOS_AUTOMATIC_RELEASE ?? 'false') === 'true',
     macosSigningConfigJson: process.env.MACOS_SIGNING_CONFIG || '',
+    appleConfigJson: process.env.APPLE_CONFIG || '',
     androidStoreAction: process.env.PROMOTE_ANDROID_STORE_ACTION || 'none',
     googlePlayServiceAccountJson:
       process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || '',

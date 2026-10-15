@@ -46,11 +46,26 @@ fn build_only_and_unrelated_stages_receive_no_archive_inputs_or_recipient() {
 #[test]
 fn archive_prepare_and_legacy_preservation_require_protected_input_but_readback_does_not() {
     let env = Environment::from([("DIAGNOSTICS_PUBLIC_KEY".into(), "owned fixture".into())]);
+    let legacy = Request::parse(
+        &json!({
+            "source_sha": "a".repeat(40),
+            "builder_sha": "b".repeat(40),
+            "version": "1.2.3",
+            "build_number": "42",
+            "ios_action": "submit",
+            "build_only": false,
+            "include_selfhost": true,
+            "automatic_release": false,
+            "release_route": "legacy-acceptance"
+        })
+        .to_string(),
+    )
+    .unwrap();
     for operation in ["prepare-private-final-archive", "run"] {
         assert!(
             private_final_archive::forward(
                 &env,
-                &request(false),
+                &legacy,
                 "publish",
                 operation,
                 &mut Environment::new()
@@ -58,6 +73,16 @@ fn archive_prepare_and_legacy_preservation_require_protected_input_but_readback_
             .is_err()
         );
     }
+    let mut option1_task = Environment::new();
+    private_final_archive::forward(
+        &env,
+        &request(false),
+        "publish",
+        "prepare-private-final-archive",
+        &mut option1_task,
+    )
+    .unwrap();
+    assert!(!option1_task.contains_key("PRIVATE_FINAL_ARCHIVE_INPUTS_FILE"));
     let mut task = Environment::new();
     private_final_archive::forward(
         &env,

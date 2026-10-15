@@ -189,4 +189,5 @@ jobs:
           PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
           IOS_SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
           MACOS_SIGNING_CONFIG: ${{ secrets.MACOS_SIGNING_CONFIG }}
+          APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
         run: node ci/promote-release.mjs
