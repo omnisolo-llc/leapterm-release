@@ -37,16 +37,34 @@ function seal(payload, pem) {
   } finally { key.fill(0); }
 }
 
+function writeSealed(output, encrypted) {
+  // Do not create or replace an uploadable file until encryption has fully succeeded.
+  const dir = path.dirname(output);
+  fs.mkdirSync(dir, {recursive: true, mode: 0o700});
+  try {
+    const stat = fs.lstatSync(output);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw Error('Invalid diagnostic output');
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  const temporary = path.join(dir, `.diagnostics-${crypto.randomBytes(8).toString('hex')}.tmp`);
+  try {
+    fs.writeFileSync(temporary, encrypted, {flag: 'wx', mode: 0o600});
+    fs.renameSync(temporary, output);
+  } catch (err) {
+    try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch (_) {}
+    throw err;
+  }
+}
+
 function main() {
   const [root, output] = process.argv.slice(2);
   if (!root || !output || process.argv.length !== 4) throw Error('Invalid arguments');
   const payload = {bootstrap: tail(path.join(root, 'bootstrap.log')), task: tail(path.join(root, 'task.log'))};
   const encrypted = seal(payload, process.env.DIAGNOSTICS_PUBLIC_KEY || '');
-  // Do not create an uploadable file until encryption has fully succeeded.
-  fs.mkdirSync(path.dirname(output), {recursive: true, mode: 0o700});
-  fs.writeFileSync(output, encrypted, {flag: 'wx', mode: 0o600});
+  writeSealed(output, encrypted);
 }
 if (require.main === module) {
   try { main(); } catch (_) { process.stderr.write('Diagnostic encryption failed.\n'); process.exitCode = 1; }
 }
-module.exports = {seal, tail};
+module.exports = {seal, tail, writeSealed};

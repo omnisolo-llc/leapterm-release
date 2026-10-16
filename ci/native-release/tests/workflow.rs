@@ -1034,7 +1034,7 @@ fn all_release_evidence_is_encrypted_and_retained_through_selected_private_stora
                 assert_eq!(step["if"].as_str(), Some("${{ always() }}"));
             }
         }
-        if !["release_source_approval", "resolve", "publish"].contains(&name.as_str().unwrap()) {
+        if !["release_source_approval", "resolve"].contains(&name.as_str().unwrap()) {
             assert_eq!(
                 steps(job)
                     .iter()

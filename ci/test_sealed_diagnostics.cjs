@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
-const {seal, tail} = require('./seal_diagnostics.cjs');
+const {seal, tail, writeSealed} = require('./seal_diagnostics.cjs');
 const keys = crypto.generateKeyPairSync('rsa', {modulusLength: 3072});
 function open(envelope, privateKey = keys.privateKey) {
   const v = JSON.parse(envelope);
@@ -39,4 +39,23 @@ test('only regular bounded log inputs are read', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sealed-test-'));
   try { const file = path.join(root, 'log'); fs.writeFileSync(file, 'fixture'); assert.equal(tail(file), 'fixture'); assert.throws(() => tail(root)); }
   finally { fs.rmSync(root, {recursive: true, force: true}); }
+});
+test('writeSealed atomically replaces prior step output and rejects symlinks', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sealed-write-'));
+  try {
+    const out = path.join(root, 'encrypted-diagnostics', 'diagnostics.sealed');
+    const first = seal({task: 'step-1'}, pem);
+    const second = seal({task: 'step-2-failed'}, pem);
+    writeSealed(out, first);
+    assert.deepEqual(open(fs.readFileSync(out, 'utf8')), {task: 'step-1'});
+    writeSealed(out, second);
+    assert.deepEqual(open(fs.readFileSync(out, 'utf8')), {task: 'step-2-failed'});
+    if (process.platform !== 'win32') {
+      const link = path.join(root, 'encrypted-diagnostics', 'symlink.sealed');
+      fs.symlinkSync(out, link);
+      assert.throws(() => writeSealed(link, first), /Invalid diagnostic output/);
+    }
+  } finally {
+    fs.rmSync(root, {recursive: true, force: true});
+  }
 });
