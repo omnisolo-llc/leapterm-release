@@ -1,0 +1,1694 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_route:
+        description: 'Option1 publishes verified candidates; legacy acceptance retains the complete protected acceptance branch'
+        type: choice
+        options: [option1, legacy-acceptance]
+        default: option1
+      build_only:
+        description: 'Verify builds: no release publication or production signing; optional self-signed Windows preview'
+        type: boolean
+        default: true
+      verify_target:
+        description: 'Build-only platform selection; actual releases always build all platforms'
+        type: choice
+        options: [all, linux, windows, macos, android, web, ios]
+        default: all
+      preview_windows_self_sign:
+        description: 'Windows build-only: retain a recipient-encrypted evaluation ZIP privately for seven days'
+        type: boolean
+        default: false
+      source_sha:
+        description: 'Optional full source SHA on private main ancestry; empty selects the latest main once'
+        required: false
+        type: string
+        default: ''
+      builder_sha:
+        description: 'Optional expected builder SHA; empty selects this workflow commit; the source gitlink must match'
+        required: false
+        type: string
+        default: ''
+      version:
+        description: 'Release version (major.minor.patch)'
+        required: false
+        type: string
+        default: '0.1.0'
+      build_number:
+        description: 'Fresh shared app build number (1-9999)'
+        required: true
+        type: string
+      ios_action:
+        description: 'Full releases require upload or submit; build-only requires skip'
+        type: choice
+        options: [skip, upload, submit]
+        default: skip
+      automatic_release:
+        description: 'Release after approval (submit mode only)'
+        type: boolean
+        default: false
+      include_selfhost:
+        description: 'Full releases require the kit; only build-only validation may omit it'
+        type: boolean
+        default: true
+      auto_promote:
+        description: 'Candidate promotion: automatically promote verified candidate to pre-release tracks (TestFlight & Play Store Internal) upon completion. Never releases directly to users.'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.build_only && format('verify-{0}', github.run_id) || 'release' }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release_source_approval:
+    # Historical job ID retained for existing status/dependency consumers.
+    # Access is enforced by the admin-only GitHub Actions execution policy.
+    name: Validate release request automatically
+    if: ${{ github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only }}
+    environment: release-source-approval
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.approve.outputs.source_sha }}
+      builder_sha: ${{ steps.approve.outputs.builder_sha }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate source selection and executing builder without manual approvals
+        id: approve
+        run: bash ci/native-release/run.sh validate-request
+        env:
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          GITHUB_SHA: ${{ github.sha }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: main
+
+  resolve:
+    name: Resolve release inputs
+    needs: [release_source_approval]
+    if: ${{ !cancelled() && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && (inputs.build_only || needs.release_source_approval.result == 'success') }}
+    environment: downloads
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      version: ${{ steps.resolve.outputs.version }}
+      build_number: ${{ steps.resolve.outputs.build_number }}
+      workflow_id: ${{ steps.resolve.outputs.workflow_id }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Resolve source revision and defaults
+        id: resolve
+        run: bash ci/native-release/run.sh resolve
+        env:
+          RELEASE_TARGET: resolve
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+
+  windows_sdk:
+    name: Build and retain source-bound Windows SDK
+    needs: resolve
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && (!inputs.build_only || inputs.verify_target == 'all' || inputs.verify_target == 'windows') }}
+    environment: downloads
+    permissions:
+      contents: read
+    outputs:
+      manifest_sha256: ${{ steps.sdk.outputs.manifest_sha256 }}
+      source_sha: ${{ steps.sdk.outputs.source_sha }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: Install native Windows cross compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 cmake ninja-build make perl gawk pkg-config curl patch llvm
+      - name: Cache Windows cross-compiled SDK
+        id: sdk_cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.temp }}/windows-native-sdk
+            ${{ runner.temp }}/windows-native-sdk-source
+          key: windows-native-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            windows-native-sdk-v1-${{ runner.os }}-
+      - name: Produce and retain the complete reviewed SDK privately
+        id: sdk
+        run: bash ci/native-release/run.sh windows-sdk
+        env:
+          RELEASE_TARGET: windows
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: windows
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: windows-sdk
+
+  integration:
+    name: Actual ${{ matrix.platform }} application integration
+    needs: [resolve, windows_sdk]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: downloads
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+            device_variable: LEAP_INTEGRATION_DEVICE_LINUX
+            default_device: linux
+            defines_variable: LEAP_INTEGRATION_DEFINES_LINUX
+            source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_LINUX_JSON
+            source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_LINUX_SHA256
+          - platform: macos
+            runner: macos-26
+            device_variable: LEAP_INTEGRATION_DEVICE_MACOS
+            default_device: macos
+            defines_variable: LEAP_INTEGRATION_DEFINES_MACOS
+            source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_MACOS_JSON
+            source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_MACOS_SHA256
+          - platform: windows
+            runner: windows-2025
+            device_variable: LEAP_INTEGRATION_DEVICE_WINDOWS
+            default_device: windows
+            defines_variable: LEAP_INTEGRATION_DEFINES_WINDOWS
+            source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_WINDOWS_JSON
+            source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_WINDOWS_SHA256
+          - platform: android
+            runner: ubuntu-24.04
+            device_variable: LEAP_INTEGRATION_DEVICE_ANDROID
+            default_device: ''
+            defines_variable: LEAP_INTEGRATION_DEFINES_ANDROID
+            source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_ANDROID_JSON
+            source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_ANDROID_SHA256
+          - platform: ios
+            runner: macos-26
+            device_variable: LEAP_INTEGRATION_DEVICE_IOS
+            default_device: ''
+            defines_variable: LEAP_INTEGRATION_DEFINES_IOS
+            source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_IOS_JSON
+            source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_IOS_SHA256
+          - platform: web
+            runner: ubuntu-24.04
+            device_variable: LEAP_INTEGRATION_DEVICE_WEB
+            default_device: chrome
+            defines_variable: LEAP_INTEGRATION_DEFINES_WEB
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Materialize the original protected source pair profile
+        id: protected_source_pair
+        run: bash ci/native-release/run.sh prepare-protected-source-pair
+        env:
+          LEAP_INTEGRATION_PLATFORM: ${{ matrix.platform }}
+          LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_JSON: ${{ matrix.source_profile_secret && secrets[matrix.source_profile_secret] || '' }}
+          LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256: ${{ matrix.source_profile_digest_variable && vars[matrix.source_profile_digest_variable] || '' }}
+      # Presence flags are not credentials and are not execution evidence.
+      # Missing physical-device/fixture inputs fail here, not after a queue timeout.
+      - name: Check integration prerequisites without exposing configuration
+        run: bash ci/native-release/run.sh check-integration-prerequisites
+        env:
+          RELEASE_PREREQUISITE_PRESENCE: >-
+            {"SOURCE_REPOSITORY":${{ secrets.SOURCE_REPOSITORY != '' }},
+             "SOURCE_BRANCH":${{ secrets.SOURCE_BRANCH != '' }},
+             "SOURCE_DEPLOY_KEY":${{ secrets.SOURCE_DEPLOY_KEY != '' }},
+             "SOURCE_KNOWN_HOSTS":${{ secrets.SOURCE_KNOWN_HOSTS != '' }},
+             "BUILD_CONFIG":${{ secrets.BUILD_CONFIG != '' }},
+             "STORAGE_CONFIG":${{ secrets.STORAGE_CONFIG != '' }},
+             "LEAPTERM_VPN_PROVIDER_PUBLIC_KEY":${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY != '' }},
+             "LEAP_INTEGRATION_DEVICE":${{ (vars[matrix.device_variable] || matrix.default_device) != '' }}}
+      - name: Execute genuine reviewed application journeys and retain private evidence
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: integration
+          LEAPTERM_WINDOWS_SDK_MANIFEST_SHA256: ${{ needs.windows_sdk.outputs.manifest_sha256 }}
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          LEAP_INTEGRATION_PLATFORM: ${{ matrix.platform }}
+          LEAP_INTEGRATION_DEVICE: ${{ vars[matrix.device_variable] || matrix.default_device }}
+          LEAP_INTEGRATION_DEFINES: ${{ vars[matrix.defines_variable] }}
+          LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE: ${{ steps.protected_source_pair.outputs.profile_file }}
+          LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_SHA256: ${{ matrix.source_profile_digest_variable && vars[matrix.source_profile_digest_variable] || '' }}
+          LEAP_CHROMEDRIVER_PORT: ${{ vars.LEAP_CHROMEDRIVER_PORT }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Remove the protected source pair input
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh cleanup-hosted-inputs
+        env:
+          LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_FILE: ${{ steps.protected_source_pair.outputs.profile_file }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: integration
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: integration-${{ matrix.platform }}
+
+  verify:
+    name: Verify ${{ matrix.target }} build (${{ needs.resolve.outputs.workflow_id }})
+    needs: [resolve, windows_sdk]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+    continue-on-error: true
+    environment: downloads
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        target: ${{ inputs.verify_target == 'all' && fromJSON('["linux","windows","macos","android","web","ios"]') || fromJSON(format('["{0}"]', inputs.verify_target)) }}
+    runs-on: ${{ matrix.target == 'windows' && 'windows-2025' || ((matrix.target == 'macos' || matrix.target == 'ios') && 'macos-26' || 'ubuntu-24.04') }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        if: matrix.target == 'android'
+        with:
+          distribution: temurin
+          java-version: '17.0.20+101'
+      - name: Install pinned native verification toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
+      - name: Verify public launcher contracts
+        run: |
+          bash ci/test-native-release.sh
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+      - name: Prepare pinned Windows verification signing client
+        if: ${{ !inputs.build_only && matrix.target == 'windows' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $root = Join-Path $env:RUNNER_TEMP 'artifact-signing'
+          New-Item -ItemType Directory -Path $root | Out-Null
+          $archive = Join-Path $root 'client.zip'
+          Invoke-WebRequest -Uri 'https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/1.0.128/microsoft.artifactsigning.client.1.0.128.nupkg' -OutFile $archive
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne '74bd7d27e6ce1051409c38d9b46bc8df0400ecd643d51ffbf2ac00869061e40b') { throw 'Artifact Signing client hash mismatch' }
+          $package = Join-Path $root 'package'
+          Expand-Archive -LiteralPath $archive -DestinationPath $package
+          $dlib = Join-Path $package 'bin/x64/Azure.CodeSigning.Dlib.dll'
+          if (-not (Test-Path -LiteralPath $dlib -PathType Leaf)) { throw 'Artifact Signing client is incomplete' }
+          if (-not ((dotnet --list-runtimes) -match '^Microsoft\.NETCore\.App 8\.')) { throw '.NET 8 runtime is required for Artifact Signing' }
+      - name: Verify build without publishing
+        id: public_candidates
+        run: bash ci/native-release/run.sh verify-build
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          LEAPTERM_WINDOWS_SDK_MANIFEST_SHA256: ${{ needs.windows_sdk.outputs.manifest_sha256 }}
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ !inputs.build_only && secrets.BUILD_CONFIG || '{}' }}
+          SIGNING_CONFIG: ${{ !inputs.build_only && (matrix.target == 'windows' && secrets.WINDOWS_SIGNING_CONFIG || matrix.target == 'macos' && secrets.MACOS_SIGNING_CONFIG || matrix.target == 'android' && secrets.ANDROID_SIGNING_CONFIG || matrix.target == 'ios' && secrets.IOS_SIGNING_CONFIG || '') || '' }}
+          APPLE_CONFIG: ${{ !inputs.build_only && (matrix.target == 'macos' || matrix.target == 'ios') && secrets.APPLE_CONFIG || '' }}
+          LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB: ${{ !inputs.build_only && matrix.target == 'windows' && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}
+          STORAGE_CONFIG: ${{ (!inputs.build_only || matrix.target == 'windows') && secrets.STORAGE_CONFIG || '' }}
+          WINDOWS_PREVIEW_OUTPUT_DIR: ${{ inputs.preview_windows_self_sign && matrix.target == 'windows' && format('{0}/windows-preview', runner.temp) || '' }}
+      - name: Retain recipient-encrypted Windows evaluation privately
+        if: ${{ success() && inputs.preview_windows_self_sign && matrix.target == 'windows' }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: evaluation
+          RELEASE_ARTIFACT_SCOPE: verify-${{ matrix.target }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: verify-${{ matrix.target }}
+
+  validate:
+    name: Validate release (${{ needs.resolve.outputs.workflow_id }})
+    permissions:
+      contents: write
+    needs: [resolve, integration]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: downloads
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: Install native HTTP/3 build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libicu-dev
+      - name: Verify public launcher contracts
+        run: bash ci/test-native-release.sh
+      - name: Verify self-hosted relay package locks and suites
+        run: |
+          npm ci --prefix relay/native
+          node --test --test-concurrency=1 ci/test_native_relay_contract.mjs
+          npm ci --ignore-scripts --prefix relay/moq
+          npm run native-build --prefix relay/moq
+          npm test --prefix relay/moq
+      - name: Validate reviewed source revision
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: validate
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: validate
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: validate
+
+  downloads:
+    name: Build ${{ matrix.target }} (${{ needs.resolve.outputs.workflow_id }})
+    permissions:
+      contents: write
+    needs: [resolve, validate]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: downloads
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - target: linux
+            runner: ubuntu-24.04
+          - target: macos
+            runner: macos-26
+          - target: android
+            runner: ubuntu-24.04
+          - target: web
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        if: matrix.target == 'android'
+        with:
+          distribution: temurin
+          java-version: '17.0.20+101'
+      - name: Execute reviewed release task
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          SIGNING_CONFIG: ${{ matrix.target == 'macos' && secrets.MACOS_SIGNING_CONFIG || matrix.target == 'android' && secrets.ANDROID_SIGNING_CONFIG || '' }}
+          APPLE_CONFIG: ${{ matrix.target == 'macos' && secrets.APPLE_CONFIG || '' }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: downloads-${{ matrix.target }}
+
+  windows_download:
+    name: Build and sign Windows candidate (${{ needs.resolve.outputs.workflow_id }})
+    needs: [resolve, validate, windows_sdk]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: downloads
+    runs-on: windows-2025
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: Prepare pinned Windows signing client
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $root = Join-Path $env:RUNNER_TEMP 'artifact-signing'
+          New-Item -ItemType Directory -Path $root | Out-Null
+          $archive = Join-Path $root 'client.zip'
+          Invoke-WebRequest -Uri 'https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/1.0.128/microsoft.artifactsigning.client.1.0.128.nupkg' -OutFile $archive
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne '74bd7d27e6ce1051409c38d9b46bc8df0400ecd643d51ffbf2ac00869061e40b') { throw 'Artifact Signing client hash mismatch' }
+          $package = Join-Path $root 'package'
+          Expand-Archive -LiteralPath $archive -DestinationPath $package
+          $dlib = Join-Path $package 'bin/x64/Azure.CodeSigning.Dlib.dll'
+          if (-not (Test-Path -LiteralPath $dlib -PathType Leaf)) { throw 'Artifact Signing client is incomplete' }
+          if (-not ((dotnet --list-runtimes) -match '^Microsoft\.NETCore\.App 8\.')) { throw '.NET 8 runtime is required for Artifact Signing' }
+          "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB=$dlib" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Execute reviewed Windows release task
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: windows
+          LEAPTERM_WINDOWS_SDK_MANIFEST_SHA256: ${{ needs.windows_sdk.outputs.manifest_sha256 }}
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          SIGNING_CONFIG: ${{ secrets.WINDOWS_SIGNING_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: windows
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: downloads-windows
+      - name: Remove temporary Windows signing client
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'artifact-signing'
+          if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+
+  ios:
+    name: Build signed iOS candidate (${{ needs.resolve.outputs.workflow_id }})
+    permissions:
+      contents: write
+    needs: [resolve, validate]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
+    environment: app-store
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: Execute reviewed release task
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: ios
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
+          APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: ios
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: ios
+
+  package_signatures:
+    name: Sign verified Linux and browser candidate manifests (${{ needs.resolve.outputs.workflow_id }})
+    permissions:
+      contents: read
+    needs: [resolve, validate, downloads, windows_download]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: package-signing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: Execute reviewed release task
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: package-signatures
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          SIGNING_CONFIG: ${{ secrets.PACKAGE_SIGNING_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: package-signatures
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: package-signatures
+
+  apple_testflight:
+    name: Process exact signed iOS candidate in internal TestFlight (${{ needs.resolve.outputs.workflow_id }})
+    permissions:
+      contents: write
+    needs: [resolve, validate, ios]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
+    environment: app-store
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: Execute reviewed release task
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: apple-testflight
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
+          APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: apple-testflight
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: apple-testflight
+
+  installation:
+    name: Install and launch actual ${{ matrix.platform }} candidate
+    needs: [resolve, validate, downloads, windows_download, ios, package_signatures, apple_testflight]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: ${{ matrix.attestation_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+            attestation_environment: vpn-installation-linux
+            device_variable: LEAP_INTEGRATION_DEVICE_LINUX
+            config_variable: LEAP_INSTALL_CONFIG_LINUX
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_LINUX
+            vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_LINUX_JSON
+          - platform: macos
+            runner: macos-26
+            attestation_environment: vpn-installation-macos
+            device_variable: LEAP_INTEGRATION_DEVICE_MACOS
+            config_variable: LEAP_INSTALL_CONFIG_MACOS
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_MACOS
+            vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_MACOS_JSON
+          - platform: windows
+            runner: windows-2025
+            attestation_environment: vpn-installation-windows
+            device_variable: LEAP_INTEGRATION_DEVICE_WINDOWS
+            config_variable: LEAP_INSTALL_CONFIG_WINDOWS
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_WINDOWS
+            vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_WINDOWS_JSON
+          - platform: android
+            runner: ubuntu-24.04
+            attestation_environment: vpn-installation-android
+            device_variable: LEAP_INTEGRATION_DEVICE_ANDROID
+            config_variable: LEAP_INSTALL_CONFIG_ANDROID
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_ANDROID
+            vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_ANDROID_JSON
+          - platform: ios
+            runner: macos-26
+            attestation_environment: vpn-installation-ios
+            device_variable: LEAP_INTEGRATION_DEVICE_IOS
+            config_variable: LEAP_INSTALL_CONFIG_IOS
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_IOS
+            vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_IOS_JSON
+          - platform: web
+            runner: ubuntu-24.04
+            attestation_environment: downloads
+            device_variable: LEAP_INTEGRATION_DEVICE_WEB
+            config_variable: LEAP_INSTALL_CONFIG_WEB
+            vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_WEB
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Materialize the original installed VPN controller input
+        id: installed_vpn_control
+        run: bash ci/native-release/run.sh prepare-installed-control
+        env:
+          LEAP_INTEGRATION_PLATFORM: ${{ matrix.platform }}
+          LEAP_VPN_INSTALLED_CONTROL_JSON: ${{ matrix.vpn_control_secret && secrets[matrix.vpn_control_secret] || '' }}
+      - name: Install exact candidate and retain actual private OS evidence
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: installation
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          GH_TOKEN: ${{ github.token }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          LEAP_INTEGRATION_PLATFORM: ${{ matrix.platform }}
+          LEAP_INTEGRATION_DEVICE: ${{ vars[matrix.device_variable] }}
+          LEAP_INSTALL_CONFIG: ${{ vars[matrix.config_variable] }}
+          LEAP_VPN_INSTALLATION_PROFILE_FILE: ${{ vars[matrix.vpn_profile_variable] || '' }}
+          LEAP_VPN_INSTALLED_CONTROL_FILE: ${{ steps.installed_vpn_control.outputs.control_file }}
+          LEAP_VPN_RECEIVER_TRUSTED_JWKS_JSON: ${{ vars.LEAP_VPN_RECEIVER_TRUSTED_JWKS_JSON }}
+          LEAP_VPN_TRUSTED_GATEWAY_POLICIES_JSON: ${{ vars.LEAP_VPN_TRUSTED_GATEWAY_POLICIES_JSON }}
+          LEAP_CHROMEDRIVER_PORT: ${{ vars.LEAP_CHROMEDRIVER_PORT }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Remove the installed VPN controller input
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh cleanup-hosted-inputs
+        env:
+          LEAP_VPN_INSTALLED_CONTROL_FILE: ${{ steps.installed_vpn_control.outputs.control_file }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: installation
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: installation-${{ matrix.platform }}
+
+  vpn_container:
+    name: Managed VPN container E2E (${{ matrix.kernel_state }})
+    needs: [resolve, validate, downloads, windows_download, ios, package_signatures, apple_testflight, installation]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: vpn-container
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: ${{ format('vpn-container-{0}', matrix.kernel_state) }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kernel_state: present
+            runner: ubuntu-24.04
+          - kernel_state: absent
+            runner: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify isolated Linux container prerequisites and kernel state
+        run: |
+          set -euo pipefail
+          docker info >/dev/null 2>&1
+          test -c /dev/net/tun
+          case "$LEAP_VPN_E2E_KERNEL_MODULE_STATE" in
+            present) test -d /sys/module/wireguard ;;
+            absent) test ! -d /sys/module/wireguard ;;
+            *) exit 1 ;;
+          esac
+        env:
+          LEAP_VPN_E2E_KERNEL_MODULE_STATE: ${{ matrix.kernel_state }}
+      - name: Assemble candidate client image and execute VPN route and cutoff matrix
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: vpn-container
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_VPN_E2E_KERNEL_MODULE_STATE: ${{ matrix.kernel_state }}
+          LEAPTERM_VPN_E2E_PROFILE_FILE: ${{ vars.LEAPTERM_VPN_E2E_PROFILE_FILE }}
+          LEAPTERM_VPN_E2E_CLIENT_BASE_IMAGE: ${{ vars.LEAPTERM_VPN_E2E_CLIENT_BASE_IMAGE }}
+          LEAPTERM_VPN_E2E_GATEWAY_IMAGE: ${{ vars.LEAPTERM_VPN_E2E_GATEWAY_IMAGE }}
+          LEAPTERM_VPN_E2E_RELAY_IMAGE: ${{ vars.LEAPTERM_VPN_E2E_RELAY_IMAGE }}
+          LEAPTERM_VPN_E2E_RECEIVER_IMAGE: ${{ vars.LEAPTERM_VPN_E2E_RECEIVER_IMAGE }}
+          LEAPTERM_VPN_E2E_DNS_IMAGE: ${{ vars.LEAPTERM_VPN_E2E_DNS_IMAGE }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          GH_TOKEN: ${{ github.token }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: vpn-container
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: vpn-container-${{ matrix.kernel_state }}
+
+  ios_delivery:
+    name: Deliver verified iOS candidate (${{ needs.resolve.outputs.workflow_id }})
+    permissions:
+      contents: write
+    needs: [resolve, validate, ios, apple_testflight, installation, vpn_container]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
+    environment: app-store
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: Execute reviewed release task
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: ios-deliver
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
+          APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: ios-deliver
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: ios-delivery
+
+  publication_prepare:
+    name: Freeze verified candidates in private storage
+    needs: [resolve, validate, downloads, windows_download, ios, package_signatures, apple_testflight, installation, vpn_container, ios_delivery]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: public-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: Prepare private candidate checkpoint without public mirroring
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: publication-prepare
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          GH_TOKEN: ${{ github.token }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: publication-prepare
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: publication-prepare
+
+  managed_rtc_provider:
+    name: Live managed RTC provider acceptance (${{ needs.resolve.outputs.workflow_id }})
+    needs: [resolve, publication_prepare]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: managed-rtc-provider
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Execute live provider cases and store OIDC-attested evidence privately
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: managed-rtc-provider
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          MANAGED_RTC_PROVIDER_ENVIRONMENT_FILE: ${{ vars.MANAGED_RTC_PROVIDER_ENVIRONMENT_FILE }}
+          MANAGED_RTC_IDENTITY_FIXTURE_FILE: ${{ vars.MANAGED_RTC_IDENTITY_FIXTURE_FILE }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: managed-rtc-provider
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: managed-rtc-provider
+
+  external_tests:
+    name: Actual ${{ matrix.platform }} artifact and provider acceptance
+    needs: [resolve, publication_prepare, managed_rtc_provider]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: external-tests
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: ${{ matrix.platform == 'linux' && 'leapterm-mcp-candidate-staging' || format('external-tests-{0}', matrix.platform) }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+            config_variable: LEAP_EXTERNAL_CONFIG_LINUX
+            candidate_guard_variable: LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_LINUX
+          - platform: macos
+            runner: macos-26
+            config_variable: LEAP_EXTERNAL_CONFIG_MACOS
+            candidate_guard_variable: LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_MACOS
+          - platform: windows
+            runner: windows-2025
+            config_variable: LEAP_EXTERNAL_CONFIG_WINDOWS
+            candidate_guard_variable: LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_WINDOWS
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@d697be2f83c6234b20877c3b5eac7a7f342f0d0c # v1.269.0
+        if: matrix.platform == 'macos'
+        with:
+          ruby-version: '3.4.7'
+      - name: Verify trusted Ubuntu archive keyring for Linux external tests
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          grep -Eq '^ID="?ubuntu"?$' /etc/os-release
+          keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg
+          test -f "$keyring" && test ! -L "$keyring" && test -s "$keyring"
+          test "$(dpkg-query -W -f='${Status}' ubuntu-keyring)" = 'install ok installed'
+          dpkg-query -S "$keyring" | grep -Eq '^ubuntu-keyring(:[^:]*)?: /usr/share/keyrings/ubuntu-archive-keyring[.]gpg$'
+          verify_output="$(dpkg --verify ubuntu-keyring)"
+          test -z "$verify_output"
+          sudo -n true
+          command -v gpgv >/dev/null || { echo 'gpgv is required to update the trusted Ubuntu package index' >&2; exit 1; }
+          sudo -n apt-get update
+      - name: Provision Linux native external-test host prerequisites
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          sudo -n apt-get install -y --no-install-recommends \
+            bash \
+            coreutils \
+            g++ \
+            g++-mingw-w64-x86-64 \
+            gcc-mingw-w64-x86-64 \
+            gnupg \
+            gpgv \
+            libglib2.0-dev \
+            openjdk-17-jdk-headless \
+            pkg-config
+      - name: Verify Linux native external-test host prerequisites
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          for tool in bash g++ x86_64-w64-mingw32-g++ x86_64-w64-mingw32-gcc \
+            gpg gpgconf gpgv java javac pkg-config cargo rustc sha256sum; do
+            command -v "$tool" >/dev/null || { echo "missing protected native host prerequisite: $tool" >&2; exit 1; }
+          done
+          pkg-config --exists gio-unix-2.0
+          java_version="$(java -version 2>&1)"
+          javac_version="$(javac -version 2>&1)"
+          grep -Eq 'version "17([.]|")' <<< "$java_version"
+          grep -Eq '^javac 17([.]|$)' <<< "$javac_version"
+          keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg
+          test -f "$keyring" && test ! -L "$keyring" && test -s "$keyring"
+          test "$(dpkg-query -W -f='${Status}' ubuntu-keyring)" = 'install ok installed'
+          dpkg-query -S "$keyring" | grep -Eq '^ubuntu-keyring(:[^:]*)?: /usr/share/keyrings/ubuntu-archive-keyring[.]gpg$'
+          verify_output="$(dpkg --verify ubuntu-keyring)"
+          test -z "$verify_output"
+          ubuntu_archive_signer=F6ECB3762474EDA9D21B7022871920D1991BC93C
+          found_inrelease=0
+          for metadata in /var/lib/apt/lists/*_dists_*_InRelease; do
+            test -f "$metadata" && test -s "$metadata" || continue
+            if signature_status="$(gpgv --status-fd 1 --keyring "$keyring" "$metadata" 2>/dev/null)"; then
+              if grep -Eq "^\\[GNUPG:\\] VALIDSIG ${ubuntu_archive_signer} " <<< "$signature_status"; then
+                found_inrelease=1
+                break
+              fi
+            fi
+          done
+          test "$found_inrelease" -eq 1
+      - name: Execute exact external cases against real candidate and providers
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: external-tests
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_EXTERNAL_PLATFORM: ${{ matrix.platform }}
+          LEAP_EXTERNAL_CONFIG_FILE: ${{ vars[matrix.config_variable] }}
+          LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE: ${{ vars[matrix.candidate_guard_variable] }}
+          LEAP_MCP_STAGING_DEPLOYMENT_CONFIG_FILE: ${{ matrix.platform == 'linux' && vars.LEAP_MCP_STAGING_DEPLOYMENT_CONFIG_FILE || '' }}
+          LEAP_MCP_STAGING_READ_TOKEN: ${{ matrix.platform == 'linux' && secrets.LEAP_MCP_STAGING_READ_TOKEN || '' }}
+          LEAP_MCP_STAGING_WRITE_TOKEN: ${{ matrix.platform == 'linux' && secrets.LEAP_MCP_STAGING_WRITE_TOKEN || '' }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          GH_TOKEN: ${{ matrix.platform == 'linux' && secrets.RELEASE_METADATA_READ_TOKEN || github.token }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: external-tests
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: external-${{ matrix.platform }}
+
+  external_windows_signing:
+    name: Actual Windows Azure signing acceptance
+    needs: [resolve, publication_prepare, external_tests]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.release_route == 'legacy-acceptance'
+    environment: external-windows-signing
+    runs-on: windows-2025
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: Prepare hash-pinned Windows Artifact Signing client and dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $destination = Join-Path $env:RUNNER_TEMP ('external-artifact-signing-' + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $destination | Out-Null
+          $archive = Join-Path $destination 'client.zip'
+          Invoke-WebRequest -Uri 'https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/1.0.128/microsoft.artifactsigning.client.1.0.128.nupkg' -OutFile $archive -TimeoutSec 120
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne '74bd7d27e6ce1051409c38d9b46bc8df0400ecd643d51ffbf2ac00869061e40b') { throw 'Artifact Signing client hash mismatch' }
+          $package = Join-Path $destination 'package'
+          Expand-Archive -LiteralPath $archive -DestinationPath $package
+          $libraries = @(Get-ChildItem -LiteralPath $package -Recurse -File -Filter 'Azure.CodeSigning.Dlib.dll' | Where-Object { $_.FullName -match '[\\/](?:x64|win-x64)[\\/]' })
+          if ($libraries.Count -ne 1) { throw 'One actual x64 signing library is required' }
+          $dlib = $libraries[0].FullName
+          if (-not ((dotnet --list-runtimes) -match '^Microsoft\.NETCore\.App 8\.')) { throw '.NET 8 runtime is required' }
+          "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB=$dlib" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Execute only the protected Windows Azure signing case
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: external-windows-signing
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          LEAP_EXTERNAL_PLATFORM: windows-signing
+          LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE: ${{ vars.LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_FILE }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          SIGNING_CONFIG: ${{ secrets.WINDOWS_SIGNING_CONFIG }}
+          GH_TOKEN: ${{ github.token }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: external-windows-signing
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: external-windows-signing
+      - name: Remove temporary Windows signing client
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path $env:RUNNER_TEMP -Directory -Filter 'external-artifact-signing-*' -ErrorAction SilentlyContinue |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop }
+
+  apple_submission:
+    name: Submit accepted iOS candidate for public review
+    needs: [resolve, validate, ios_delivery, publication_prepare, vpn_container, external_tests, external_windows_signing]
+    if: ${{ !cancelled() && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action == 'submit' && needs.ios_delivery.result == 'success' && needs.vpn_container.result == 'success' && needs.external_tests.result == 'success' && needs.external_windows_signing.result == 'success' && inputs.release_route == 'legacy-acceptance' }}
+    environment: app-store
+    runs-on: macos-26
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: Verify external acceptance before actual Apple submission
+        run: bash ci/native-release/run.sh run
+        env:
+          RELEASE_TARGET: ios-submit
+          RELEASE_IOS_DELIVERY_RESULT: ${{ needs.ios_delivery.result }}
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
+          APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          GH_TOKEN: ${{ github.token }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: ios-submit
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: apple-submission
+
+  option1_signatures:
+    name: Sign exact verified public candidate bytes
+    needs: [resolve, verify]
+    if: ${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}
+    environment: package-signing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Prepare empty candidate directory for private storage materialization
+        id: protected_candidates_download
+        run: mkdir -p release-public-candidates
+      - name: Sign the exact exported public candidate bytes
+        id: public_candidate_signatures
+        run: bash ci/native-release/run.sh sign-public-candidates
+        env:
+          RELEASE_TARGET: publish
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          INPUT_PUBLIC_CANDIDATES_DIR: ${{ github.workspace }}/release-public-candidates
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          SIGNING_CONFIG: ${{ secrets.PACKAGE_SIGNING_CONFIG }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+
+      - name: Retain encrypted signing diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: publish
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: option1-signatures
+
+  publish:
+    name: Publish release (${{ needs.resolve.outputs.workflow_id }})
+    if: ${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}
+    needs: [resolve, verify, option1_signatures]
+    environment: public-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Prepare empty candidate directory for private storage materialization
+        id: public_candidates_download
+        run: mkdir -p release-public-candidates
+      - name: Prepare and verify the public publication plan
+        id: publication_candidates
+        run: bash ci/native-release/run.sh prepare-publication
+        env:
+          RELEASE_TARGET: publish
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          INPUT_PUBLIC_CANDIDATES_DIR: ${{ github.workspace }}/release-public-candidates
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+      - name: Retain the complete private encrypted archive
+        id: private_final_archive
+        run: bash ci/native-release/run.sh prepare-private-final-archive
+        env:
+          RELEASE_TARGET: publish
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          INPUT_PUBLIC_CANDIDATES_DIR: ${{ github.workspace }}/release-public-candidates
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          APPROVED_NATIVE_VERIFIER_SHA256: ${{ steps.publication_candidates.outputs.native_verifier_sha256 }}
+          APPROVED_PUBLICATION_PLAN_SHA256: ${{ steps.publication_candidates.outputs.publication_plan_sha256 }}
+          PRIVATE_FINAL_ARCHIVE_INPUTS_FILE: ${{ vars.PRIVATE_FINAL_ARCHIVE_INPUTS_FILE }}
+      - name: Independently read back the complete private archive
+        id: private_final_archive_readback
+        run: bash ci/native-release/run.sh verify-private-final-archive
+        env:
+          RELEASE_TARGET: publish
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          INPUT_PUBLIC_CANDIDATES_DIR: ${{ github.workspace }}/release-public-candidates
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          APPROVED_NATIVE_VERIFIER_SHA256: ${{ steps.publication_candidates.outputs.native_verifier_sha256 }}
+          APPROVED_PUBLICATION_PLAN_SHA256: ${{ steps.publication_candidates.outputs.publication_plan_sha256 }}
+      - name: Publish the verified public candidate bytes
+        run: bash ci/native-release/run.sh publish-candidates
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+          APPROVED_PRIVATE_ARCHIVE_PROOF_SHA256: ${{ steps.private_final_archive_readback.outputs.private_archive_proof_sha256 }}
+          APPROVED_NATIVE_VERIFIER_SHA256: ${{ steps.publication_candidates.outputs.native_verifier_sha256 }}
+          APPROVED_PUBLICATION_PLAN_SHA256: ${{ steps.publication_candidates.outputs.publication_plan_sha256 }}
+          RELEASE_TARGET: publish
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+      - name: Auto-promote candidates to internal store tracks
+        if: ${{ inputs.auto_promote }}
+        run: |
+          echo "Auto-promoting release candidate to pre-release tracks and staging environment (TestFlight, Google Play Internal, and staging rollout)..."
+          gh workflow run promote-release.yml \
+            --ref main \
+            -f version="${{ needs.resolve.outputs.version }}" \
+            -f build_number="${{ needs.resolve.outputs.build_number }}" \
+            -f publish_github_release=false \
+            -f rollout_environment=staging \
+            -f ios_store_action=testflight \
+            -f macos_store_action=testflight \
+            -f android_store_action=internal
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN || github.token }}
+
+      - name: Retain encrypted publication diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: publish
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: publish
