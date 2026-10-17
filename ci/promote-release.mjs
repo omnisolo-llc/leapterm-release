@@ -2033,6 +2033,36 @@ export async function promoteRelease({
         outSumsSigPath,
       );
 
+      if (assetsByName.has('gpg.key')) {
+        const gpgKeyPath = await requireStagingAsset('gpg.key');
+        filesToUpload.push(gpgKeyPath);
+      } else if (fs.existsSync(keyringPath)) {
+        const gpgKeyPath = path.join(workDir, 'gpg.key');
+        fs.copyFileSync(keyringPath, gpgKeyPath);
+        filesToUpload.push(gpgKeyPath);
+      }
+
+      if (assetsByName.has('install.sh')) {
+        const installShPath = await requireStagingAsset('install.sh');
+        filesToUpload.push(installShPath);
+      } else {
+        try {
+          const sourceRepo = process.env.SOURCE_REPOSITORY || 'omnisolo-llc/leapterm';
+          const targetSha = stagingProvenance.source_sha || 'main';
+          const contentRes = await githubRequest(
+            `https://api.github.com/repos/${sourceRepo}/contents/deploy/packaging/install.sh?ref=${encodeURIComponent(targetSha)}`,
+            privateToken,
+          );
+          if (contentRes && contentRes.content) {
+            const installShPath = path.join(workDir, 'install.sh');
+            fs.writeFileSync(installShPath, Buffer.from(contentRes.content, 'base64'));
+            filesToUpload.push(installShPath);
+          }
+        } catch (err) {
+          console.warn('Could not fetch install.sh from source repo:', err.message);
+        }
+      }
+
       for (const filePath of filesToUpload) {
         const base = path.basename(filePath);
         if (FORBIDDEN_ASSET_PATTERNS.some((rx) => rx.test(base))) {
