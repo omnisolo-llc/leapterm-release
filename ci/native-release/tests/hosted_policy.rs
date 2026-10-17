@@ -100,7 +100,7 @@ fn public_candidates_workflow() -> Value {
                 {"id": "public_candidates", "run": "bash ci/native-release/run.sh verify-build", "env": producer},
                 {"id": "public_candidates_upload",
                  "if": "${{ success() && matrix.target != 'ios' && !inputs.build_only && inputs.release_route == 'option1' }}",
-                 "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+                 "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
                  "with": {"name": "public-candidates-${{ matrix.target }}",
                      "path": "${{ runner.temp }}/reviewed-public-candidates/${{ matrix.target }}",
                      "if-no-files-found": "error", "retention-days": 7, "compression-level": 0}}
@@ -114,7 +114,7 @@ fn public_candidates_workflow() -> Value {
             "runs-on": "ubuntu-24.04",
             "steps": [
                 {"id": "public_candidates_download",
-                 "uses": "actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16",
+                 "uses": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
                  "with": {"pattern": "public-candidates-*", "path": "release-public-candidates", "merge-multiple": false}},
                 {"id": "publication_candidates", "run": "bash ci/native-release/run.sh prepare-publication", "env": preflight}
             ]
@@ -127,7 +127,7 @@ fn public_candidates_workflow() -> Value {
             "runs-on": "ubuntu-24.04",
             "steps": [
                 {"id": "protected_candidates_download",
-                 "uses": "actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16",
+                 "uses": "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
                  "with": {"pattern": "public-candidates-*", "path": "release-public-candidates", "merge-multiple": false}},
                 {"id": "public_candidate_signatures", "run": "bash ci/native-release/run.sh sign-public-candidates", "env": signer}
             ]
@@ -157,7 +157,7 @@ fn direct_public_candidate_pair_is_explicitly_admitted_without_general_storage()
         doc["defaults"] = json!({"run": {"shell": "bash"}});
         if sdk {
             doc["jobs"]["verify"]["if"] = json!(
-                "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}"
+                "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}"
             );
             doc["jobs"]["verify"]["needs"] = json!(["resolve", "windows_sdk"]);
             doc["jobs"]["verify"]["permissions"]["id-token"] = json!("write");

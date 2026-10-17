@@ -21,33 +21,93 @@ pub type Environment = std::collections::BTreeMap<String, String>;
 pub type Result<T> = std::result::Result<T, &'static str>;
 pub use input::{validate_authority, validate_request};
 pub use source::verify_source;
+fn safe_cache_directory(value: &str) -> bool {
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return false;
+    }
+    let path = std::path::Path::new(value);
+    if !path.is_absolute()
+        || !path.components().all(|part| {
+            matches!(
+                part,
+                std::path::Component::Prefix(_)
+                    | std::path::Component::RootDir
+                    | std::path::Component::Normal(_)
+            )
+        })
+    {
+        return false;
+    }
+    let mut saw_existing = false;
+    for ancestor in path.ancestors() {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(meta) => {
+                if !meta.is_dir() || guards::reparse(&meta) {
+                    return false;
+                }
+                saw_existing = true;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound && !saw_existing => continue,
+            Err(_) => return false,
+        }
+    }
+    saw_existing
+}
+fn safe_compiler_wrapper(value: &str) -> bool {
+    if value.is_empty() || value.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    if matches!(value, "sccache" | "ccache" | "sccache.exe" | "ccache.exe") {
+        return true;
+    }
+    let path = std::path::Path::new(value);
+    if !path.is_absolute()
+        || !path.components().all(|part| {
+            matches!(
+                part,
+                std::path::Component::Prefix(_)
+                    | std::path::Component::RootDir
+                    | std::path::Component::Normal(_)
+            )
+        })
+    {
+        return false;
+    }
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() || guards::reparse(&meta) {
+        return false;
+    }
+    path.ancestors().skip(1).all(|ancestor| {
+        std::fs::symlink_metadata(ancestor)
+            .is_ok_and(|info| info.is_dir() && !guards::reparse(&info))
+    })
+}
 /// Only OS/tool locations; never implicit credentials or tool injection settings.
 pub fn clean_environment(parent: &Environment) -> Environment {
     let mut env: Environment = parent
         .iter()
-        .filter(|(k, _)| {
-            matches!(
-                k.to_ascii_uppercase().as_str(),
-                "PATH"
-                    | "HOME"
-                    | "USER"
-                    | "LOGNAME"
-                    | "TMP"
-                    | "TEMP"
-                    | "TMPDIR"
-                    | "SYSTEMROOT"
-                    | "SYSTEMDRIVE"
-                    | "WINDIR"
-                    | "USERPROFILE"
-                    | "LANG"
-                    | "LC_ALL"
-                    | "RUSTUP_HOME"
-                    | "JAVA_HOME"
-                    | "ANDROID_HOME"
-                    | "ANDROID_SDK_ROOT"
-                    | "DEVELOPER_DIR"
-                    | "SDKROOT"
-            )
+        .filter(|(k, v)| {
+            if v.contains('\0') {
+                return false;
+            }
+            match k.to_ascii_uppercase().as_str() {
+                "PATH" | "HOME" | "USER" | "LOGNAME" | "TMP" | "TEMP" | "TMPDIR" | "SYSTEMROOT"
+                | "SYSTEMDRIVE" | "WINDIR" | "USERPROFILE" | "LANG" | "LC_ALL" | "RUSTUP_HOME"
+                | "JAVA_HOME" | "ANDROID_HOME" | "ANDROID_SDK_ROOT" | "DEVELOPER_DIR"
+                | "SDKROOT" => true,
+                "SCCACHE_DIR"
+                | "FLUTTER_SDK_CACHE_DIR"
+                | "PUB_CACHE_DIR"
+                | "ANDROID_NDK_CACHE_DIR"
+                | "LEAP_MOBILE_FREERDP_CACHE_DIR"
+                | "LEAP_MOBILE_SDK_ARCHIVES_DIR" => safe_cache_directory(v),
+                "RUSTC_WRAPPER" | "CARGO_BUILD_RUSTC_WRAPPER" | "LEAP_C_COMPILER_LAUNCHER" => {
+                    safe_compiler_wrapper(v)
+                }
+                _ => false,
+            }
         })
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();

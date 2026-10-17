@@ -24,6 +24,7 @@ import {
   filterPublicDownloadLinks,
   filterPublicProvenance,
   mergeAppleSigningConfig,
+  mergeWaveStagingMetadata,
   promoteAndroidToPlayStore,
   promoteIosToAppStoreConnect,
   promoteMacosToAppStoreConnect,
@@ -34,6 +35,7 @@ import {
   scanDirectoryForLeaks,
   scanSelfHostedZipForLeaks,
   sha256Hex,
+  verifyAllReleaseBuildsReady,
   verifyAppleStoreAccess,
   verifyGooglePlayStoreAccess,
 } from './promote-release.mjs';
@@ -1064,7 +1066,7 @@ function releaseWorkflowStep(job, name) {
 
 test('publication pins Node 24 before preparing public candidate bytes', () => {
   const publish = releaseWorkflowJob('release.yml', 'publish');
-  const setup = publish.indexOf('uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020');
+  const setup = publish.indexOf('uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1');
   assert.ok(setup >= 0, 'Publication must pin setup-node');
   assert.match(publish.slice(setup), /node-version: '24\.21\.0'\n          package-manager-cache: false/);
   assert.ok(setup < publish.indexOf('run: bash ci/native-release/run.sh prepare-publication'));
@@ -1557,5 +1559,169 @@ test('mergeAppleSigningConfig overlays fresh APPLE_CONFIG credentials without cl
   assert.equal(merged.IOS_PROVISIONING_PROFILE_BASE64, 'fresh-profile-b64');
   assert.equal(merged.MACOS_TEAM_ID, undefined);
   assert.equal(mergeAppleSigningConfig(base, ''), base);
+});
+
+test('verifyAllReleaseBuildsReady checks all 9 public targets, self_hosted, and signed assets', () => {
+  const { stagingLinks, stagingProvenance } = makeStagingFixtures('0.1.1');
+  const assetNames = new Set([
+    'download-links.json',
+    'leapterm-0.1.1-release-provenance.json',
+    'leapterm-0.1.1-release-provenance.json.sig',
+    PRIMARY_KEYRING_ASSET,
+    stagingLinks.self_hosted.name,
+    `${stagingLinks.self_hosted.name}.sha256`,
+  ]);
+  for (const item of stagingLinks.downloads) {
+    if (PUBLIC_TARGETS.includes(item.target)) {
+      assetNames.add(item.name);
+      assetNames.add(`${item.name}.sha256`);
+      assetNames.add(`${item.name}.sha256.sig`);
+    }
+  }
+
+  const fullCheck = verifyAllReleaseBuildsReady({
+    downloadLinks: stagingLinks,
+    provenance: stagingProvenance,
+    assetsByName: assetNames,
+    version: '0.1.1',
+  });
+  assert.equal(fullCheck.ready, true);
+  assert.deepEqual(fullCheck.missingTargets, []);
+  assert.deepEqual(fullCheck.missingProvenanceTargets, []);
+  assert.deepEqual(fullCheck.missingAssets, []);
+
+  const fastLinks = {
+    ...stagingLinks,
+    downloads: stagingLinks.downloads.filter((a) => !['windows', 'macos'].includes(a.target)),
+  };
+  const fastProv = {
+    ...stagingProvenance,
+    artifacts: stagingProvenance.artifacts.filter((a) => !['windows', 'macos'].includes(a.target)),
+  };
+  const partialCheck = verifyAllReleaseBuildsReady({
+    downloadLinks: fastLinks,
+    provenance: fastProv,
+    assetsByName: assetNames,
+    version: '0.1.1',
+  });
+  assert.equal(partialCheck.ready, false);
+  assert.deepEqual(partialCheck.missingTargets, ['windows', 'macos']);
+  assert.deepEqual(partialCheck.missingProvenanceTargets, ['windows', 'macos']);
+
+  const pubFastLinks = filterPublicDownloadLinks(fastLinks, undefined, null, {
+    allowPartialWave: true,
+  });
+  assert.equal(pubFastLinks.artifacts.length, PUBLIC_TARGETS.length - 2);
+});
+
+test('mergeWaveStagingMetadata combines fast and slow wave releases and enforces matching source_sha', () => {
+  const { stagingLinks, stagingProvenance } = makeStagingFixtures('0.1.1');
+  const fastTargets = new Set([
+    'linux',
+    'android',
+    'android-arm',
+    'android-arm64',
+    'android-x64',
+    'agent-deb',
+    'agent-rpm',
+    'services-linux',
+    'flutter-web',
+    'workstation-web',
+    'android-aab',
+  ]);
+  const slowTargets = new Set([
+    'windows',
+    'macos',
+    'services-windows',
+    'services-macos',
+  ]);
+
+  const makeWaveAssets = (downloads, includeSelfHosted) => {
+    const assets = [
+      { name: 'download-links.json', url: 'https://example.test/dl' },
+      { name: 'leapterm-0.1.1-release-provenance.json', url: 'https://example.test/prov' },
+      { name: 'leapterm-0.1.1-release-provenance.json.sig', url: 'https://example.test/prov.sig' },
+      { name: PRIMARY_KEYRING_ASSET, url: 'https://example.test/key' },
+    ];
+    for (const item of downloads) {
+      if (PUBLIC_TARGETS.includes(item.target)) {
+        assets.push({ name: item.name, url: `https://example.test/${item.name}` });
+        assets.push({ name: `${item.name}.sha256`, url: `https://example.test/${item.name}.sha256` });
+        assets.push({ name: `${item.name}.sha256.sig`, url: `https://example.test/${item.name}.sha256.sig` });
+      }
+    }
+    if (includeSelfHosted) {
+      assets.push({ name: stagingLinks.self_hosted.name, url: 'https://example.test/sh.zip' });
+      assets.push({ name: `${stagingLinks.self_hosted.name}.sha256`, url: 'https://example.test/sh.zip.sha256' });
+    }
+    return assets;
+  };
+
+  const fastDownloads = stagingLinks.downloads.filter((a) => fastTargets.has(a.target));
+  const slowDownloads = stagingLinks.downloads.filter((a) => slowTargets.has(a.target));
+
+  const fastWave = {
+    tag: 'v0.1.1-fast',
+    downloadLinks: {
+      ...stagingLinks,
+      tag: 'v0.1.1-fast',
+      downloads: fastDownloads,
+      ios_delivery: { action: 'skip', channel: 'none', status: 'skipped-in-wave' },
+    },
+    provenance: {
+      ...stagingProvenance,
+      artifacts: stagingProvenance.artifacts.filter((a) => fastTargets.has(a.target)),
+    },
+    assets: makeWaveAssets(fastDownloads, true),
+  };
+
+  const slowWave = {
+    tag: 'v0.1.1-slow',
+    downloadLinks: {
+      version: '0.1.1',
+      build_number: 18,
+      tag: 'v0.1.1-slow',
+      downloads: slowDownloads,
+      ios_delivery: stagingLinks.ios_delivery,
+    },
+    provenance: {
+      ...stagingProvenance,
+      artifacts: stagingProvenance.artifacts.filter((a) => slowTargets.has(a.target)),
+    },
+    assets: makeWaveAssets(slowDownloads, false),
+  };
+
+  const fastOnly = mergeWaveStagingMetadata({
+    wavePayloads: [fastWave],
+    version: '0.1.1',
+  });
+  assert.equal(fastOnly.isCompleteWaveSet, false);
+
+  const merged = mergeWaveStagingMetadata({
+    wavePayloads: [fastWave, slowWave],
+    version: '0.1.1',
+  });
+  assert.equal(merged.isCompleteWaveSet, true);
+  assert.equal(merged.stagingLinks.tag, 'v0.1.1');
+  assert.equal(merged.stagingLinks.self_hosted.name, stagingLinks.self_hosted.name);
+  assert.equal(merged.stagingLinks.ios_delivery.action, 'upload');
+
+  const pubLinks = filterPublicDownloadLinks(merged.stagingLinks);
+  assert.equal(pubLinks.artifacts.length, PUBLIC_TARGETS.length);
+
+  assert.throws(
+    () =>
+      mergeWaveStagingMetadata({
+        wavePayloads: [
+          fastWave,
+          {
+            ...slowWave,
+            provenance: { ...slowWave.provenance, source_sha: '3'.repeat(40) },
+          },
+        ],
+        version: '0.1.1',
+      }),
+    /source_sha mismatch/,
+  );
 });
 
