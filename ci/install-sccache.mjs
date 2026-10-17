@@ -42,11 +42,12 @@ export async function installSccache({
   githubOutput = process.env.GITHUB_OUTPUT || '',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
+  specs = SCCACHE_SPECS,
 } = {}) {
   if (!runnerTemp) {
     throw new Error('RUNNER_TEMP is required');
   }
-  const spec = SCCACHE_SPECS[runnerOs];
+  const spec = specs[runnerOs];
   if (!spec) {
     throw new Error(`Unsupported RUNNER_OS for sccache: ${runnerOs}`);
   }
@@ -71,7 +72,7 @@ export async function installSccache({
     }
     const archivePath = path.join(installRoot, spec.archive);
     fs.writeFileSync(archivePath, bytes);
-    execFileImpl('tar', ['-xzf', archivePath, '-C', installRoot], { stdio: 'inherit' });
+    execFileImpl('tar', ['-xzf', spec.archive], { cwd: installRoot, stdio: 'inherit' });
     fs.rmSync(archivePath, { force: true });
   }
   if (!fs.existsSync(binaryPath)) {
