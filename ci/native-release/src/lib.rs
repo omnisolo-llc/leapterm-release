@@ -53,6 +53,28 @@ fn safe_cache_directory(value: &str) -> bool {
     }
     saw_existing
 }
+fn safe_cache_file(value: &str) -> bool {
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return false;
+    }
+    let path = std::path::Path::new(value);
+    if !path.is_absolute()
+        || !path.components().all(|part| {
+            matches!(
+                part,
+                std::path::Component::Prefix(_)
+                    | std::path::Component::RootDir
+                    | std::path::Component::Normal(_)
+            )
+        })
+    {
+        return false;
+    }
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    safe_cache_directory(parent.to_str().unwrap_or(""))
+}
 fn safe_compiler_wrapper(value: &str) -> bool {
     if value.is_empty() || value.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return false;
@@ -93,16 +115,42 @@ pub fn clean_environment(parent: &Environment) -> Environment {
                 return false;
             }
             match k.to_ascii_uppercase().as_str() {
-                "PATH" | "HOME" | "USER" | "LOGNAME" | "TMP" | "TEMP" | "TMPDIR" | "SYSTEMROOT"
-                | "SYSTEMDRIVE" | "WINDIR" | "USERPROFILE" | "LANG" | "LC_ALL" | "RUSTUP_HOME"
-                | "JAVA_HOME" | "ANDROID_HOME" | "ANDROID_SDK_ROOT" | "DEVELOPER_DIR"
-                | "SDKROOT" => true,
+                "PATH"
+                | "HOME"
+                | "USER"
+                | "LOGNAME"
+                | "TMP"
+                | "TEMP"
+                | "TMPDIR"
+                | "SYSTEMROOT"
+                | "SYSTEMDRIVE"
+                | "WINDIR"
+                | "USERPROFILE"
+                | "LANG"
+                | "LC_ALL"
+                | "RUSTUP_HOME"
+                | "JAVA_HOME"
+                | "ANDROID_HOME"
+                | "ANDROID_SDK_ROOT"
+                | "DEVELOPER_DIR"
+                | "SDKROOT"
+                | "NUMBER_OF_PROCESSORS"
+                | "PROGRAMFILES"
+                | "PROGRAMFILES(X86)"
+                | "PROGRAMDATA"
+                | "PROGRAMW6432"
+                | "COMSPEC"
+                | "LOCALAPPDATA"
+                | "APPDATA"
+                | "COMMONPROGRAMFILES"
+                | "COMMONPROGRAMFILES(X86)" => true,
                 "SCCACHE_DIR"
                 | "FLUTTER_SDK_CACHE_DIR"
                 | "PUB_CACHE_DIR"
                 | "ANDROID_NDK_CACHE_DIR"
                 | "LEAP_MOBILE_FREERDP_CACHE_DIR"
                 | "LEAP_MOBILE_SDK_ARCHIVES_DIR" => safe_cache_directory(v),
+                "SCCACHE_CONF" | "SCCACHE_CACHED_CONF" => safe_cache_file(v),
                 "RUSTC_WRAPPER" | "CARGO_BUILD_RUSTC_WRAPPER" | "LEAP_C_COMPILER_LAUNCHER" => {
                     safe_compiler_wrapper(v)
                 }
