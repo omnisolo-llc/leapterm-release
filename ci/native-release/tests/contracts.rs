@@ -257,14 +257,21 @@ fn no_build_process_can_inherit_credentials_or_tool_injection() {
 fn submodule_repo() -> (tempfile::TempDir, String, String) {
     let (root, _) = repo();
     let (seed, child_sha) = repo();
-    for (name, url) in [
+    for (module_name, path, url) in [
         (
+            "leapterm-release",
             "leapterm-release",
             leap_release_launcher::source::PUBLIC_URL,
         ),
         (
             "leapterm-website",
+            "leapterm-website",
             "https://github.com/example-org/private-website.git",
+        ),
+        (
+            "vibe-space",
+            "framework",
+            leap_release_launcher::source::FRAMEWORK_URL,
         ),
     ] {
         git(
@@ -275,8 +282,10 @@ fn submodule_repo() -> (tempfile::TempDir, String, String) {
                 "submodule",
                 "add",
                 "-q",
+                "--name",
+                module_name,
                 seed.path().to_str().unwrap(),
-                name,
+                path,
             ],
         );
         git(
@@ -285,32 +294,39 @@ fn submodule_repo() -> (tempfile::TempDir, String, String) {
                 "config",
                 "--file",
                 ".gitmodules",
-                &format!("submodule.{name}.url"),
+                &format!("submodule.{module_name}.url"),
                 url,
             ],
         );
     }
     git(
         root.path(),
-        &["add", ".gitmodules", "leapterm-release", "leapterm-website"],
+        &[
+            "add",
+            ".gitmodules",
+            "leapterm-release",
+            "leapterm-website",
+            "framework",
+        ],
     );
     git(root.path(), &["commit", "-qm", "pinned submodule fixture"]);
     let sha = git(root.path(), &["rev-parse", "HEAD"]);
-    for name in ["leapterm-release", "leapterm-website"] {
+    for (path, url) in [
+        (
+            "leapterm-release",
+            leap_release_launcher::source::PUBLIC_URL,
+        ),
+        (
+            "leapterm-website",
+            "https://github.com/example-org/private-website.git",
+        ),
+        ("framework", leap_release_launcher::source::FRAMEWORK_URL),
+    ] {
         git(
-            &root.path().join(name),
-            &[
-                "remote",
-                "set-url",
-                "origin",
-                if name == "leapterm-release" {
-                    leap_release_launcher::source::PUBLIC_URL
-                } else {
-                    "https://github.com/example-org/private-website.git"
-                },
-            ],
+            &root.path().join(path),
+            &["remote", "set-url", "origin", url],
         );
-        git(root.path(), &["submodule", "deinit", "-f", "--", name]);
+        git(root.path(), &["submodule", "deinit", "-f", "--", path]);
     }
     (root, sha, child_sha)
 }
@@ -327,7 +343,7 @@ fn real_cached_submodules_materialize_at_exact_commits_without_network() {
     )
     .unwrap();
     verify_source(root.path(), &sha).unwrap();
-    for name in ["leapterm-release", "leapterm-website"] {
+    for name in ["leapterm-release", "leapterm-website", "framework"] {
         assert_eq!(
             git(&root.path().join(name), &["rev-parse", "HEAD"]),
             builder

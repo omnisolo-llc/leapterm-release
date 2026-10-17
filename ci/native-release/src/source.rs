@@ -395,7 +395,9 @@ pub fn verify(
     }
     .canonicalize()
     .map_err(|_| "Source metadata missing")?;
-    for entry in tree(&root, env)? {
+    let entries = tree(&root, env)?;
+    let module_map = modules(&root, &entries, env)?;
+    for entry in entries {
         let path = root.join(&entry.path);
         let mut parent = root.clone();
         let components: Vec<_> = entry.path.split('/').collect();
@@ -407,6 +409,9 @@ pub fn verify(
             }
         }
         if entry.mode == "160000" && entry.kind == "commit" {
+            let (module_name, _) = module_map
+                .get(&entry.path)
+                .ok_or("Submodule identity differs from allowlist")?;
             let info = match fs::symlink_metadata(&path) {
                 Ok(info) => info,
                 Err(error) if allow_empty && error.kind() == std::io::ErrorKind::NotFound => {
@@ -436,7 +441,7 @@ pub fn verify(
                 .map_err(|_| "Submodule metadata missing")?
                 != common
                     .join("modules")
-                    .join(&entry.path)
+                    .join(module_name)
                     .canonicalize()
                     .map_err(|_| "Submodule metadata outside parent")?
             {
@@ -492,10 +497,94 @@ pub fn verify(
     Ok(())
 }
 pub const PUBLIC_URL: &str = "https://github.com/omnisolo-llc/leapterm-release.git";
+pub const FRAMEWORK_URL: &str = "https://github.com/omnisolo-llc/vibe-space.git";
 fn website_slug(url: &str) -> Option<&str> {
     url.strip_prefix("https://github.com/")
         .and_then(|s| s.strip_suffix(".git"))
         .filter(|slug| crate::input::valid_repo_slug(slug))
+}
+fn modules(
+    root: &Path,
+    entries: &[Entry],
+    env: &Environment,
+) -> Result<std::collections::BTreeMap<String, (String, String)>> {
+    let links: std::collections::BTreeSet<&str> = entries
+        .iter()
+        .filter(|e| e.mode == "160000" && e.kind == "commit")
+        .map(|e| e.path.as_str())
+        .collect();
+    let tracked = entries.iter().any(|e| e.path == ".gitmodules");
+    if !tracked {
+        if links.is_empty() {
+            return Ok(std::collections::BTreeMap::new());
+        }
+        return Err("Unapproved submodule metadata");
+    }
+    let metadata = git(
+        root,
+        &strings(&[
+            "config",
+            "--no-includes",
+            "--null",
+            "--blob",
+            "HEAD:.gitmodules",
+            "--list",
+        ]),
+        env,
+    )?;
+    let mut values =
+        std::collections::BTreeMap::<String, std::collections::BTreeMap<String, String>>::new();
+    for raw in metadata.split(|b| *b == 0).filter(|v| !v.is_empty()) {
+        let text = std::str::from_utf8(raw).map_err(|_| "Invalid submodule metadata")?;
+        let (key, value) = text.split_once('\n').ok_or("Invalid submodule metadata")?;
+        let (name, field) = key
+            .strip_prefix("submodule.")
+            .and_then(|s| s.rsplit_once('.'))
+            .ok_or("Invalid submodule metadata")?;
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+            || !["path", "url"].contains(&field)
+        {
+            return Err("Invalid submodule metadata");
+        }
+        if values
+            .entry(name.to_owned())
+            .or_default()
+            .insert(field.to_owned(), value.to_owned())
+            .is_some()
+        {
+            return Err("Duplicate submodule metadata");
+        }
+    }
+    let mut result = std::collections::BTreeMap::new();
+    for (name, fields) in values {
+        if fields.len() != 2 {
+            return Err("Unapproved submodule metadata");
+        }
+        let path = fields.get("path").ok_or("Invalid submodule metadata")?;
+        let url = fields.get("url").ok_or("Invalid submodule metadata")?;
+        if !links.contains(path.as_str()) {
+            return Err("Unapproved submodule metadata");
+        }
+        match (path.as_str(), name.as_str()) {
+            ("leapterm-release", "leapterm-release") if url == PUBLIC_URL => {}
+            ("framework", "vibe-space") if url == FRAMEWORK_URL => {}
+            ("leapterm-website", "leapterm-website") if website_slug(url).is_some() => {}
+            ("leapterm-release" | "framework" | "leapterm-website", _) => {
+                return Err("Submodule identity differs from allowlist");
+            }
+            _ => return Err("Unapproved submodule destination"),
+        }
+        if result.insert(path.clone(), (name, url.clone())).is_some() {
+            return Err("Duplicate submodule metadata");
+        }
+    }
+    if result.len() != links.len() {
+        return Err("Unapproved submodule metadata");
+    }
+    Ok(result)
 }
 pub fn materialize(
     root: &Path,
@@ -517,6 +606,7 @@ pub fn materialize_scoped(
     use base64::Engine;
     verify(root, sha, env, true, 0)?;
     let entries = tree(root, env)?;
+    let module_map = modules(root, &entries, env)?;
     let links: Vec<_> = entries.iter().filter(|e| e.mode == "160000").collect();
     if builder.is_some_and(|builder| {
         !links
@@ -525,47 +615,15 @@ pub fn materialize_scoped(
     }) {
         return Err("Source builder pin differs from executing builder");
     }
-    let metadata = git(
-        root,
-        &strings(&[
-            "config",
-            "--no-includes",
-            "--null",
-            "--blob",
-            "HEAD:.gitmodules",
-            "--list",
-        ]),
-        env,
-    )?;
-    let mut fields = std::collections::BTreeMap::new();
-    for raw in metadata.split(|b| *b == 0).filter(|v| !v.is_empty()) {
-        let text = std::str::from_utf8(raw).map_err(|_| "Invalid submodule metadata")?;
-        let (name, value) = text.split_once('\n').ok_or("Invalid submodule metadata")?;
-        if fields.insert(name.to_owned(), value.to_owned()).is_some() {
-            return Err("Duplicate submodule metadata");
-        }
-    }
-    if fields.len() != links.len() * 2 {
-        return Err("Unapproved submodule metadata");
-    }
     for link in links {
-        if fields.get(&format!("submodule.{}.path", link.path)) != Some(&link.path) {
-            return Err("Submodule identity differs from allowlist");
-        }
-        let Some(url) = fields
-            .get(&format!("submodule.{}.url", link.path))
-            .map(String::as_str)
-        else {
-            return Err("Submodule identity differs from allowlist");
-        };
-        let website_repo = match link.path.as_str() {
-            "leapterm-release" if url == PUBLIC_URL => None,
-            "leapterm-website" => match website_slug(url) {
-                Some(slug) => Some(slug),
-                None => return Err("Submodule identity differs from allowlist"),
-            },
-            "leapterm-release" => return Err("Submodule identity differs from allowlist"),
-            _ => return Err("Unapproved submodule destination"),
+        let (module_name, url_string) = module_map
+            .get(&link.path)
+            .ok_or("Submodule identity differs from allowlist")?;
+        let url = url_string.as_str();
+        let website_repo = if link.path == "leapterm-website" {
+            Some(website_slug(url).ok_or("Submodule identity differs from allowlist")?)
+        } else {
+            None
         };
         // Cached submodule metadata can survive deinitialization. Check it before Git fetches.
         let common = text(git(
@@ -580,7 +638,7 @@ pub fn materialize_scoped(
             root.join(common_path)
         };
         let mut cache = common_path;
-        for component in ["modules", link.path.as_str()] {
+        for component in ["modules", module_name.as_str()] {
             cache.push(component);
             match fs::symlink_metadata(&cache) {
                 Ok(info) if guards::reparse(&info) || !info.is_dir() => {
@@ -655,7 +713,7 @@ pub fn materialize_scoped(
             root,
             &[
                 "-c".into(),
-                format!("submodule.{}.url={transport_url}", link.path),
+                format!("submodule.{module_name}.url={transport_url}"),
                 "-c".into(),
                 if website_ssh.is_some() && website_repo.is_some() {
                     "protocol.ssh.allow=always".into()
@@ -663,7 +721,7 @@ pub fn materialize_scoped(
                     "protocol.ssh.allow=never".into()
                 },
                 "-c".into(),
-                format!("submodule.{}.update=checkout", link.path),
+                format!("submodule.{module_name}.update=checkout"),
                 "submodule".into(),
                 "update".into(),
                 "--init".into(),
