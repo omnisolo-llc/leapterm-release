@@ -577,10 +577,7 @@ fn modules(
             }
             _ => return Err("Unapproved submodule destination"),
         }
-        if result
-            .insert(path.clone(), (name, url.clone()))
-            .is_some()
-        {
+        if result.insert(path.clone(), (name, url.clone())).is_some() {
             return Err("Duplicate submodule metadata");
         }
     }

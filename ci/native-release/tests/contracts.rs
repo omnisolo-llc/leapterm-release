@@ -312,7 +312,10 @@ fn submodule_repo() -> (tempfile::TempDir, String, String) {
     git(root.path(), &["commit", "-qm", "pinned submodule fixture"]);
     let sha = git(root.path(), &["rev-parse", "HEAD"]);
     for (path, url) in [
-        ("leapterm-release", leap_release_launcher::source::PUBLIC_URL),
+        (
+            "leapterm-release",
+            leap_release_launcher::source::PUBLIC_URL,
+        ),
         (
             "leapterm-website",
             "https://github.com/example-org/private-website.git",
