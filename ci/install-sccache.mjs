@@ -57,11 +57,23 @@ export async function installSccache({
   const sccacheDir = path.join(runnerTemp, 'sccache');
   const confPath = path.join(sccacheDir, 'sccache-config.toml');
   const cachedConfPath = path.join(sccacheDir, 'sccache-cached-config.toml');
+  const distCacheDir = path.join(sccacheDir, 'dist');
+  fs.mkdirSync(distCacheDir, { recursive: true });
+  const diskCacheDir = path.join(sccacheDir, 'disk');
+  fs.mkdirSync(diskCacheDir, { recursive: true });
+  const tomlContent = [
+    '[cache.disk]',
+    `dir = ${JSON.stringify(diskCacheDir)}`,
+    '',
+    '[dist]',
+    `cache_dir = ${JSON.stringify(distCacheDir)}`,
+    '',
+  ].join('\n');
   if (!fs.existsSync(confPath)) {
-    fs.writeFileSync(confPath, '');
+    fs.writeFileSync(confPath, tomlContent);
   }
   if (!fs.existsSync(cachedConfPath)) {
-    fs.writeFileSync(cachedConfPath, '');
+    fs.writeFileSync(cachedConfPath, tomlContent);
   }
   const installRoot = path.join(runnerTemp, 'sccache-bin');
   fs.mkdirSync(installRoot, { recursive: true });
