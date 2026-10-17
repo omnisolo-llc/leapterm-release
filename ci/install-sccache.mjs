@@ -54,6 +54,15 @@ export async function installSccache({
   for (const dirName of BUILD_CACHE_DIRS) {
     fs.mkdirSync(path.join(runnerTemp, dirName), { recursive: true });
   }
+  const sccacheDir = path.join(runnerTemp, 'sccache');
+  const confPath = path.join(sccacheDir, 'sccache-config.toml');
+  const cachedConfPath = path.join(sccacheDir, 'sccache-cached-config.toml');
+  if (!fs.existsSync(confPath)) {
+    fs.writeFileSync(confPath, '');
+  }
+  if (!fs.existsSync(cachedConfPath)) {
+    fs.writeFileSync(cachedConfPath, '');
+  }
   const installRoot = path.join(runnerTemp, 'sccache-bin');
   fs.mkdirSync(installRoot, { recursive: true });
   const binaryPath = path.join(installRoot, spec.folder, spec.binary);
@@ -84,6 +93,8 @@ export async function installSccache({
   const resolvedBinary = fs.realpathSync(binaryPath);
   if (githubOutput) {
     fs.appendFileSync(githubOutput, `wrapper=${resolvedBinary}\n`);
+    fs.appendFileSync(githubOutput, `sccache_conf=${confPath}\n`);
+    fs.appendFileSync(githubOutput, `sccache_cached_conf=${cachedConfPath}\n`);
   }
   return resolvedBinary;
 }

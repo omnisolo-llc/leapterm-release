@@ -178,6 +178,18 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
                 role == CandidateRole::Produce
                     && value.as_str() == Some("${{ format('{0}/sccache', runner.temp) }}")
             }
+            "SCCACHE_CONF" => {
+                role == CandidateRole::Produce
+                    && value.as_str()
+                        == Some("${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}")
+            }
+            "SCCACHE_CACHED_CONF" => {
+                role == CandidateRole::Produce
+                    && value.as_str()
+                        == Some(
+                            "${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}",
+                        )
+            }
             "FLUTTER_SDK_CACHE_DIR" => {
                 role == CandidateRole::Produce
                     && value.as_str() == Some("${{ format('{0}/flutter-sdk-cache', runner.temp) }}")

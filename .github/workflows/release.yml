@@ -451,6 +451,8 @@ jobs:
           STORAGE_CONFIG: ${{ (!inputs.build_only || matrix.target == 'windows') && secrets.STORAGE_CONFIG || '' }}
           WINDOWS_PREVIEW_OUTPUT_DIR: ${{ inputs.preview_windows_self_sign && matrix.target == 'windows' && format('{0}/windows-preview', runner.temp) || '' }}
           SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
           FLUTTER_SDK_CACHE_DIR: ${{ format('{0}/flutter-sdk-cache', runner.temp) }}
           PUB_CACHE_DIR: ${{ format('{0}/pub-cache', runner.temp) }}
           ANDROID_NDK_CACHE_DIR: ${{ matrix.target == 'android' && format('{0}/android-ndk-cache', runner.temp) || '' }}
