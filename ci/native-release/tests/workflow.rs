@@ -983,7 +983,7 @@ fn all_release_evidence_is_encrypted_and_retained_through_selected_private_stora
                 }
                 assert!(
                     !action.starts_with("actions/cache")
-                        || leap_release_launcher::runner_policy::reviewed_windows_sdk_cache(
+                        || leap_release_launcher::runner_policy::reviewed_build_cache(
                             "release.yml",
                             name.as_str().unwrap(),
                             &definition,
@@ -1081,11 +1081,11 @@ fn windows_application_jobs_consume_the_same_private_source_bound_sdk() {
     }
     require_text(
         sdk,
-        "inputs.verify_target == 'all' || inputs.verify_target == 'windows'",
+        "inputs.verify_target == 'all' || inputs.verify_target == 'slow' || inputs.verify_target == 'windows'",
     );
     require_text(
         &jobs["verify"],
-        "needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'windows'",
+        "needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows'",
     );
     let policy: serde_json::Value =
         serde_json::from_str(&read("ci/standard-runner-policy.json")).unwrap();

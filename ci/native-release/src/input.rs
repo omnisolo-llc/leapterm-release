@@ -106,6 +106,20 @@ pub fn valid_repo_slug(value: &str) -> bool {
                     .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
         })
 }
+pub fn active_build_targets(verify_target: &str) -> &'static [&'static str] {
+    match verify_target {
+        "all" => BUILD_TARGETS,
+        "fast" => &["linux", "android", "web"],
+        "slow" => &["windows", "macos", "ios"],
+        "linux" => &["linux"],
+        "windows" => &["windows"],
+        "macos" => &["macos"],
+        "android" => &["android"],
+        "web" => &["web"],
+        "ios" => &["ios"],
+        _ => &[],
+    }
+}
 impl Request {
     pub fn parse(raw: &str) -> Result<Self> {
         if raw.len() > 16384 {
@@ -117,14 +131,18 @@ impl Request {
         if request.version.is_empty() {
             request.version = version();
         }
+        let targets = active_build_targets(&request.verify_target);
+        let ios_active = targets.contains(&"ios");
         if !["option1", "legacy-acceptance"].contains(&request.release_route.as_str())
-            || (request.release_route == "legacy-acceptance" && request.build_only)
-            || (!BUILD_TARGETS.contains(&request.verify_target.as_str())
-                && request.verify_target != "all")
+            || (request.release_route == "legacy-acceptance"
+                && (request.build_only || request.verify_target != "all"))
+            || targets.is_empty()
             || (request.build_only && request.ios_action != "skip")
             || (!request.build_only
-                && (request.verify_target != "all"
-                    || !matches!(request.ios_action.as_str(), "upload" | "submit")
+                && (!matches!(request.verify_target.as_str(), "all" | "fast" | "slow")
+                    || (ios_active && !matches!(request.ios_action.as_str(), "upload" | "submit"))
+                    || (!ios_active
+                        && !matches!(request.ios_action.as_str(), "skip" | "upload" | "submit"))
                     || !request.include_selfhost))
             || (request.automatic_release && (request.build_only || request.ios_action != "submit"))
             || (request.preview_windows_self_sign
@@ -154,10 +172,8 @@ impl Request {
     pub fn validate_target(&self, target: &str) -> Result<()> {
         if !RELEASE_TARGETS.contains(&target)
             || (self.build_only && target != "resolve" && !BUILD_TARGETS.contains(&target))
-            || (self.build_only
-                && BUILD_TARGETS.contains(&target)
-                && self.verify_target != "all"
-                && self.verify_target != target)
+            || (BUILD_TARGETS.contains(&target)
+                && !active_build_targets(&self.verify_target).contains(&target))
             || (target == "ios-submit" && self.ios_action != "submit")
         {
             return Err("Release target differs from authorized request mode");
@@ -167,7 +183,9 @@ impl Request {
     pub fn normalized(&self) -> Result<String> {
         let mut value = serde_json::to_value(self).map_err(|_| "Invalid release request")?;
         let object = value.as_object_mut().ok_or("Invalid release request")?;
-        object.remove("verify_target");
+        if self.build_only || self.verify_target == "all" {
+            object.remove("verify_target");
+        }
         object.remove("builder_sha");
         object.remove("preview_windows_self_sign");
         object.remove("auto_promote");

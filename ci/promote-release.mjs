@@ -290,6 +290,7 @@ export function filterPublicDownloadLinks(
   stagingLinks,
   publicRepo = PUBLIC_REPOSITORY,
   selfHostedOverride = null,
+  { allowPartialWave = false } = {},
 ) {
   if (!stagingLinks || typeof stagingLinks !== 'object') {
     throw new Error('Invalid download-links.json payload');
@@ -327,7 +328,7 @@ export function filterPublicDownloadLinks(
       signature_url: `${publicBaseUrl}/${name}.sha256.sig`,
     });
   }
-  if (publicArtifacts.length !== PUBLIC_TARGETS.length) {
+  if (allowPartialWave ? publicArtifacts.length === 0 : publicArtifacts.length !== PUBLIC_TARGETS.length) {
     const found = publicArtifacts.map((a) => a.target);
     throw new Error(
       `Expected ${PUBLIC_TARGETS.length} public artifacts, found ${publicArtifacts.length} (${found.join(', ')})`,
@@ -360,13 +361,16 @@ export function filterPublicDownloadLinks(
       sha256_url: `${publicBaseUrl}/${shName}.sha256`,
       signature_url: `${publicBaseUrl}/${shName}.sha256.sig`,
     };
-  } else {
+  } else if (!allowPartialWave) {
     throw new Error('Staging release is missing self_hosted bundle metadata');
   }
   return result;
 }
 
-export function filterPublicProvenance(stagingProvenance) {
+export function filterPublicProvenance(
+  stagingProvenance,
+  { allowPartialWave = false } = {},
+) {
   if (!stagingProvenance || typeof stagingProvenance !== 'object') {
     throw new Error('Invalid release provenance payload');
   }
@@ -382,7 +386,7 @@ export function filterPublicProvenance(stagingProvenance) {
       sha256: item.sha256,
       target: item.target,
     }));
-  if (publicArtifacts.length !== PUBLIC_TARGETS.length) {
+  if (allowPartialWave ? publicArtifacts.length === 0 : publicArtifacts.length !== PUBLIC_TARGETS.length) {
     throw new Error(
       `Provenance missing required public targets (found ${publicArtifacts.length} of ${PUBLIC_TARGETS.length})`,
     );
@@ -398,6 +402,221 @@ export function filterPublicProvenance(stagingProvenance) {
     artifacts: publicArtifacts,
   };
   return sanitized;
+}
+
+export function verifyAllReleaseBuildsReady({
+  downloadLinks,
+  provenance,
+  assetsByName,
+  version = '',
+} = {}) {
+  const hasAsset = (name) =>
+    assetsByName instanceof Map
+      ? assetsByName.has(name)
+      : assetsByName instanceof Set
+        ? assetsByName.has(name)
+        : Array.isArray(assetsByName)
+          ? assetsByName.includes(name)
+          : Boolean(assetsByName && Object.hasOwn(assetsByName, name));
+
+  const rawDownloads = Array.isArray(downloadLinks?.downloads)
+    ? downloadLinks.downloads
+    : Array.isArray(downloadLinks?.artifacts)
+      ? downloadLinks.artifacts
+      : [];
+  const downloadByTarget = new Map(
+    rawDownloads
+      .filter((item) => item && typeof item === 'object' && item.target)
+      .map((item) => [item.target, item]),
+  );
+  const provArtifacts = Array.isArray(provenance?.artifacts)
+    ? provenance.artifacts
+    : [];
+  const provByTarget = new Map(
+    provArtifacts
+      .filter((item) => item && typeof item === 'object' && item.target)
+      .map((item) => [item.target, item]),
+  );
+
+  const missingTargets = [];
+  const missingProvenanceTargets = [];
+  const missingAssets = [];
+
+  for (const target of PUBLIC_TARGETS) {
+    const dlItem = downloadByTarget.get(target);
+    if (!dlItem || !dlItem.name || !dlItem.sha256) {
+      missingTargets.push(target);
+    } else if (assetsByName) {
+      for (const suffix of ['', '.sha256', '.sha256.sig']) {
+        const assetName = `${dlItem.name}${suffix}`;
+        if (!hasAsset(assetName)) {
+          missingAssets.push(assetName);
+        }
+      }
+    }
+    const provItem = provByTarget.get(target);
+    if (!provItem || !provItem.name || !provItem.sha256) {
+      missingProvenanceTargets.push(target);
+    }
+  }
+
+  const normalizedVersion = String(
+    version || downloadLinks?.version || provenance?.version || '',
+  ).replace(/^v/, '');
+  const selfHosted = downloadLinks?.self_hosted;
+  if (!selfHosted || typeof selfHosted !== 'object' || !selfHosted.name || !selfHosted.sha256) {
+    missingTargets.push('self_hosted');
+  } else if (assetsByName) {
+    for (const suffix of ['', '.sha256']) {
+      const assetName = `${selfHosted.name}${suffix}`;
+      if (!hasAsset(assetName)) {
+        missingAssets.push(assetName);
+      }
+    }
+  }
+
+  if (assetsByName && normalizedVersion) {
+    const provName = `leapterm-${normalizedVersion}-release-provenance.json`;
+    for (const reqName of ['download-links.json', provName, `${provName}.sig`]) {
+      if (!hasAsset(reqName)) {
+        missingAssets.push(reqName);
+      }
+    }
+    if (!hasAsset(PRIMARY_KEYRING_ASSET) && !hasAsset(LEGACY_KEYRING_ASSET)) {
+      missingAssets.push(PRIMARY_KEYRING_ASSET);
+    }
+  }
+
+  return {
+    ready:
+      missingTargets.length === 0 &&
+      missingProvenanceTargets.length === 0 &&
+      missingAssets.length === 0,
+    missingTargets,
+    missingProvenanceTargets,
+    missingAssets,
+  };
+}
+
+export function mergeWaveStagingMetadata({ wavePayloads, version }) {
+  if (!Array.isArray(wavePayloads) || wavePayloads.length === 0) {
+    throw new Error('mergeWaveStagingMetadata requires at least one wave payload');
+  }
+  const normalizedVersion = String(version || '').trim().replace(/^v/, '');
+  const baseLinks = wavePayloads[0].downloadLinks;
+  const baseProv = wavePayloads[0].provenance;
+  const expectedBuild = String(
+    baseLinks?.build_number ?? baseProv?.build_number ?? '',
+  );
+  const expectedSourceSha = String(baseProv?.source_sha || '');
+  const expectedBuilderSha = String(baseProv?.builder_sha || '');
+
+  const downloadsByTarget = new Map();
+  const provByTarget = new Map();
+  const mergedAssets = new Map();
+  let mergedSelfHosted = null;
+  let mergedIosDelivery = null;
+
+  for (const wave of wavePayloads) {
+    const links = wave.downloadLinks || {};
+    const prov = wave.provenance || {};
+    const waveVersion = String(links.version || prov.version || '').replace(/^v/, '');
+    const waveBuild = String(links.build_number ?? prov.build_number ?? '');
+    if (normalizedVersion && waveVersion !== normalizedVersion) {
+      throw new Error(
+        `Wave ${wave.tag} version mismatch: expected ${normalizedVersion}, found ${waveVersion}`,
+      );
+    }
+    if (expectedBuild && waveBuild !== expectedBuild) {
+      throw new Error(
+        `Wave ${wave.tag} build_number mismatch: expected ${expectedBuild}, found ${waveBuild}`,
+      );
+    }
+    if (expectedSourceSha && String(prov.source_sha || '') !== expectedSourceSha) {
+      throw new Error(
+        `Wave ${wave.tag} source_sha mismatch across release waves`,
+      );
+    }
+    if (expectedBuilderSha && String(prov.builder_sha || '') !== expectedBuilderSha) {
+      throw new Error(
+        `Wave ${wave.tag} builder_sha mismatch across release waves`,
+      );
+    }
+
+    const rawDownloads = Array.isArray(links.downloads)
+      ? links.downloads
+      : Array.isArray(links.artifacts)
+        ? links.artifacts
+        : [];
+    for (const item of rawDownloads) {
+      if (!item || typeof item !== 'object' || !item.target) continue;
+      const existing = downloadsByTarget.get(item.target);
+      if (existing && existing.sha256 !== item.sha256) {
+        throw new Error(
+          `Conflicting sha256 for target ${item.target} across release waves`,
+        );
+      }
+      downloadsByTarget.set(item.target, item);
+    }
+
+    for (const item of Array.isArray(prov.artifacts) ? prov.artifacts : []) {
+      if (!item || typeof item !== 'object' || !item.target) continue;
+      const existing = provByTarget.get(item.target);
+      if (existing && existing.sha256 !== item.sha256) {
+        throw new Error(
+          `Conflicting provenance sha256 for target ${item.target} across release waves`,
+        );
+      }
+      provByTarget.set(item.target, item);
+    }
+
+    if (links.self_hosted && typeof links.self_hosted === 'object') {
+      mergedSelfHosted = links.self_hosted;
+    }
+    if (links.ios_delivery && typeof links.ios_delivery === 'object') {
+      if (!mergedIosDelivery || links.ios_delivery.action !== 'skip') {
+        mergedIosDelivery = links.ios_delivery;
+      }
+    }
+    for (const asset of wave.assets || []) {
+      if (asset && asset.name) {
+        mergedAssets.set(asset.name, asset);
+      }
+    }
+  }
+
+  const orderedDownloads = [...downloadsByTarget.values()];
+  const orderedProvArtifacts = [...provByTarget.values()];
+  const tag = `v${normalizedVersion || String(baseLinks?.version || '').replace(/^v/, '')}`;
+  const stagingLinks = {
+    ...baseLinks,
+    version: normalizedVersion || baseLinks?.version,
+    build_number: baseLinks?.build_number,
+    tag,
+    downloads: orderedDownloads,
+    artifacts: orderedDownloads,
+    ...(mergedSelfHosted ? { self_hosted: mergedSelfHosted } : {}),
+    ...(mergedIosDelivery ? { ios_delivery: mergedIosDelivery } : {}),
+  };
+  const stagingProvenance = {
+    ...baseProv,
+    version: normalizedVersion || baseProv?.version,
+    artifacts: orderedProvArtifacts,
+  };
+  const readiness = verifyAllReleaseBuildsReady({
+    downloadLinks: stagingLinks,
+    provenance: stagingProvenance,
+    assetsByName: mergedAssets,
+    version: normalizedVersion,
+  });
+
+  return {
+    stagingLinks,
+    stagingProvenance,
+    assetsByName: mergedAssets,
+    isCompleteWaveSet: readiness.ready,
+    readiness,
+  };
 }
 
 export function buildPublicSha256Sums(entries) {
@@ -1868,14 +2087,116 @@ export async function promoteRelease({
 
   const tag = `v${normalizedVersion}`;
   const stagingReleaseUrl = `https://api.github.com/repos/${stagingRepo}/releases/tags/${encodeURIComponent(tag)}`;
-  const stagingRes = await githubRequest(stagingReleaseUrl, privateToken);
-  const stagingRelease = await stagingRes.json();
-  const assetsByName = new Map(
-    (stagingRelease.assets || []).map((asset) => [asset.name, asset]),
-  );
 
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-promote-release-'));
   try {
+    const fetchStagingTagOptional = async (candidateTag) => {
+      const url = `https://api.github.com/repos/${stagingRepo}/releases/tags/${encodeURIComponent(candidateTag)}`;
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${privateToken}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'leapterm-release-promoter',
+        },
+        redirect: 'follow',
+      });
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new Error(`GitHub API request failed (${response.status}) for ${url}`);
+      }
+      return response.json();
+    };
+
+    const provenanceName = `leapterm-${normalizedVersion}-release-provenance.json`;
+    let assetsByName;
+    let keyringPath;
+    let stagingLinks;
+    let stagingProvenance;
+
+    const fullStagingRelease = await fetchStagingTagOptional(tag);
+    if (fullStagingRelease) {
+      assetsByName = new Map(
+        (fullStagingRelease.assets || []).map((asset) => [asset.name, asset]),
+      );
+      const requireSingleAsset = async (name) => {
+        const asset = assetsByName.get(name);
+        if (!asset) {
+          throw new Error(
+            `Staging release ${tag} is missing required asset: ${name}`,
+          );
+        }
+        const dest = path.join(workDir, name);
+        await downloadReleaseAsset(asset.url, privateToken, dest);
+        return dest;
+      };
+      keyringPath = await requireSingleAsset(
+        resolveStagingKeyringAssetName(assetsByName),
+      );
+      const stagingLinksPath = await requireSingleAsset('download-links.json');
+      const stagingProvPath = await requireSingleAsset(provenanceName);
+      const stagingProvSigPath = await requireSingleAsset(
+        `${provenanceName}.sig`,
+      );
+      verifyGpgSignature(keyringPath, stagingProvSigPath, stagingProvPath);
+      stagingLinks = JSON.parse(fs.readFileSync(stagingLinksPath, 'utf8'));
+      stagingProvenance = JSON.parse(fs.readFileSync(stagingProvPath, 'utf8'));
+    } else {
+      const waveTags = [`${tag}-fast`, `${tag}-slow`];
+      const wavePayloads = [];
+      for (const waveTag of waveTags) {
+        const waveRelease = await fetchStagingTagOptional(waveTag);
+        if (!waveRelease) continue;
+        const waveDir = path.join(workDir, waveTag);
+        fs.mkdirSync(waveDir, { recursive: true });
+        const waveAssets = new Map(
+          (waveRelease.assets || []).map((asset) => [asset.name, asset]),
+        );
+        const requireWaveAsset = async (name) => {
+          const asset = waveAssets.get(name);
+          if (!asset) {
+            throw new Error(
+              `Staging release ${waveTag} is missing required asset: ${name}`,
+            );
+          }
+          const dest = path.join(waveDir, name);
+          await downloadReleaseAsset(asset.url, privateToken, dest);
+          return dest;
+        };
+        const waveKeyringPath = await requireWaveAsset(
+          resolveStagingKeyringAssetName(waveAssets),
+        );
+        const waveLinksPath = await requireWaveAsset('download-links.json');
+        const waveProvPath = await requireWaveAsset(provenanceName);
+        const waveProvSigPath = await requireWaveAsset(`${provenanceName}.sig`);
+        verifyGpgSignature(waveKeyringPath, waveProvSigPath, waveProvPath);
+        if (!keyringPath) {
+          keyringPath = path.join(workDir, path.basename(waveKeyringPath));
+          fs.copyFileSync(waveKeyringPath, keyringPath);
+        }
+        wavePayloads.push({
+          tag: waveTag,
+          downloadLinks: JSON.parse(fs.readFileSync(waveLinksPath, 'utf8')),
+          provenance: JSON.parse(fs.readFileSync(waveProvPath, 'utf8')),
+          assets: waveRelease.assets || [],
+        });
+      }
+      if (wavePayloads.length === 0) {
+        throw new Error(
+          `GitHub API request failed (404) for ${stagingReleaseUrl}`,
+        );
+      }
+      const merged = mergeWaveStagingMetadata({
+        wavePayloads,
+        version: normalizedVersion,
+      });
+      stagingLinks = merged.stagingLinks;
+      stagingProvenance = merged.stagingProvenance;
+      assetsByName = merged.assetsByName;
+    }
+
     const requireStagingAsset = async (name) => {
       const asset = assetsByName.get(name);
       if (!asset) {
@@ -1888,22 +2209,12 @@ export async function promoteRelease({
       return dest;
     };
 
-    const keyringPath = await requireStagingAsset(
-      resolveStagingKeyringAssetName(assetsByName),
-    );
-    const stagingLinksPath = await requireStagingAsset('download-links.json');
-    const provenanceName = `leapterm-${normalizedVersion}-release-provenance.json`;
-    const stagingProvPath = await requireStagingAsset(provenanceName);
-    const stagingProvSigPath = await requireStagingAsset(
-      `${provenanceName}.sig`,
-    );
-
-    verifyGpgSignature(keyringPath, stagingProvSigPath, stagingProvPath);
-
-    const stagingLinks = JSON.parse(fs.readFileSync(stagingLinksPath, 'utf8'));
-    const stagingProvenance = JSON.parse(
-      fs.readFileSync(stagingProvPath, 'utf8'),
-    );
+    const readiness = verifyAllReleaseBuildsReady({
+      downloadLinks: stagingLinks,
+      provenance: stagingProvenance,
+      assetsByName,
+      version: normalizedVersion,
+    });
     const resolvedBuildNumber = String(
       stagingLinks.build_number || stagingProvenance.build_number || '',
     );
@@ -1919,40 +2230,61 @@ export async function promoteRelease({
 
     if (publishGithubRelease) {
       const selfHostedName = `leapterm-${normalizedVersion}-self-hosted.zip`;
-      const selfHostedBinPath = await requireStagingAsset(selfHostedName);
-      const selfHostedShaPath = await requireStagingAsset(
-        `${selfHostedName}.sha256`,
-      );
-      const selfHostedBytes = fs.statSync(selfHostedBinPath).size;
-      const selfHostedSha = sha256Hex(fs.readFileSync(selfHostedBinPath));
-      const recordedSelfHostedSha = fs
-        .readFileSync(selfHostedShaPath, 'utf8')
-        .trim()
-        .split(/\s+/)[0];
-      if (recordedSelfHostedSha !== selfHostedSha) {
-        throw new Error(`.sha256 file mismatch for ${selfHostedName}`);
-      }
-      scanSelfHostedZipForLeaks(selfHostedBinPath);
-      const selfHostedSigName = `${selfHostedName}.sha256.sig`;
-      let selfHostedSigPath;
-      if (assetsByName.has(selfHostedSigName)) {
-        selfHostedSigPath = await requireStagingAsset(selfHostedSigName);
-        verifyGpgSignature(keyringPath, selfHostedSigPath, selfHostedShaPath);
-      } else {
-        selfHostedSigPath = path.join(workDir, selfHostedSigName);
-        signDetachedWithGpg(signingConfig, selfHostedShaPath, selfHostedSigPath);
-        verifyGpgSignature(keyringPath, selfHostedSigPath, selfHostedShaPath);
-      }
-
-      const publicLinks = filterPublicDownloadLinks(stagingLinks, publicRepo, {
-        name: selfHostedName,
-        bytes: selfHostedBytes,
-        sha256: selfHostedSha,
-      });
-      const publicProvenance = filterPublicProvenance(stagingProvenance);
-
+      let selfHostedOverride = null;
       const filesToUpload = [];
       const sha256Entries = [];
+
+      if (assetsByName.has(selfHostedName)) {
+        const selfHostedBinPath = await requireStagingAsset(selfHostedName);
+        const selfHostedShaPath = await requireStagingAsset(
+          `${selfHostedName}.sha256`,
+        );
+        const selfHostedBytes = fs.statSync(selfHostedBinPath).size;
+        const selfHostedSha = sha256Hex(fs.readFileSync(selfHostedBinPath));
+        const recordedSelfHostedSha = fs
+          .readFileSync(selfHostedShaPath, 'utf8')
+          .trim()
+          .split(/\s+/)[0];
+        if (recordedSelfHostedSha !== selfHostedSha) {
+          throw new Error(`.sha256 file mismatch for ${selfHostedName}`);
+        }
+        scanSelfHostedZipForLeaks(selfHostedBinPath);
+        const selfHostedSigName = `${selfHostedName}.sha256.sig`;
+        let selfHostedSigPath;
+        if (assetsByName.has(selfHostedSigName)) {
+          selfHostedSigPath = await requireStagingAsset(selfHostedSigName);
+          verifyGpgSignature(keyringPath, selfHostedSigPath, selfHostedShaPath);
+        } else {
+          selfHostedSigPath = path.join(workDir, selfHostedSigName);
+          signDetachedWithGpg(signingConfig, selfHostedShaPath, selfHostedSigPath);
+          verifyGpgSignature(keyringPath, selfHostedSigPath, selfHostedShaPath);
+        }
+        selfHostedOverride = {
+          name: selfHostedName,
+          bytes: selfHostedBytes,
+          sha256: selfHostedSha,
+        };
+        filesToUpload.push(
+          selfHostedBinPath,
+          selfHostedShaPath,
+          selfHostedSigPath,
+        );
+        sha256Entries.push({ name: selfHostedName, sha256: selfHostedSha });
+      } else if (readiness.ready) {
+        throw new Error(
+          `Staging release ${tag} is missing required asset: ${selfHostedName}`,
+        );
+      }
+
+      const publicLinks = filterPublicDownloadLinks(
+        stagingLinks,
+        publicRepo,
+        selfHostedOverride,
+        { allowPartialWave: !readiness.ready },
+      );
+      const publicProvenance = filterPublicProvenance(stagingProvenance, {
+        allowPartialWave: !readiness.ready,
+      });
 
       for (const item of publicLinks.artifacts) {
         const binPath = await requireStagingAsset(item.name);
@@ -1978,13 +2310,6 @@ export async function promoteRelease({
         filesToUpload.push(binPath, shaPath, sigPath);
         sha256Entries.push({ name: item.name, sha256: actualSha });
       }
-
-      filesToUpload.push(
-        selfHostedBinPath,
-        selfHostedShaPath,
-        selfHostedSigPath,
-      );
-      sha256Entries.push({ name: selfHostedName, sha256: selfHostedSha });
 
       const publicLinksJson = `${JSON.stringify(publicLinks, null, 2)}\n`;
       assertNoPrivateLeakInPublicMetadata(
@@ -2070,6 +2395,9 @@ export async function promoteRelease({
         }
       }
 
+      const isCompletePublicRelease =
+        readiness.ready && !normalizedVersion.includes('-');
+
       let publicRelease;
       const existingRes = await fetch(
         `https://api.github.com/repos/${publicRepo}/releases/tags/${encodeURIComponent(tag)}`,
@@ -2094,7 +2422,8 @@ export async function promoteRelease({
               name: `LeapTerm ${tag}`,
               body: `LeapTerm ${tag} public release.`,
               draft: true,
-              prerelease: normalizedVersion.includes('-'),
+              prerelease: !isCompletePublicRelease,
+              make_latest: isCompletePublicRelease ? 'true' : 'false',
             }),
           },
         );
@@ -2143,6 +2472,8 @@ export async function promoteRelease({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             draft: false,
+            prerelease: !isCompletePublicRelease,
+            make_latest: isCompletePublicRelease ? 'true' : 'false',
             name: `LeapTerm ${tag}`,
             body: `LeapTerm ${tag} public release.`,
           }),
@@ -2150,7 +2481,7 @@ export async function promoteRelease({
       );
 
       console.log(
-        `Promoted LeapTerm ${tag} (${filesToUpload.length} verified public assets) to ${publicRepo}.`,
+        `Promoted LeapTerm ${tag} (${filesToUpload.length} verified public assets, complete=${readiness.ready}) to ${publicRepo}.`,
       );
     }
 
@@ -2311,24 +2642,35 @@ export async function promoteRelease({
     }
 
     if (resolvedRolloutEnv !== 'none') {
-      const rolloutResult = executeEnvironmentRollout({
-        environment: resolvedRolloutEnv,
-        version: normalizedVersion,
-        buildNumber: resolvedBuildNumber,
-        sourceSha: String(stagingProvenance.source_sha || ''),
-        sourceRoot,
-        stagingRepo,
-        privateToken,
-        githubToken,
-        dockerHubUsername,
-        dockerHubPatReadWrite,
-        dockerHubPatReadOnly,
-        containerRegistry,
-        execFileImpl,
-      });
-      console.log(
-        `Environment rollout (${rolloutResult.environment}) for v${normalizedVersion} (${resolvedBuildNumber}) image ${rolloutResult.container.image}: ${rolloutResult.status}.`,
-      );
+      if (resolvedRolloutEnv === 'production' && !readiness.ready) {
+        if (String(rolloutEnvironment || 'auto').trim().toLowerCase() === 'production') {
+          throw new Error(
+            `Cannot promote v${normalizedVersion} to production Cloudflare metadata until all release builds are ready (missing targets: ${readiness.missingTargets.join(', ')})`,
+          );
+        }
+        console.log(
+          `Deferring production Cloudflare metadata rollout for v${normalizedVersion} until all release builds are ready (missing targets: ${readiness.missingTargets.join(', ')}).`,
+        );
+      } else {
+        const rolloutResult = executeEnvironmentRollout({
+          environment: resolvedRolloutEnv,
+          version: normalizedVersion,
+          buildNumber: resolvedBuildNumber,
+          sourceSha: String(stagingProvenance.source_sha || ''),
+          sourceRoot,
+          stagingRepo,
+          privateToken,
+          githubToken,
+          dockerHubUsername,
+          dockerHubPatReadWrite,
+          dockerHubPatReadOnly,
+          containerRegistry,
+          execFileImpl,
+        });
+        console.log(
+          `Environment rollout (${rolloutResult.environment}) for v${normalizedVersion} (${resolvedBuildNumber}) image ${rolloutResult.container.image}: ${rolloutResult.status}.`,
+        );
+      }
     }
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });

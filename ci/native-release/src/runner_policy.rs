@@ -25,7 +25,7 @@ const MAX_CELLS: usize = 256;
 type Cell = BTreeMap<String, Value>;
 
 const VERIFY_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}";
-const VERIFY_SDK_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}";
+const VERIFY_SDK_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}";
 const PUBLISH_CANDIDATE_IF: &str = "${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}";
 const SIGN_CANDIDATE_IF: &str = "${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}";
 
@@ -174,6 +174,43 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
                             "${{ !inputs.build_only && matrix.target == 'windows' && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}",
                         )
             }
+            "SCCACHE_DIR" => {
+                role == CandidateRole::Produce
+                    && value.as_str() == Some("${{ format('{0}/sccache', runner.temp) }}")
+            }
+            "FLUTTER_SDK_CACHE_DIR" => {
+                role == CandidateRole::Produce
+                    && value.as_str() == Some("${{ format('{0}/flutter-sdk-cache', runner.temp) }}")
+            }
+            "PUB_CACHE_DIR" => {
+                role == CandidateRole::Produce
+                    && value.as_str() == Some("${{ format('{0}/pub-cache', runner.temp) }}")
+            }
+            "ANDROID_NDK_CACHE_DIR" => {
+                role == CandidateRole::Produce
+                    && value.as_str()
+                        == Some(
+                            "${{ matrix.target == 'android' && format('{0}/android-ndk-cache', runner.temp) || '' }}",
+                        )
+            }
+            "LEAP_MOBILE_FREERDP_CACHE_DIR" => {
+                role == CandidateRole::Produce
+                    && value.as_str()
+                        == Some(
+                            "${{ (matrix.target == 'android' || matrix.target == 'ios') && format('{0}/mobile-freerdp-cache', runner.temp) || '' }}",
+                        )
+            }
+            "LEAP_MOBILE_SDK_ARCHIVES_DIR" => {
+                role == CandidateRole::Produce
+                    && value.as_str()
+                        == Some(
+                            "${{ (matrix.target == 'android' || matrix.target == 'ios') && format('{0}/mobile-sdk-archives', runner.temp) || '' }}",
+                        )
+            }
+            "RUSTC_WRAPPER" | "CARGO_BUILD_RUSTC_WRAPPER" | "LEAP_C_COMPILER_LAUNCHER" => {
+                role == CandidateRole::Produce
+                    && value.as_str() == Some("${{ steps.sccache.outputs.wrapper || '' }}")
+            }
             _ => false,
         };
         if !accepted {
@@ -292,7 +329,7 @@ pub fn reviewed_public_candidate_exchange(
                 || step["if"]
                     != "${{ success() && matrix.target != 'ios' && !inputs.build_only && inputs.release_route == 'option1' }}"
                 || step["uses"]
-                    != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+                    != "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
                 || step["with"]
                     != json!({"name": "public-candidates-${{ matrix.target }}", "path": "${{ runner.temp }}/reviewed-public-candidates/${{ matrix.target }}", "if-no-files-found": "error", "retention-days": 7, "compression-level": 0})
             {
@@ -356,7 +393,7 @@ pub fn reviewed_public_candidate_exchange(
                 || step["id"] != download
                 || steps.iter().filter(|s| s["id"] == download).count() != 1
                 || step["uses"]
-                    != "actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16"
+                    != "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
                 || step["with"]
                     != json!({"pattern": "public-candidates-*", "path": "release-public-candidates", "merge-multiple": false})
                 || !native_candidate_step(steps.get(index + 1)?, native, command, role)
@@ -381,9 +418,48 @@ pub fn reviewed_windows_sdk_cache(
         && definition["environment"] == "downloads"
         && definition["permissions"] == json!({"contents": "read"})
         && step["id"] == "sdk_cache"
-        && step["uses"] == "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830"
+        && step["uses"] == "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
         && step["with"]["key"]
             == "windows-native-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"
+}
+
+pub fn reviewed_build_cache(workflow: &str, job: &str, definition: &Value, step: &Value) -> bool {
+    if reviewed_windows_sdk_cache(workflow, job, definition, step) {
+        return true;
+    }
+    if workflow != "release.yml"
+        || job != "verify"
+        || definition["environment"] != "downloads"
+        || definition["permissions"] != json!({"contents": "read", "id-token": "write"})
+        || step["uses"] != "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+    {
+        return false;
+    }
+    matches!(
+        (step["id"].as_str(), step["with"]["key"].as_str(),),
+        (
+            Some("sccache_cache"),
+            Some(
+                "sccache-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}"
+            ),
+        ) | (
+            Some("flutter_sdk_cache"),
+            Some("flutter-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"),
+        ) | (
+            Some("pub_cache"),
+            Some(
+                "pub-cache-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}"
+            ),
+        ) | (
+            Some("android_ndk_cache"),
+            Some("android-ndk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"),
+        ) | (
+            Some("mobile_freerdp_cache"),
+            Some(
+                "mobile-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}"
+            ),
+        )
+    )
 }
 
 fn identifier(value: &str) -> bool {
@@ -685,7 +761,7 @@ impl Audit {
             }
             if direct
                 && self.action_active.is_empty()
-                && reviewed_windows_sdk_cache(workflow, job, definition, step)
+                && reviewed_build_cache(workflow, job, definition, step)
             {
                 return;
             }

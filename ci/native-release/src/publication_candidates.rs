@@ -40,7 +40,7 @@ pub fn request(env: &Environment) -> Result<Request> {
     if request.release_route != "option1"
         || request.build_only
         || request.preview_windows_self_sign
-        || request.verify_target != "all"
+        || !matches!(request.verify_target.as_str(), "all" | "fast" | "slow")
         || request.source_sha.is_empty()
     {
         return Err("Verification-only requests cannot publish");
@@ -237,11 +237,19 @@ impl Plan {
             self.hash
         )
     }
-    fn tag(&self) -> String {
-        format!(
-            "v{}",
-            self.document.release["version"].as_str().unwrap_or("")
-        )
+    pub fn is_wave(&self) -> bool {
+        self.document.release["verify_target"]
+            .as_str()
+            .is_some_and(|target| !target.is_empty() && target != "all")
+    }
+    pub fn tag(&self) -> String {
+        let version = self.document.release["version"].as_str().unwrap_or("");
+        match self.document.release["verify_target"].as_str() {
+            Some(target) if !target.is_empty() && target != "all" => {
+                format!("v{version}-{target}")
+            }
+            _ => format!("v{version}"),
+        }
     }
     fn legacy_notes(&self) -> Result<Option<String>> {
         let name = format!(
@@ -976,7 +984,10 @@ pub fn publish_to_staging(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publ
     let promoted = api.write_json(
         "PATCH",
         &format!("repos/{repo}/releases/{id}"),
-        &json!({"draft":false,"make_latest":"true"}),
+        &json!({
+            "draft": false,
+            "make_latest": if plan.is_wave() { "false" } else { "true" }
+        }),
     );
     match promoted {
         Ok(updated) => {
