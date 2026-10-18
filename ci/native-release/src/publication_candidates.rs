@@ -391,6 +391,17 @@ pub fn retain_verifier(env: &Environment, binary: &Path) -> Result<(String, Stri
     safe_directory(&root)?;
     let plan = read(&root.join("plan.json"), MAX_PLAN)?;
     read_plan(&plan, env, &root.join("files"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = fs::symlink_metadata(binary)
+            && meta.nlink() > 1
+        {
+            let temp = binary.with_extension("single-link.tmp");
+            fs::copy(binary, &temp).map_err(|_| "Failed to copy native binary")?;
+            fs::rename(&temp, binary).map_err(|_| "Failed to replace native binary")?;
+        }
+    }
     let (bytes, sha256) = digest(binary, 256 * 1024 * 1024)?;
     let mut source = guards::open_regular(binary, 256 * 1024 * 1024)?;
     let destination = root.join(if cfg!(windows) {

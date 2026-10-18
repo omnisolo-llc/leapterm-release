@@ -304,6 +304,42 @@ fn stored_verifier_and_plan_cannot_authorize_their_own_custody_hashes() {
     );
 }
 
+#[test]
+fn retain_verifier_accepts_and_normalizes_hardlinked_native_binary() {
+    let runner = canonical_tempdir();
+    let root = runner.path().join(publication_candidates::DIRECTORY);
+    fs::create_dir_all(root.join("files")).unwrap();
+    let value = plan(&root.join("files"));
+    let plan_bytes = serde_json::to_vec(&value).unwrap();
+    fs::write(root.join("plan.json"), &plan_bytes).unwrap();
+    let binary_bytes = b"fixture native release binary bytes for verifier test\n";
+    let binary_path = runner.path().join("leap-release");
+    fs::write(&binary_path, binary_bytes).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&binary_path, fs::Permissions::from_mode(0o755)).unwrap();
+        let hardlink = runner.path().join("leap-release-dep-hardlink");
+        fs::hard_link(&binary_path, &hardlink).unwrap();
+        assert_eq!(fs::symlink_metadata(&binary_path).unwrap().nlink(), 2);
+    }
+    let mut env = environment();
+    env.insert(
+        "RUNNER_TEMP".into(),
+        runner.path().to_string_lossy().into_owned(),
+    );
+    let (verifier_hash, plan_hash) =
+        publication_candidates::retain_verifier(&env, &binary_path).unwrap();
+    assert_eq!(verifier_hash, format!("{:x}", Sha256::digest(binary_bytes)));
+    assert_eq!(plan_hash, format!("{:x}", Sha256::digest(&plan_bytes)));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(fs::symlink_metadata(&binary_path).unwrap().nlink(), 1);
+    }
+}
+
 // An actual HTTP fixture is used below; only the API adapter is injectable.
 // Neither the fixture nor these tests can contact GitHub or hold a write token.
 struct HttpFixture {

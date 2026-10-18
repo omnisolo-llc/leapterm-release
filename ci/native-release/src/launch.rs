@@ -964,6 +964,17 @@ fn build_native_stage(
     if !fs::symlink_metadata(&binary).is_ok_and(|m| m.is_file() && !m.file_type().is_symlink()) {
         return Err("Native release executable missing");
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = fs::symlink_metadata(&binary)
+            && meta.nlink() > 1
+        {
+            let temp = binary.with_extension("single-link.tmp");
+            fs::copy(&binary, &temp).map_err(|_| "Failed to copy native binary")?;
+            fs::rename(&temp, &binary).map_err(|_| "Failed to replace native binary")?;
+        }
+    }
     let mut task = match &stage {
         NativeStage::Release(_, command)
             if [
