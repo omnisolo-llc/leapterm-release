@@ -11,7 +11,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-const MAX_OUTPUT: usize = 4 * 1024 * 1024;
+const MAX_OUTPUT: usize = 32 * 1024 * 1024;
 static TERMINATED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 pub fn install_termination_handler() -> Result<()> {
     let flag = TERMINATED.get_or_init(|| Arc::new(AtomicBool::new(false)));
