@@ -40,6 +40,8 @@ import {
   verifyGooglePlayStoreAccess,
 } from './promote-release.mjs';
 
+delete process.env.GITHUB_ACTOR;
+
 const mockRolloutCredentials = {
   CLOUDFLARE_API_TOKEN: 'mock-cloudflare-rollout-token',
   CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
