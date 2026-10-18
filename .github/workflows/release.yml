@@ -1562,7 +1562,7 @@ jobs:
     if: ${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}
     environment: package-signing
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 180
     permissions:
       contents: read
     steps:
@@ -1623,7 +1623,7 @@ jobs:
     needs: [resolve, verify, option1_signatures]
     environment: public-release
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 180
     permissions:
       contents: write
     steps:
