@@ -394,12 +394,12 @@ pub fn retain_verifier(env: &Environment, binary: &Path) -> Result<(String, Stri
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if let Ok(meta) = fs::symlink_metadata(binary) {
-            if meta.nlink() > 1 {
-                let temp = binary.with_extension("single-link.tmp");
-                fs::copy(binary, &temp).map_err(|_| "Failed to copy native binary")?;
-                fs::rename(&temp, binary).map_err(|_| "Failed to replace native binary")?;
-            }
+        if let Ok(meta) = fs::symlink_metadata(binary)
+            && meta.nlink() > 1
+        {
+            let temp = binary.with_extension("single-link.tmp");
+            fs::copy(binary, &temp).map_err(|_| "Failed to copy native binary")?;
+            fs::rename(&temp, binary).map_err(|_| "Failed to replace native binary")?;
         }
     }
     let (bytes, sha256) = digest(binary, 256 * 1024 * 1024)?;

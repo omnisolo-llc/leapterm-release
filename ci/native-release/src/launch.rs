@@ -967,12 +967,12 @@ fn build_native_stage(
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if let Ok(meta) = fs::symlink_metadata(&binary) {
-            if meta.nlink() > 1 {
-                let temp = binary.with_extension("single-link.tmp");
-                fs::copy(&binary, &temp).map_err(|_| "Failed to copy native binary")?;
-                fs::rename(&temp, &binary).map_err(|_| "Failed to replace native binary")?;
-            }
+        if let Ok(meta) = fs::symlink_metadata(&binary)
+            && meta.nlink() > 1
+        {
+            let temp = binary.with_extension("single-link.tmp");
+            fs::copy(&binary, &temp).map_err(|_| "Failed to copy native binary")?;
+            fs::rename(&temp, &binary).map_err(|_| "Failed to replace native binary")?;
         }
     }
     let mut task = match &stage {
