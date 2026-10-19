@@ -918,7 +918,20 @@ fn build_native_stage(
         Duration::from_secs(900),
         Some(bootstrap),
     )?;
-    if !matches!(stage, NativeStage::RetainedArtifacts(_, _)) {
+    let skip_tool_tests = match &stage {
+        NativeStage::RetainedArtifacts(_, _) | NativeStage::WindowsSdk(_, _) => true,
+        NativeStage::Release(
+            _,
+            "sign-public-candidates"
+            | "prepare-publication"
+            | "prepare-private-final-archive"
+            | "verify-private-final-archive"
+            | "publish-candidates",
+        ) => true,
+        NativeStage::Release(request, "verify-build") => !request.run_test,
+        _ => false,
+    };
+    if !skip_tool_tests {
         println!("Native release phase: native-tool-tests");
         process::run(
             Path::new("cargo"),

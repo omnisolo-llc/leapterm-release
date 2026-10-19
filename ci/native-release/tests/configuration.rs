@@ -540,3 +540,50 @@ fn diagnostic_phase_and_error_classification_never_echo_private_input() {
     fs::write(&path, "private exception details").unwrap();
     assert_eq!(launch::checkout_failure(&path), "unclassified");
 }
+
+#[test]
+fn run_test_flag_defaults_false_and_normalizes_consistently() {
+    let default_request = Request::parse(
+        &json!({
+            "build_only": true,
+            "source_sha": "a".repeat(40),
+            "build_number": "42",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(!default_request.run_test);
+    let default_normalized: Value =
+        serde_json::from_str(&default_request.normalized().unwrap()).unwrap();
+    assert!(default_normalized.get("run_test").is_none());
+
+    let explicit_false = Request::parse(
+        &json!({
+            "build_only": true,
+            "source_sha": "a".repeat(40),
+            "build_number": "42",
+            "run_test": false,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(!explicit_false.run_test);
+    let false_normalized: Value =
+        serde_json::from_str(&explicit_false.normalized().unwrap()).unwrap();
+    assert!(false_normalized.get("run_test").is_none());
+
+    let explicit_true = Request::parse(
+        &json!({
+            "build_only": true,
+            "source_sha": "a".repeat(40),
+            "build_number": "42",
+            "run_test": true,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(explicit_true.run_test);
+    let true_normalized: Value =
+        serde_json::from_str(&explicit_true.normalized().unwrap()).unwrap();
+    assert_eq!(true_normalized["run_test"], json!(true));
+}

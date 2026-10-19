@@ -148,6 +148,7 @@ pub fn clean_environment(parent: &Environment) -> Environment {
                 | "FLUTTER_SDK_CACHE_DIR"
                 | "PUB_CACHE_DIR"
                 | "ANDROID_NDK_CACHE_DIR"
+                | "LEAP_MACOS_FREERDP_CACHE_DIR"
                 | "LEAP_MOBILE_FREERDP_CACHE_DIR"
                 | "LEAP_MOBILE_SDK_ARCHIVES_DIR" => safe_cache_directory(v),
                 "SCCACHE_CONF" | "SCCACHE_CACHED_CONF" => safe_cache_file(v),
