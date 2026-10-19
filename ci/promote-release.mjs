@@ -2654,9 +2654,10 @@ export async function promoteRelease({
             `https://api.github.com/repos/${sourceRepo}/contents/deploy/packaging/install.sh?ref=${encodeURIComponent(targetSha)}`,
             privateToken,
           );
-          if (contentRes && contentRes.content) {
+          const contentJson = await contentRes.json();
+          if (contentJson && contentJson.content) {
             const installShPath = path.join(workDir, 'install.sh');
-            fs.writeFileSync(installShPath, Buffer.from(contentRes.content, 'base64'));
+            fs.writeFileSync(installShPath, Buffer.from(contentJson.content, 'base64'));
             filesToUpload.push(installShPath);
           }
         } catch (err) {
