@@ -183,12 +183,23 @@ test('filterPublicDownloadLinks strips all private targets and rewrites URLs to 
 
 test('filterPublicProvenance strips private targets and masks private source_sha', () => {
   const { stagingProvenance } = makeStagingFixtures('0.1.1');
+  stagingProvenance.managed_vpn = {
+    supported_platforms: ['linux', 'windows', 'macos', 'android', 'ios'],
+    schema_version: 1,
+  };
   const pubProv = filterPublicProvenance(stagingProvenance);
 
   assert.equal(pubProv.inventory_scope, 'public-application-artifacts');
   assert.equal(pubProv.source_sha, stagingProvenance.builder_sha);
   assert.notEqual(pubProv.source_sha, stagingProvenance.source_sha);
   assert.equal(pubProv.artifacts.length, PUBLIC_TARGETS.length);
+  assert.equal(pubProv.ios_action, undefined);
+  assert.deepEqual(pubProv.managed_vpn.supported_platforms, [
+    'linux',
+    'windows',
+    'macos',
+    'android',
+  ]);
 
   const serialized = canonicalJson(pubProv);
   assertNoPrivateLeakInPublicMetadata(

@@ -401,6 +401,19 @@ export function filterPublicProvenance(
     inventory_scope: 'public-application-artifacts',
     artifacts: publicArtifacts,
   };
+  delete sanitized.ios_action;
+  if (
+    sanitized.managed_vpn &&
+    typeof sanitized.managed_vpn === 'object' &&
+    Array.isArray(sanitized.managed_vpn.supported_platforms)
+  ) {
+    sanitized.managed_vpn = {
+      ...sanitized.managed_vpn,
+      supported_platforms: sanitized.managed_vpn.supported_platforms.filter(
+        (p) => !FORBIDDEN_PRIVATE_TARGETS.includes(p),
+      ),
+    };
+  }
   return sanitized;
 }
 

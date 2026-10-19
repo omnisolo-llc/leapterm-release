@@ -84,6 +84,8 @@ jobs:
           npm ci --ignore-scripts --prefix relay/moq
           npm run native-build --prefix relay/moq
           npm test --prefix relay/moq
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: '4'
 
   native-relay-contract:
     needs: policy
