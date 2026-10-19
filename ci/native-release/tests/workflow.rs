@@ -35,34 +35,57 @@ fn require_text(value: &Value, text: &str) {
         "Missing {text}"
     );
 }
+const TRACK_JOBS: [(&str, &str); 6] = [
+    ("linux_track", "linux"),
+    ("windows_track", "windows"),
+    ("macos_track", "macos"),
+    ("android_track", "android"),
+    ("web_track", "web"),
+    ("ios_track", "ios"),
+];
 #[test]
 fn option1_publication_keeps_the_test_matrix_decoupled_and_requires_native_public_candidates() {
     let workflow = workflow("release");
-    let verify = &workflow["jobs"]["verify"];
     let publish = &workflow["jobs"]["publish"];
     let signing = &workflow["jobs"]["option1_signatures"];
     assert_eq!(
         needs(publish),
-        BTreeSet::from(["resolve", "verify", "option1_signatures"])
+        BTreeSet::from([
+            "resolve",
+            "linux_track",
+            "windows_track",
+            "macos_track",
+            "android_track",
+            "web_track",
+            "ios_track",
+            "option1_signatures",
+        ])
     );
-    assert_eq!(verify["continue-on-error"].as_bool(), Some(true));
     require_text(publish, "!inputs.build_only");
-    let producer = steps(verify)
-        .iter()
-        .find(|step| step["id"].as_str() == Some("public_candidates"))
-        .unwrap();
-    assert_eq!(
-        producer["run"].as_str(),
-        Some("bash ci/native-release/run.sh verify-build")
-    );
-    for key in ["GH_TOKEN", "GITHUB_TOKEN", "PRIVATE_RELEASE_TOKEN"] {
-        assert!(producer["env"][key].is_null());
-    }
-    assert!(
-        steps(verify)
+    for (track_name, _) in TRACK_JOBS {
+        let track = &workflow["jobs"][track_name];
+        assert_eq!(
+            track["continue-on-error"].as_bool(),
+            Some(true),
+            "{track_name}"
+        );
+        let producer = steps(track)
             .iter()
-            .all(|step| step["id"].as_str() != Some("public_candidates_upload"))
-    );
+            .find(|step| step["id"].as_str() == Some("public_candidates"))
+            .unwrap();
+        assert_eq!(
+            producer["run"].as_str(),
+            Some("bash ci/native-release/run.sh verify-build")
+        );
+        for key in ["GH_TOKEN", "GITHUB_TOKEN", "PRIVATE_RELEASE_TOKEN"] {
+            assert!(producer["env"][key].is_null(), "{track_name}:{key}");
+        }
+        assert!(
+            steps(track)
+                .iter()
+                .all(|step| step["id"].as_str() != Some("public_candidates_upload"))
+        );
+    }
     let download = steps(publish)
         .iter()
         .find(|step| step["id"].as_str() == Some("public_candidates_download"))
@@ -79,7 +102,18 @@ fn option1_publication_keeps_the_test_matrix_decoupled_and_requires_native_publi
         .iter()
         .position(|step| step["id"].as_str() == Some("public_candidate_signatures"))
         .unwrap();
-    assert_eq!(needs(signing), BTreeSet::from(["resolve", "verify"]));
+    assert_eq!(
+        needs(signing),
+        BTreeSet::from([
+            "resolve",
+            "linux_track",
+            "windows_track",
+            "macos_track",
+            "android_track",
+            "web_track",
+            "ios_track",
+        ])
+    );
     assert_eq!(signing["environment"].as_str(), Some("package-signing"));
     assert_eq!(signing["permissions"]["contents"].as_str(), Some("read"));
     assert_eq!(signing["permissions"].as_mapping().unwrap().len(), 1);
@@ -192,16 +226,41 @@ fn route_selection_assigns_one_version_draft_owner_and_retains_legacy_acceptance
             assert!(condition.contains("inputs.release_route == 'option1'"));
             assert_eq!(
                 needs(job),
-                BTreeSet::from(["resolve", "verify", "option1_signatures"])
+                BTreeSet::from([
+                    "resolve",
+                    "linux_track",
+                    "windows_track",
+                    "macos_track",
+                    "android_track",
+                    "web_track",
+                    "ios_track",
+                    "option1_signatures",
+                ])
             );
         } else if name == "option1_signatures" {
             assert!(condition.contains("inputs.release_route == 'option1'"));
-            assert_eq!(needs(job), BTreeSet::from(["resolve", "verify"]));
+            assert_eq!(
+                needs(job),
+                BTreeSet::from([
+                    "resolve",
+                    "linux_track",
+                    "windows_track",
+                    "macos_track",
+                    "android_track",
+                    "web_track",
+                    "ios_track",
+                ])
+            );
         } else if ![
             "release_source_approval",
             "resolve",
             "windows_sdk",
-            "verify",
+            "linux_track",
+            "windows_track",
+            "macos_track",
+            "android_track",
+            "web_track",
+            "ios_track",
         ]
         .contains(&name)
         {
@@ -252,7 +311,7 @@ fn every_public_workflow_uses_native_launch_and_contracts_without_legacy_runtime
             "resolve"
         } else if name == "windows_sdk" {
             "windows-sdk"
-        } else if name == "verify" {
+        } else if TRACK_JOBS.iter().any(|(track, _)| *track == name) {
             "verify-build"
         } else if name == "option1_signatures" {
             "sign-public-candidates"
@@ -267,9 +326,13 @@ fn every_public_workflow_uses_native_launch_and_contracts_without_legacy_runtime
             "{name}"
         );
     }
-    for name in ["verify", "validate"] {
-        require_text(&release["jobs"][name], "bash ci/test-native-release.sh");
+    for (track, _) in TRACK_JOBS {
+        require_text(&release["jobs"][track], "bash ci/test-native-release.sh");
     }
+    require_text(
+        &release["jobs"]["validate"],
+        "bash ci/test-native-release.sh",
+    );
     require_text(
         &workflow("contracts")["jobs"]["contracts"],
         "bash ci/test-native-release.sh",
@@ -308,7 +371,12 @@ fn complete_same_run_release_graph_keeps_all_evidence_and_approval_edges() {
         ("resolve", vec!["release_source_approval"]),
         ("windows_sdk", vec!["resolve"]),
         ("integration", vec!["resolve", "windows_sdk"]),
-        ("verify", vec!["resolve", "windows_sdk"]),
+        ("linux_track", vec!["resolve"]),
+        ("windows_track", vec!["resolve", "windows_sdk"]),
+        ("macos_track", vec!["resolve"]),
+        ("android_track", vec!["resolve"]),
+        ("web_track", vec!["resolve"]),
+        ("ios_track", vec!["resolve"]),
         ("validate", vec!["resolve", "integration"]),
         ("downloads", vec!["resolve", "validate"]),
         (
@@ -396,8 +464,31 @@ fn complete_same_run_release_graph_keeps_all_evidence_and_approval_edges() {
                 "external_windows_signing",
             ],
         ),
-        ("publish", vec!["resolve", "verify", "option1_signatures"]),
-        ("option1_signatures", vec!["resolve", "verify"]),
+        (
+            "publish",
+            vec![
+                "resolve",
+                "linux_track",
+                "windows_track",
+                "macos_track",
+                "android_track",
+                "web_track",
+                "ios_track",
+                "option1_signatures",
+            ],
+        ),
+        (
+            "option1_signatures",
+            vec![
+                "resolve",
+                "linux_track",
+                "windows_track",
+                "macos_track",
+                "android_track",
+                "web_track",
+                "ios_track",
+            ],
+        ),
     ];
     assert_eq!(jobs.as_mapping().unwrap().len(), edges.len());
     for (name, parents) in edges {
@@ -409,7 +500,18 @@ fn complete_same_run_release_graph_keeps_all_evidence_and_approval_edges() {
                 && condition.contains("github.ref == 'refs/heads/main'"),
             "{name}"
         );
-        if !["verify", "resolve", "publish"].contains(&name) {
+        if ![
+            "linux_track",
+            "windows_track",
+            "macos_track",
+            "android_track",
+            "web_track",
+            "ios_track",
+            "resolve",
+            "publish",
+        ]
+        .contains(&name)
+        {
             assert!(condition.contains("!inputs.build_only"), "{name}");
         }
     }
@@ -433,11 +535,13 @@ fn complete_same_run_release_graph_keeps_all_evidence_and_approval_edges() {
         task(&jobs["apple_submission"])["env"]["RELEASE_IOS_DELIVERY_RESULT"].as_str(),
         Some("${{ needs.ios_delivery.result }}")
     );
-    let verify = jobs["verify"]["if"].as_str().unwrap();
-    for clause in ["!cancelled()", "needs.resolve.result == 'success'"] {
-        assert!(verify.contains(clause));
+    for (track_name, _) in TRACK_JOBS {
+        let track_if = jobs[track_name]["if"].as_str().unwrap();
+        for clause in ["!cancelled()", "needs.resolve.result == 'success'"] {
+            assert!(track_if.contains(clause), "{track_name}");
+        }
+        assert!(!track_if.contains("always()"), "{track_name}");
     }
-    assert!(!verify.contains("always()"));
     let resolve = jobs["resolve"]["if"].as_str().unwrap();
     for clause in [
         "!cancelled()",
@@ -462,7 +566,12 @@ fn permissions_environments_and_all_task_inputs_keep_exact_step_scope() {
         ("resolve", "read", false, "downloads", "resolve"),
         ("windows_sdk", "read", false, "downloads", "windows"),
         ("integration", "read", false, "downloads", "integration"),
-        ("verify", "read", true, "downloads", "${{ matrix.target }}"),
+        ("linux_track", "read", false, "downloads", "linux"),
+        ("windows_track", "read", true, "downloads", "windows"),
+        ("macos_track", "read", false, "downloads", "macos"),
+        ("android_track", "read", false, "downloads", "android"),
+        ("web_track", "read", false, "downloads", "web"),
+        ("ios_track", "read", false, "downloads", "ios"),
         ("validate", "write", false, "downloads", "validate"),
         (
             "downloads",
@@ -630,12 +739,19 @@ fn permissions_environments_and_all_task_inputs_keep_exact_step_scope() {
         }
         if name == "resolve" {
             assert!(env["STORAGE_CONFIG"].is_null() && env["BUILD_CONFIG"].is_null());
-        } else if name == "verify" {
+        } else if name == "windows_track" {
             assert_eq!(
                 env["STORAGE_CONFIG"].as_str(),
-                Some(
-                    "${{ (!inputs.build_only || matrix.target == 'windows') && secrets.STORAGE_CONFIG || '' }}"
-                )
+                Some("${{ secrets.STORAGE_CONFIG }}")
+            );
+            assert_eq!(
+                env["BUILD_CONFIG"].as_str(),
+                Some("${{ !inputs.build_only && secrets.BUILD_CONFIG || '{}' }}")
+            );
+        } else if TRACK_JOBS.iter().any(|(track, _)| *track == name) {
+            assert_eq!(
+                env["STORAGE_CONFIG"].as_str(),
+                Some("${{ !inputs.build_only && secrets.STORAGE_CONFIG || '' }}")
             );
             assert_eq!(
                 env["BUILD_CONFIG"].as_str(),
@@ -658,9 +774,16 @@ fn permissions_environments_and_all_task_inputs_keep_exact_step_scope() {
             );
         }
         let signing = match name {
-            "verify" => Some(
-                "${{ !inputs.build_only && (matrix.target == 'windows' && secrets.WINDOWS_SIGNING_CONFIG || matrix.target == 'macos' && secrets.MACOS_SIGNING_CONFIG || matrix.target == 'android' && secrets.ANDROID_SIGNING_CONFIG || matrix.target == 'ios' && secrets.IOS_SIGNING_CONFIG || '') || '' }}",
-            ),
+            "windows_track" => {
+                Some("${{ !inputs.build_only && secrets.WINDOWS_SIGNING_CONFIG || '' }}")
+            }
+            "macos_track" => {
+                Some("${{ !inputs.build_only && secrets.MACOS_SIGNING_CONFIG || '' }}")
+            }
+            "android_track" => {
+                Some("${{ !inputs.build_only && secrets.ANDROID_SIGNING_CONFIG || '' }}")
+            }
+            "ios_track" => Some("${{ !inputs.build_only && secrets.IOS_SIGNING_CONFIG || '' }}"),
             "windows_download" | "external_windows_signing" => {
                 Some("${{ secrets.WINDOWS_SIGNING_CONFIG }}")
             }
@@ -676,18 +799,18 @@ fn permissions_environments_and_all_task_inputs_keep_exact_step_scope() {
             _ => None,
         };
         assert_eq!(env["SIGNING_CONFIG"].as_str(), signing, "{name}");
-        if [
-            "verify",
-            "resolve",
-            "integration",
-            "managed_rtc_provider",
-            "option1_signatures",
-        ]
-        .contains(&name)
+        if TRACK_JOBS.iter().any(|(track, _)| *track == name)
+            || [
+                "resolve",
+                "integration",
+                "managed_rtc_provider",
+                "option1_signatures",
+            ]
+            .contains(&name)
         {
             assert!(env["GH_TOKEN"].is_null());
         }
-        if name == "verify" {
+        if TRACK_JOBS.iter().any(|(track, _)| *track == name) {
             for (key, _) in env.as_mapping().unwrap() {
                 assert!(!key.as_str().unwrap().starts_with("APP_STORE_CONNECT_"));
             }
@@ -737,17 +860,33 @@ fn build_integration_installation_and_provider_matrices_remain_complete() {
         matrix_values(&jobs["downloads"], "target"),
         BTreeSet::from(["linux", "macos", "android", "web"])
     );
-    assert_eq!(jobs["verify"]["strategy"]["max-parallel"].as_u64(), Some(6));
-    let expression = jobs["verify"]["strategy"]["matrix"]["target"]
-        .as_str()
-        .unwrap();
-    assert!(
-        expression
-            .contains("fromJSON('[\"linux\",\"windows\",\"macos\",\"android\",\"web\",\"ios\"]')")
-    );
-    let runner = jobs["verify"]["runs-on"].as_str().unwrap();
-    for name in ["windows-2025", "macos-26", "ubuntu-24.04"] {
-        assert!(runner.contains(name));
+    let expected_tracks = [
+        (
+            "linux_track",
+            "ubuntu-24.04",
+            "inputs.verify_target == 'linux'",
+        ),
+        (
+            "windows_track",
+            "windows-2025",
+            "inputs.verify_target == 'windows'",
+        ),
+        ("macos_track", "macos-26", "inputs.verify_target == 'macos'"),
+        (
+            "android_track",
+            "ubuntu-24.04",
+            "inputs.verify_target == 'android'",
+        ),
+        ("web_track", "ubuntu-24.04", "inputs.verify_target == 'web'"),
+        ("ios_track", "macos-26", "inputs.verify_target == 'ios'"),
+    ];
+    for (track_name, runner, target_clause) in expected_tracks {
+        assert_eq!(
+            jobs[track_name]["runs-on"].as_str(),
+            Some(runner),
+            "{track_name}"
+        );
+        require_text(&jobs[track_name], target_clause);
     }
     for row in jobs["installation"]["strategy"]["matrix"]["include"]
         .as_sequence()
@@ -1019,15 +1158,12 @@ fn all_release_evidence_is_encrypted_and_retained_through_selected_private_stora
             }
             assert!(step["with"].is_null());
             if kind == "evaluation" {
-                assert_eq!(name.as_str(), Some("verify"));
+                assert_eq!(name.as_str(), Some("windows_track"));
                 assert_eq!(
                     env["RELEASE_ARTIFACT_SCOPE"].as_str(),
-                    Some("verify-${{ matrix.target }}")
+                    Some("verify-windows")
                 );
-                require_text(
-                    step,
-                    "inputs.preview_windows_self_sign && matrix.target == 'windows'",
-                );
+                require_text(step, "inputs.preview_windows_self_sign");
                 require_text(step, "success()");
             } else {
                 assert_eq!(kind, "diagnostics");
@@ -1046,10 +1182,10 @@ fn all_release_evidence_is_encrypted_and_retained_through_selected_private_stora
     }
     assert!(candidate_exchanges.is_empty());
     assert!(
-        task(&w["jobs"]["verify"])["env"]["WINDOWS_PREVIEW_OUTPUT_DIR"]
+        task(&w["jobs"]["windows_track"])["env"]["WINDOWS_PREVIEW_OUTPUT_DIR"]
             .as_str()
             .unwrap()
-            .contains("inputs.preview_windows_self_sign && matrix.target == 'windows'")
+            .contains("inputs.preview_windows_self_sign")
     );
     assert!(
         !serde_yaml::to_string(&w["jobs"]["publish"])
@@ -1072,11 +1208,23 @@ fn windows_application_jobs_consume_the_same_private_source_bound_sdk() {
         sdk["outputs"]["manifest_sha256"].as_str(),
         Some("${{ steps.sdk.outputs.manifest_sha256 }}")
     );
-    for name in ["integration", "verify", "windows_download"] {
+    for name in ["integration", "windows_track", "windows_download"] {
         assert!(needs(&jobs[name]).contains("windows_sdk"));
         assert_eq!(
             task(&jobs[name])["env"]["LEAPTERM_WINDOWS_SDK_MANIFEST_SHA256"].as_str(),
             Some("${{ needs.windows_sdk.outputs.manifest_sha256 }}")
+        );
+    }
+    for name in [
+        "linux_track",
+        "macos_track",
+        "android_track",
+        "web_track",
+        "ios_track",
+    ] {
+        assert!(
+            !needs(&jobs[name]).contains("windows_sdk"),
+            "{name} must start right after resolve without waiting on windows_sdk"
         );
     }
     require_text(
@@ -1084,8 +1232,8 @@ fn windows_application_jobs_consume_the_same_private_source_bound_sdk() {
         "inputs.verify_target == 'all' || inputs.verify_target == 'slow' || inputs.verify_target == 'windows'",
     );
     require_text(
-        &jobs["verify"],
-        "needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows'",
+        &jobs["windows_track"],
+        "needs.windows_sdk.result == 'success'",
     );
     let policy: serde_json::Value =
         serde_json::from_str(&read("ci/standard-runner-policy.json")).unwrap();
@@ -1406,19 +1554,21 @@ fn run_test_input_gates_verify_contracts_uniformly() {
     let input = &release["on"]["workflow_dispatch"]["inputs"]["run_test"];
     assert_eq!(input["type"].as_str(), Some("boolean"));
     assert_eq!(input["default"].as_bool(), Some(false));
-    let verify_steps = steps(&release["jobs"]["verify"]);
-    for name in [
-        "Install pinned native verification toolchain",
-        "Verify public launcher contracts",
-    ] {
-        let step = verify_steps
-            .iter()
-            .find(|step| step["name"].as_str() == Some(name))
-            .unwrap_or_else(|| panic!("missing verify step {name}"));
-        assert_eq!(
-            step["if"].as_str(),
-            Some("${{ inputs.run_test }}"),
-            "{name} must be gated by inputs.run_test"
-        );
+    for (track_name, _) in TRACK_JOBS {
+        let track_steps = steps(&release["jobs"][track_name]);
+        for name in [
+            "Install pinned native verification toolchain",
+            "Verify public launcher contracts",
+        ] {
+            let step = track_steps
+                .iter()
+                .find(|step| step["name"].as_str() == Some(name))
+                .unwrap_or_else(|| panic!("missing {track_name} step {name}"));
+            assert_eq!(
+                step["if"].as_str(),
+                Some("${{ inputs.run_test }}"),
+                "{track_name}:{name} must be gated by inputs.run_test"
+            );
+        }
     }
 }

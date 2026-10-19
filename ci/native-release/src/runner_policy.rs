@@ -24,6 +24,30 @@ const MAX_DOCUMENTS: usize = 128;
 const MAX_CELLS: usize = 256;
 type Cell = BTreeMap<String, Value>;
 
+const TRACK_JOBS: [(&str, &str); 6] = [
+    ("linux_track", "linux"),
+    ("windows_track", "windows"),
+    ("macos_track", "macos"),
+    ("android_track", "android"),
+    ("web_track", "web"),
+    ("ios_track", "ios"),
+];
+const ALL_TRACK_NEEDS: [&str; 7] = [
+    "resolve",
+    "linux_track",
+    "windows_track",
+    "macos_track",
+    "android_track",
+    "web_track",
+    "ios_track",
+];
+
+fn track_target(job: &str) -> Option<&'static str> {
+    TRACK_JOBS
+        .iter()
+        .find_map(|(name, target)| (*name == job).then_some(*target))
+}
+
 const VERIFY_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}";
 const VERIFY_SDK_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}";
 const PUBLISH_CANDIDATE_IF: &str = "${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}";
@@ -114,32 +138,42 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
             }
             "SIGNING_CONFIG" => {
                 (role == CandidateRole::Produce
-                    && value.as_str()
-                        == Some(
-                            "${{ !inputs.build_only && (matrix.target == 'windows' && secrets.WINDOWS_SIGNING_CONFIG || matrix.target == 'macos' && secrets.MACOS_SIGNING_CONFIG || matrix.target == 'android' && secrets.ANDROID_SIGNING_CONFIG || matrix.target == 'ios' && secrets.IOS_SIGNING_CONFIG || '') || '' }}",
-                        ))
+                    && matches!(
+                        value.as_str(),
+                        Some(
+                            "${{ !inputs.build_only && (matrix.target == 'windows' && secrets.WINDOWS_SIGNING_CONFIG || matrix.target == 'macos' && secrets.MACOS_SIGNING_CONFIG || matrix.target == 'android' && secrets.ANDROID_SIGNING_CONFIG || matrix.target == 'ios' && secrets.IOS_SIGNING_CONFIG || '') || '' }}"
+                                | "${{ !inputs.build_only && secrets.WINDOWS_SIGNING_CONFIG || '' }}"
+                                | "${{ !inputs.build_only && secrets.MACOS_SIGNING_CONFIG || '' }}"
+                                | "${{ !inputs.build_only && secrets.ANDROID_SIGNING_CONFIG || '' }}"
+                                | "${{ !inputs.build_only && secrets.IOS_SIGNING_CONFIG || '' }}"
+                                | ""
+                        )
+                    ))
                     || (role == CandidateRole::Sign
                         && value.as_str() == Some("${{ secrets.PACKAGE_SIGNING_CONFIG }}"))
             }
             "APPLE_CONFIG" => {
                 role == CandidateRole::Produce
-                    && value.as_str()
-                        == Some(
-                            "${{ !inputs.build_only && (matrix.target == 'macos' || matrix.target == 'ios') && secrets.APPLE_CONFIG || '' }}",
+                    && matches!(
+                        value.as_str(),
+                        Some(
+                            "${{ !inputs.build_only && (matrix.target == 'macos' || matrix.target == 'ios') && secrets.APPLE_CONFIG || '' }}"
+                                | "${{ !inputs.build_only && secrets.APPLE_CONFIG || '' }}"
+                                | ""
                         )
+                    )
             }
             "STORAGE_CONFIG" => {
                 value.as_str() == Some("${{ secrets.STORAGE_CONFIG }}")
                     || (role == CandidateRole::Produce
-                        && value.as_str()
-                            == Some(
-                                "${{ matrix.target == 'windows' && secrets.STORAGE_CONFIG || '' }}",
-                            ))
-                    || (role == CandidateRole::Produce
-                        && value.as_str()
-                            == Some(
-                                "${{ (!inputs.build_only || matrix.target == 'windows') && secrets.STORAGE_CONFIG || '' }}",
-                            ))
+                        && matches!(
+                            value.as_str(),
+                            Some(
+                                "${{ matrix.target == 'windows' && secrets.STORAGE_CONFIG || '' }}"
+                                    | "${{ (!inputs.build_only || matrix.target == 'windows') && secrets.STORAGE_CONFIG || '' }}"
+                                    | "${{ !inputs.build_only && secrets.STORAGE_CONFIG || '' }}"
+                            )
+                        ))
             }
             "INPUT_PUBLIC_CANDIDATES_DIR" => {
                 role != CandidateRole::Produce
@@ -162,33 +196,41 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
             }
             "WINDOWS_PREVIEW_OUTPUT_DIR" => {
                 role == CandidateRole::Produce
-                    && value.as_str()
-                        == Some(
-                            "${{ inputs.preview_windows_self_sign && matrix.target == 'windows' && format('{0}/windows-preview', runner.temp) || '' }}",
+                    && matches!(
+                        value.as_str(),
+                        Some(
+                            "${{ inputs.preview_windows_self_sign && matrix.target == 'windows' && format('{0}/windows-preview', runner.temp) || '' }}"
+                                | "${{ inputs.preview_windows_self_sign && format('{0}/windows-preview', runner.temp) || '' }}"
                         )
+                    )
             }
             "LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB" => {
                 role == CandidateRole::Produce
-                    && value.as_str()
-                        == Some(
-                            "${{ !inputs.build_only && matrix.target == 'windows' && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}",
+                    && matches!(
+                        value.as_str(),
+                        Some(
+                            "${{ !inputs.build_only && matrix.target == 'windows' && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}"
+                                | "${{ !inputs.build_only && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}"
                         )
+                    )
             }
-            "SCCACHE_DIR" => {
-                role == CandidateRole::Produce
-                    && value.as_str() == Some("${{ format('{0}/sccache', runner.temp) }}")
-            }
+            "SCCACHE_DIR" => value.as_str() == Some("${{ format('{0}/sccache', runner.temp) }}"),
             "SCCACHE_CONF" => {
-                role == CandidateRole::Produce
-                    && value.as_str()
-                        == Some("${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}")
+                value.as_str()
+                    == Some("${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}")
             }
             "SCCACHE_CACHED_CONF" => {
-                role == CandidateRole::Produce
-                    && value.as_str()
-                        == Some(
-                            "${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}",
-                        )
+                value.as_str()
+                    == Some("${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}")
+            }
+            "CARGO_REGISTRY_CACHE_DIR" => {
+                value.as_str() == Some("${{ format('{0}/cargo-registry-cache', runner.temp) }}")
+            }
+            "LEAP_LAUNCHER_CACHE_DIR" => {
+                value.as_str() == Some("${{ format('{0}/leap-launcher-cache', runner.temp) }}")
+            }
+            "LEAP_NATIVE_STAGE_CACHE_DIR" => {
+                value.as_str() == Some("${{ format('{0}/leap-native-stage-cache', runner.temp) }}")
             }
             "FLUTTER_SDK_CACHE_DIR" => {
                 role == CandidateRole::Produce
@@ -200,35 +242,56 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
             }
             "ANDROID_NDK_CACHE_DIR" => {
                 role == CandidateRole::Produce
-                    && value.as_str()
-                        == Some(
-                            "${{ matrix.target == 'android' && format('{0}/android-ndk-cache', runner.temp) || '' }}",
+                    && matches!(
+                        value.as_str(),
+                        Some(
+                            "${{ matrix.target == 'android' && format('{0}/android-ndk-cache', runner.temp) || '' }}"
+                                | "${{ format('{0}/android-ndk-cache', runner.temp) }}"
                         )
+                    )
+            }
+            "LEAP_LINUX_FREERDP_CACHE_DIR" => {
+                role == CandidateRole::Produce
+                    && matches!(
+                        value.as_str(),
+                        Some(
+                            "${{ matrix.target == 'linux' && format('{0}/linux-freerdp-cache', runner.temp) || '' }}"
+                                | "${{ format('{0}/linux-freerdp-cache', runner.temp) }}"
+                        )
+                    )
             }
             "LEAP_MACOS_FREERDP_CACHE_DIR" => {
                 role == CandidateRole::Produce
-                    && value.as_str()
-                        == Some(
-                            "${{ matrix.target == 'macos' && format('{0}/macos-freerdp-cache', runner.temp) || '' }}",
+                    && matches!(
+                        value.as_str(),
+                        Some(
+                            "${{ matrix.target == 'macos' && format('{0}/macos-freerdp-cache', runner.temp) || '' }}"
+                                | "${{ format('{0}/macos-freerdp-cache', runner.temp) }}"
                         )
+                    )
             }
             "LEAP_MOBILE_FREERDP_CACHE_DIR" => {
                 role == CandidateRole::Produce
-                    && value.as_str()
-                        == Some(
-                            "${{ (matrix.target == 'android' || matrix.target == 'ios') && format('{0}/mobile-freerdp-cache', runner.temp) || '' }}",
+                    && matches!(
+                        value.as_str(),
+                        Some(
+                            "${{ (matrix.target == 'android' || matrix.target == 'ios') && format('{0}/mobile-freerdp-cache', runner.temp) || '' }}"
+                                | "${{ format('{0}/mobile-freerdp-cache', runner.temp) }}"
                         )
+                    )
             }
             "LEAP_MOBILE_SDK_ARCHIVES_DIR" => {
                 role == CandidateRole::Produce
-                    && value.as_str()
-                        == Some(
-                            "${{ (matrix.target == 'android' || matrix.target == 'ios' || matrix.target == 'macos') && format('{0}/mobile-sdk-archives', runner.temp) || '' }}",
+                    && matches!(
+                        value.as_str(),
+                        Some(
+                            "${{ (matrix.target == 'android' || matrix.target == 'ios' || matrix.target == 'macos') && format('{0}/mobile-sdk-archives', runner.temp) || '' }}"
+                                | "${{ format('{0}/mobile-sdk-archives', runner.temp) }}"
                         )
+                    )
             }
             "RUSTC_WRAPPER" | "CARGO_BUILD_RUSTC_WRAPPER" | "LEAP_C_COMPILER_LAUNCHER" => {
-                role == CandidateRole::Produce
-                    && value.as_str() == Some("${{ steps.sccache.outputs.wrapper || '' }}")
+                value.as_str() == Some("${{ steps.sccache.outputs.wrapper || '' }}")
             }
             _ => false,
         };
@@ -249,7 +312,13 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
                 == Some("${{ github.workspace }}/release-public-candidates"))
 }
 
-fn native_candidate_step(step: &Value, id: &str, command: &str, role: CandidateRole) -> bool {
+fn native_candidate_step(
+    step: &Value,
+    id: &str,
+    command: &str,
+    target: &str,
+    role: CandidateRole,
+) -> bool {
     closed_fields(step, &["id", "run", "env"], &["name", "if"])
         && step["id"].as_str() == Some(id)
         && step["run"].as_str() == Some(command)
@@ -275,19 +344,26 @@ fn native_candidate_step(step: &Value, id: &str, command: &str, role: CandidateR
             if role != CandidateRole::Produce {
                 "publish"
             } else {
-                "${{ matrix.target }}"
+                target
             },
             role,
         )
 }
 
-fn private_evaluation_step(step: &Value) -> bool {
+fn private_evaluation_step(step: &Value, target: &str) -> bool {
+    let expected_if = if target == "${{ matrix.target }}" {
+        "${{ success() && inputs.preview_windows_self_sign && matrix.target == 'windows' }}"
+    } else if target == "windows" {
+        "${{ success() && inputs.preview_windows_self_sign }}"
+    } else {
+        return false;
+    };
+    let expected_scope = format!("verify-{target}");
     if !closed_fields(step, &["run", "if", "env"], &["name"])
         || step["run"] != "bash ci/native-release/run.sh retain-artifacts"
-        || step["if"]
-            != "${{ success() && inputs.preview_windows_self_sign && matrix.target == 'windows' }}"
+        || step["if"] != expected_if
         || step["env"]["RELEASE_ARTIFACT_KIND"] != "evaluation"
-        || step["env"]["RELEASE_ARTIFACT_SCOPE"] != "verify-${{ matrix.target }}"
+        || step["env"]["RELEASE_ARTIFACT_SCOPE"] != expected_scope
     {
         return false;
     }
@@ -297,7 +373,7 @@ fn private_evaluation_step(step: &Value) -> bool {
     };
     map.remove("RELEASE_ARTIFACT_KIND");
     map.remove("RELEASE_ARTIFACT_SCOPE");
-    candidate_identity(&env, "${{ matrix.target }}", CandidateRole::Produce)
+    candidate_identity(&env, target, CandidateRole::Produce)
 }
 
 /// Closed declaration check for the three public candidate exchange roles. The
@@ -323,63 +399,83 @@ pub fn reviewed_public_candidate_exchange(
         return None;
     }
     let condition = definition["if"].as_str()?;
-    match job {
-        "verify" => {
-            let sdk_role = condition == VERIFY_SDK_CANDIDATE_IF
-                && exact_needs(&definition["needs"], &["resolve", "windows_sdk"]);
-            if !(condition == VERIFY_CANDIDATE_IF
-                && exact_needs(&definition["needs"], &["resolve"])
-                || sdk_role)
-                || definition["continue-on-error"] != true
-                || definition["environment"] != "downloads"
-                || definition["permissions"]
-                    != if sdk_role {
-                        json!({"contents": "read", "id-token": "write"})
-                    } else {
-                        json!({"contents": "read"})
-                    }
-                || !closed_fields(step, &["id", "if", "uses", "with"], &["name"])
-                || step["id"] != "public_candidates_upload"
-                || steps
-                    .iter()
-                    .filter(|s| s["id"] == "public_candidates_upload")
-                    .count()
-                    != 1
-                || step["if"]
-                    != "${{ success() && matrix.target != 'ios' && !inputs.build_only && inputs.release_route == 'option1' }}"
-                || step["uses"]
-                    != "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
-                || step["with"]
-                    != json!({"name": "public-candidates-${{ matrix.target }}", "path": "${{ runner.temp }}/reviewed-public-candidates/${{ matrix.target }}", "if-no-files-found": "error", "retention-days": 7, "compression-level": 0})
-            {
-                return None;
-            }
-            let producer = steps.iter().position(|s| s["id"] == "public_candidates")?;
-            if producer >= index
-                || steps
-                    .iter()
-                    .filter(|s| s["id"] == "public_candidates")
-                    .count()
-                    != 1
-                || !native_candidate_step(
-                    &steps[producer],
-                    "public_candidates",
-                    "bash ci/native-release/run.sh verify-build",
-                    CandidateRole::Produce,
-                )
-                || (!sdk_role
-                    && steps[producer]["env"]
-                        .get("LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB")
-                        .is_some())
-                || index - producer > 2
-                || steps[producer + 1..index]
-                    .iter()
-                    .any(|s| !private_evaluation_step(s))
-            {
-                return None;
-            }
-            Some("upload")
+    let verify_target = if job == "verify" {
+        Some("${{ matrix.target }}")
+    } else {
+        track_target(job)
+    };
+    if let Some(target) = verify_target {
+        let sdk_role = (job == "verify"
+            && condition == VERIFY_SDK_CANDIDATE_IF
+            && exact_needs(&definition["needs"], &["resolve", "windows_sdk"]))
+            || (job == "windows_track"
+                && exact_needs(&definition["needs"], &["resolve", "windows_sdk"]));
+        let non_sdk_role = (job == "verify"
+            && condition == VERIFY_CANDIDATE_IF
+            && exact_needs(&definition["needs"], &["resolve"]))
+            || (job != "verify"
+                && job != "windows_track"
+                && exact_needs(&definition["needs"], &["resolve"]));
+        let expected_upload_if = if job == "verify" {
+            "${{ success() && matrix.target != 'ios' && !inputs.build_only && inputs.release_route == 'option1' }}"
+        } else {
+            "${{ success() && !inputs.build_only && inputs.release_route == 'option1' }}"
+        };
+        if !(non_sdk_role || sdk_role)
+            || !condition.contains("!cancelled()")
+            || !condition.contains("needs.resolve.result == 'success'")
+            || !condition.contains("github.repository == 'omnisolo-llc/leapterm-release'")
+            || !condition.contains("github.ref == 'refs/heads/main'")
+            || definition["continue-on-error"] != true
+            || definition["environment"] != "downloads"
+            || definition["permissions"]
+                != if sdk_role {
+                    json!({"contents": "read", "id-token": "write"})
+                } else {
+                    json!({"contents": "read"})
+                }
+            || !closed_fields(step, &["id", "if", "uses", "with"], &["name"])
+            || step["id"] != "public_candidates_upload"
+            || steps
+                .iter()
+                .filter(|s| s["id"] == "public_candidates_upload")
+                .count()
+                != 1
+            || step["if"] != expected_upload_if
+            || step["uses"] != "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+            || step["with"]
+                != json!({"name": format!("public-candidates-{target}"), "path": format!("${{{{ runner.temp }}}}/reviewed-public-candidates/{target}"), "if-no-files-found": "error", "retention-days": 7, "compression-level": 0})
+        {
+            return None;
         }
+        let producer = steps.iter().position(|s| s["id"] == "public_candidates")?;
+        if producer >= index
+            || steps
+                .iter()
+                .filter(|s| s["id"] == "public_candidates")
+                .count()
+                != 1
+            || !native_candidate_step(
+                &steps[producer],
+                "public_candidates",
+                "bash ci/native-release/run.sh verify-build",
+                target,
+                CandidateRole::Produce,
+            )
+            || (!sdk_role
+                && steps[producer]["env"]
+                    .get("LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB")
+                    .is_some())
+            || index - producer > 2
+            || steps[producer + 1..index]
+                .iter()
+                .any(|s| !private_evaluation_step(s, target))
+        {
+            return None;
+        }
+        return Some("upload");
+    }
+    match job {
         "publish" | "option1_signatures" => {
             let (expected_if, environment, contents, download, native, command, role) =
                 if job == "publish" {
@@ -403,8 +499,24 @@ pub fn reviewed_public_candidate_exchange(
                         CandidateRole::Sign,
                     )
                 };
+            let valid_needs = exact_needs(&definition["needs"], &["resolve", "verify"])
+                || exact_needs(&definition["needs"], &ALL_TRACK_NEEDS)
+                || (job == "publish"
+                    && exact_needs(
+                        &definition["needs"],
+                        &[
+                            "resolve",
+                            "linux_track",
+                            "windows_track",
+                            "macos_track",
+                            "android_track",
+                            "web_track",
+                            "ios_track",
+                            "option1_signatures",
+                        ],
+                    ));
             if condition != expected_if
-                || !exact_needs(&definition["needs"], &["resolve", "verify"])
+                || !valid_needs
                 || definition["environment"] != environment
                 || definition["permissions"] != json!({"contents": contents})
                 || !definition["continue-on-error"].is_null()
@@ -415,7 +527,7 @@ pub fn reviewed_public_candidate_exchange(
                     != "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
                 || step["with"]
                     != json!({"pattern": "public-candidates-*", "path": "release-public-candidates", "merge-multiple": false})
-                || !native_candidate_step(steps.get(index + 1)?, native, command, role)
+                || !native_candidate_step(steps.get(index + 1)?, native, command, "publish", role)
                 || steps.iter().filter(|s| s["id"] == native).count() != 1
             {
                 return None;
@@ -436,10 +548,24 @@ pub fn reviewed_windows_sdk_cache(
         && job == "windows_sdk"
         && definition["environment"] == "downloads"
         && definition["permissions"] == json!({"contents": "read"})
-        && step["id"] == "sdk_cache"
         && step["uses"] == "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
-        && step["with"]["key"]
-            == "windows-native-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"
+        && matches!(
+            (step["id"].as_str(), step["with"]["key"].as_str()),
+            (
+                Some("sdk_cache"),
+                Some(
+                    "windows-native-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"
+                ),
+            ) | (
+                Some("sccache_cache"),
+                Some(
+                    "sccache-v1-${{ runner.os }}-windows-sdk-${{ needs.resolve.outputs.source_sha }}"
+                ),
+            ) | (
+                Some("cargo_registry_cache"),
+                Some("cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"),
+            )
+        )
 }
 
 pub fn reviewed_build_cache(workflow: &str, job: &str, definition: &Value, step: &Value) -> bool {
@@ -447,43 +573,100 @@ pub fn reviewed_build_cache(workflow: &str, job: &str, definition: &Value, step:
         return true;
     }
     if workflow != "release.yml"
-        || job != "verify"
-        || definition["environment"] != "downloads"
-        || definition["permissions"] != json!({"contents": "read", "id-token": "write"})
         || step["uses"] != "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
     {
         return false;
     }
-    matches!(
-        (step["id"].as_str(), step["with"]["key"].as_str(),),
-        (
-            Some("sccache_cache"),
-            Some(
-                "sccache-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}"
-            ),
-        ) | (
-            Some("flutter_sdk_cache"),
-            Some("flutter-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"),
-        ) | (
-            Some("pub_cache"),
-            Some(
-                "pub-cache-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}"
-            ),
-        ) | (
-            Some("android_ndk_cache"),
-            Some("android-ndk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"),
-        ) | (
-            Some("mobile_freerdp_cache"),
-            Some(
-                "mobile-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}"
-            ),
-        ) | (
-            Some("macos_freerdp_cache"),
-            Some(
-                "macos-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}"
-            ),
-        )
-    )
+    if job == "option1_signatures"
+        && definition["environment"] == "package-signing"
+        && definition["permissions"] == json!({"contents": "read"})
+    {
+        return matches!(
+            (step["id"].as_str(), step["with"]["key"].as_str()),
+            (
+                Some("sccache_cache"),
+                Some(
+                    "sccache-v1-${{ runner.os }}-option1-signatures-${{ needs.resolve.outputs.source_sha }}"
+                ),
+            ) | (
+                Some("cargo_registry_cache"),
+                Some("cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"),
+            )
+        );
+    }
+    if job == "publish"
+        && definition["environment"] == "public-release"
+        && definition["permissions"] == json!({"contents": "write"})
+    {
+        return matches!(
+            (step["id"].as_str(), step["with"]["key"].as_str()),
+            (
+                Some("sccache_cache"),
+                Some("sccache-v1-${{ runner.os }}-publish-${{ needs.resolve.outputs.source_sha }}"),
+            ) | (
+                Some("cargo_registry_cache"),
+                Some("cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"),
+            )
+        );
+    }
+    let Some(target) = (job == "verify")
+        .then_some("${{ matrix.target }}")
+        .or_else(|| track_target(job))
+    else {
+        return false;
+    };
+    let expected_permissions = if job == "verify" || job == "windows_track" {
+        json!({"contents": "read", "id-token": "write"})
+    } else {
+        json!({"contents": "read"})
+    };
+    if definition["environment"] != "downloads"
+        || (definition["permissions"] != expected_permissions
+            && definition["permissions"] != json!({"contents": "read", "id-token": "write"}))
+    {
+        return false;
+    }
+    let Some(id) = step["id"].as_str() else {
+        return false;
+    };
+    let Some(key) = step["with"]["key"].as_str() else {
+        return false;
+    };
+    (id == "sccache_cache"
+        && key
+            == format!(
+                "sccache-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}"
+            ))
+        || (id == "cargo_registry_cache"
+            && key == "cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}")
+        || (id == "flutter_sdk_cache"
+            && key == "flutter-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}")
+        || (id == "pub_cache"
+            && key
+                == format!(
+                    "pub-cache-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}"
+                ))
+        || (id == "linux_freerdp_cache"
+            && matches!(target, "linux" | "${{ matrix.target }}")
+            && key
+                == format!(
+                    "linux-freerdp-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}"
+                ))
+        || (id == "android_ndk_cache"
+            && matches!(target, "android" | "${{ matrix.target }}")
+            && key == "android-ndk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}")
+        || (id == "mobile_freerdp_cache"
+            && matches!(target, "android" | "ios" | "${{ matrix.target }}")
+            && key
+                == format!(
+                    "mobile-freerdp-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}"
+                ))
+        || (id == "macos_freerdp_cache"
+            && matches!(target, "macos" | "${{ matrix.target }}")
+            && key
+                == format!(
+                    "macos-freerdp-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}"
+                ))
 }
 
 fn identifier(value: &str) -> bool {
@@ -871,6 +1054,12 @@ impl Audit {
             if !self.active.is_empty() {
                 for (job, kind) in [
                     ("verify", "upload"),
+                    ("linux_track", "upload"),
+                    ("windows_track", "upload"),
+                    ("macos_track", "upload"),
+                    ("android_track", "upload"),
+                    ("web_track", "upload"),
+                    ("ios_track", "upload"),
                     ("publish", "download"),
                     ("option1_signatures", "download"),
                 ] {

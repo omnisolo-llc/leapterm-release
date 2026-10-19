@@ -162,6 +162,29 @@ jobs:
           key: windows-native-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
           restore-keys: |
             windows-native-sdk-v1-${{ runner.os }}-
+      - name: Cache sccache compiler objects
+        id: sccache_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-v1-${{ runner.os }}-windows-sdk-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            sccache-v1-${{ runner.os }}-windows-sdk-
+            sccache-v1-${{ runner.os }}-
+      - name: Cache Cargo registry and native stage tools
+        id: cargo_registry_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/cargo-registry-cache
+            ${{ runner.temp }}/leap-launcher-cache
+            ${{ runner.temp }}/leap-native-stage-cache
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-
+      - name: Install pinned sccache compiler launcher
+        id: sccache
+        run: node ci/install-sccache.mjs
       - name: Produce and retain the complete reviewed SDK privately
         id: sdk
         run: bash ci/native-release/run.sh windows-sdk
@@ -179,6 +202,15 @@ jobs:
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
       - name: Retain encrypted diagnostics privately
         if: ${{ always() }}
         run: bash ci/native-release/run.sh retain-artifacts
@@ -197,6 +229,9 @@ jobs:
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           RELEASE_ARTIFACT_KIND: diagnostics
           RELEASE_ARTIFACT_SCOPE: windows-sdk
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
 
   integration:
     name: Actual ${{ matrix.platform }} application integration
@@ -328,21 +363,15 @@ jobs:
           RELEASE_ARTIFACT_KIND: diagnostics
           RELEASE_ARTIFACT_SCOPE: integration-${{ matrix.platform }}
 
-  verify:
-    name: Verify ${{ matrix.target }} build (${{ needs.resolve.outputs.workflow_id }})
-    needs: [resolve, windows_sdk]
-    if: ${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+  linux_track:
+    name: Linux track (${{ needs.resolve.outputs.workflow_id }})
+    needs: [resolve]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'fast' || inputs.verify_target == 'linux') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
     continue-on-error: true
     environment: downloads
     permissions:
       contents: read
-      id-token: write
-    strategy:
-      fail-fast: false
-      max-parallel: 6
-      matrix:
-        target: ${{ inputs.verify_target == 'all' && fromJSON('["linux","windows","macos","android","web","ios"]') || inputs.verify_target == 'fast' && fromJSON('["linux","android","web"]') || inputs.verify_target == 'slow' && fromJSON('["windows","macos","ios"]') || fromJSON(format('["{0}"]', inputs.verify_target)) }}
-    runs-on: ${{ matrix.target == 'windows' && 'windows-2025' || ((matrix.target == 'macos' || matrix.target == 'ios') && 'macos-26' || 'ubuntu-24.04') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -351,20 +380,26 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.21.0'
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
-        if: matrix.target == 'android'
-        with:
-          distribution: temurin
-          java-version: '17.0.20+101'
       - name: Cache sccache compiler objects
         id: sccache_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}
+          key: sccache-v1-${{ runner.os }}-linux-${{ needs.resolve.outputs.source_sha }}
           restore-keys: |
-            sccache-v1-${{ runner.os }}-${{ matrix.target }}-
+            sccache-v1-${{ runner.os }}-linux-
             sccache-v1-${{ runner.os }}-
+      - name: Cache Cargo registry and native stage tools
+        id: cargo_registry_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/cargo-registry-cache
+            ${{ runner.temp }}/leap-launcher-cache
+            ${{ runner.temp }}/leap-native-stage-cache
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-
       - name: Cache pinned Flutter SDK git clone
         id: flutter_sdk_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -378,41 +413,139 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pub-cache
-          key: pub-cache-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}
+          key: pub-cache-v1-${{ runner.os }}-linux-${{ needs.resolve.outputs.source_sha }}
           restore-keys: |
-            pub-cache-v1-${{ runner.os }}-${{ matrix.target }}-
+            pub-cache-v1-${{ runner.os }}-linux-
             pub-cache-v1-${{ runner.os }}-
-      - name: Cache Android NDK toolchain
-        id: android_ndk_cache
-        if: matrix.target == 'android'
+      - name: Cache Linux FreeRDP SDK
+        id: linux_freerdp_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/android-ndk-cache
-          key: android-ndk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          path: ${{ runner.temp }}/linux-freerdp-cache
+          key: linux-freerdp-v1-${{ runner.os }}-linux-${{ needs.resolve.outputs.source_sha }}
           restore-keys: |
-            android-ndk-v1-${{ runner.os }}-
-      - name: Cache mobile FreeRDP static SDK and source archives
-        id: mobile_freerdp_cache
-        if: matrix.target == 'android' || matrix.target == 'ios'
+            linux-freerdp-v1-${{ runner.os }}-linux-
+      - name: Install pinned sccache compiler launcher
+        id: sccache
+        run: node ci/install-sccache.mjs
+      - name: Install pinned native verification toolchain
+        if: ${{ inputs.run_test }}
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
+      - name: Verify public launcher contracts
+        if: ${{ inputs.run_test }}
+        run: |
+          bash ci/test-native-release.sh
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+      - name: Verify build without publishing
+        id: public_candidates
+        run: bash ci/native-release/run.sh verify-build
+        env:
+          RELEASE_TARGET: linux
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ !inputs.build_only && secrets.BUILD_CONFIG || '{}' }}
+          STORAGE_CONFIG: ${{ !inputs.build_only && secrets.STORAGE_CONFIG || '' }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          FLUTTER_SDK_CACHE_DIR: ${{ format('{0}/flutter-sdk-cache', runner.temp) }}
+          PUB_CACHE_DIR: ${{ format('{0}/pub-cache', runner.temp) }}
+          LEAP_LINUX_FREERDP_CACHE_DIR: ${{ format('{0}/linux-freerdp-cache', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: linux
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: verify-linux
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+
+  windows_track:
+    name: Windows track (${{ needs.resolve.outputs.workflow_id }})
+    needs: [resolve, windows_sdk]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.windows_sdk.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'slow' || inputs.verify_target == 'windows') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+    continue-on-error: true
+    environment: downloads
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: windows-2025
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+      - name: Cache sccache compiler objects
+        id: sccache_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-v1-${{ runner.os }}-windows-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            sccache-v1-${{ runner.os }}-windows-
+            sccache-v1-${{ runner.os }}-
+      - name: Cache Cargo registry and native stage tools
+        id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ${{ runner.temp }}/mobile-freerdp-cache
-            ${{ runner.temp }}/mobile-sdk-archives
-          key: mobile-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}
+            ${{ runner.temp }}/cargo-registry-cache
+            ${{ runner.temp }}/leap-launcher-cache
+            ${{ runner.temp }}/leap-native-stage-cache
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
           restore-keys: |
-            mobile-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-
-      - name: Cache macOS FreeRDP SDK and source archives
-        id: macos_freerdp_cache
-        if: matrix.target == 'macos'
+            cargo-registry-v1-${{ runner.os }}-
+      - name: Cache pinned Flutter SDK git clone
+        id: flutter_sdk_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ${{ runner.temp }}/macos-freerdp-cache
-            ${{ runner.temp }}/mobile-sdk-archives
-          key: macos-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}
+          path: ${{ runner.temp }}/flutter-sdk-cache
+          key: flutter-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
           restore-keys: |
-            macos-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-
+            flutter-sdk-v1-${{ runner.os }}-
+      - name: Cache Dart pub packages
+        id: pub_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pub-cache
+          key: pub-cache-v1-${{ runner.os }}-windows-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            pub-cache-v1-${{ runner.os }}-windows-
+            pub-cache-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
         id: sccache
         run: node ci/install-sccache.mjs
@@ -425,7 +558,7 @@ jobs:
           bash ci/test-native-release.sh
           node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
       - name: Prepare pinned Windows verification signing client
-        if: ${{ !inputs.build_only && matrix.target == 'windows' }}
+        if: ${{ !inputs.build_only }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -445,7 +578,7 @@ jobs:
         id: public_candidates
         run: bash ci/native-release/run.sh verify-build
         env:
-          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_TARGET: windows
           LEAPTERM_WINDOWS_SDK_MANIFEST_SHA256: ${{ needs.windows_sdk.outputs.manifest_sha256 }}
           LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
           LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
@@ -462,28 +595,26 @@ jobs:
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
           BUILD_CONFIG: ${{ !inputs.build_only && secrets.BUILD_CONFIG || '{}' }}
-          SIGNING_CONFIG: ${{ !inputs.build_only && (matrix.target == 'windows' && secrets.WINDOWS_SIGNING_CONFIG || matrix.target == 'macos' && secrets.MACOS_SIGNING_CONFIG || matrix.target == 'android' && secrets.ANDROID_SIGNING_CONFIG || matrix.target == 'ios' && secrets.IOS_SIGNING_CONFIG || '') || '' }}
-          APPLE_CONFIG: ${{ !inputs.build_only && (matrix.target == 'macos' || matrix.target == 'ios') && secrets.APPLE_CONFIG || '' }}
-          LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB: ${{ !inputs.build_only && matrix.target == 'windows' && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}
-          STORAGE_CONFIG: ${{ (!inputs.build_only || matrix.target == 'windows') && secrets.STORAGE_CONFIG || '' }}
-          WINDOWS_PREVIEW_OUTPUT_DIR: ${{ inputs.preview_windows_self_sign && matrix.target == 'windows' && format('{0}/windows-preview', runner.temp) || '' }}
+          SIGNING_CONFIG: ${{ !inputs.build_only && secrets.WINDOWS_SIGNING_CONFIG || '' }}
+          LEAP_WINDOWS_ARTIFACT_SIGNING_DLIB: ${{ !inputs.build_only && format('{0}/artifact-signing/package/bin/x64/Azure.CodeSigning.Dlib.dll', runner.temp) || '' }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          WINDOWS_PREVIEW_OUTPUT_DIR: ${{ inputs.preview_windows_self_sign && format('{0}/windows-preview', runner.temp) || '' }}
           SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
           SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
           SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
           FLUTTER_SDK_CACHE_DIR: ${{ format('{0}/flutter-sdk-cache', runner.temp) }}
           PUB_CACHE_DIR: ${{ format('{0}/pub-cache', runner.temp) }}
-          ANDROID_NDK_CACHE_DIR: ${{ matrix.target == 'android' && format('{0}/android-ndk-cache', runner.temp) || '' }}
-          LEAP_MACOS_FREERDP_CACHE_DIR: ${{ matrix.target == 'macos' && format('{0}/macos-freerdp-cache', runner.temp) || '' }}
-          LEAP_MOBILE_FREERDP_CACHE_DIR: ${{ (matrix.target == 'android' || matrix.target == 'ios') && format('{0}/mobile-freerdp-cache', runner.temp) || '' }}
-          LEAP_MOBILE_SDK_ARCHIVES_DIR: ${{ (matrix.target == 'android' || matrix.target == 'ios' || matrix.target == 'macos') && format('{0}/mobile-sdk-archives', runner.temp) || '' }}
           RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
           CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
           LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
       - name: Retain recipient-encrypted Windows evaluation privately
-        if: ${{ success() && inputs.preview_windows_self_sign && matrix.target == 'windows' }}
+        if: ${{ success() && inputs.preview_windows_self_sign }}
         run: bash ci/native-release/run.sh retain-artifacts
         env:
-          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_TARGET: windows
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
@@ -496,12 +627,15 @@ jobs:
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           RELEASE_ARTIFACT_KIND: evaluation
-          RELEASE_ARTIFACT_SCOPE: verify-${{ matrix.target }}
+          RELEASE_ARTIFACT_SCOPE: verify-windows
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
       - name: Retain encrypted diagnostics privately
         if: ${{ always() }}
         run: bash ci/native-release/run.sh retain-artifacts
         env:
-          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_TARGET: windows
           RELEASE_REQUEST: ${{ toJSON(inputs) }}
           RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
@@ -514,7 +648,540 @@ jobs:
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           RELEASE_ARTIFACT_KIND: diagnostics
-          RELEASE_ARTIFACT_SCOPE: verify-${{ matrix.target }}
+          RELEASE_ARTIFACT_SCOPE: verify-windows
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+
+  macos_track:
+    name: macOS track (${{ needs.resolve.outputs.workflow_id }})
+    needs: [resolve]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'slow' || inputs.verify_target == 'macos') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+    continue-on-error: true
+    environment: downloads
+    permissions:
+      contents: read
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+      - name: Cache sccache compiler objects
+        id: sccache_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-v1-${{ runner.os }}-macos-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            sccache-v1-${{ runner.os }}-macos-
+            sccache-v1-${{ runner.os }}-
+      - name: Cache Cargo registry and native stage tools
+        id: cargo_registry_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/cargo-registry-cache
+            ${{ runner.temp }}/leap-launcher-cache
+            ${{ runner.temp }}/leap-native-stage-cache
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-
+      - name: Cache pinned Flutter SDK git clone
+        id: flutter_sdk_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/flutter-sdk-cache
+          key: flutter-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            flutter-sdk-v1-${{ runner.os }}-
+      - name: Cache Dart pub packages
+        id: pub_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pub-cache
+          key: pub-cache-v1-${{ runner.os }}-macos-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            pub-cache-v1-${{ runner.os }}-macos-
+            pub-cache-v1-${{ runner.os }}-
+      - name: Cache macOS FreeRDP SDK and source archives
+        id: macos_freerdp_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/macos-freerdp-cache
+            ${{ runner.temp }}/mobile-sdk-archives
+          key: macos-freerdp-v1-${{ runner.os }}-macos-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            macos-freerdp-v1-${{ runner.os }}-macos-
+      - name: Install pinned sccache compiler launcher
+        id: sccache
+        run: node ci/install-sccache.mjs
+      - name: Install pinned native verification toolchain
+        if: ${{ inputs.run_test }}
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
+      - name: Verify public launcher contracts
+        if: ${{ inputs.run_test }}
+        run: |
+          bash ci/test-native-release.sh
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+      - name: Verify build without publishing
+        id: public_candidates
+        run: bash ci/native-release/run.sh verify-build
+        env:
+          RELEASE_TARGET: macos
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ !inputs.build_only && secrets.BUILD_CONFIG || '{}' }}
+          SIGNING_CONFIG: ${{ !inputs.build_only && secrets.MACOS_SIGNING_CONFIG || '' }}
+          APPLE_CONFIG: ${{ !inputs.build_only && secrets.APPLE_CONFIG || '' }}
+          STORAGE_CONFIG: ${{ !inputs.build_only && secrets.STORAGE_CONFIG || '' }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          FLUTTER_SDK_CACHE_DIR: ${{ format('{0}/flutter-sdk-cache', runner.temp) }}
+          PUB_CACHE_DIR: ${{ format('{0}/pub-cache', runner.temp) }}
+          LEAP_MACOS_FREERDP_CACHE_DIR: ${{ format('{0}/macos-freerdp-cache', runner.temp) }}
+          LEAP_MOBILE_SDK_ARCHIVES_DIR: ${{ format('{0}/mobile-sdk-archives', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: macos
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: verify-macos
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+
+  android_track:
+    name: Android track (${{ needs.resolve.outputs.workflow_id }})
+    needs: [resolve]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'fast' || inputs.verify_target == 'android') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+    continue-on-error: true
+    environment: downloads
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17.0.20+101'
+      - name: Cache sccache compiler objects
+        id: sccache_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            sccache-v1-${{ runner.os }}-android-
+            sccache-v1-${{ runner.os }}-
+      - name: Cache Cargo registry and native stage tools
+        id: cargo_registry_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/cargo-registry-cache
+            ${{ runner.temp }}/leap-launcher-cache
+            ${{ runner.temp }}/leap-native-stage-cache
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-
+      - name: Cache pinned Flutter SDK git clone
+        id: flutter_sdk_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/flutter-sdk-cache
+          key: flutter-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            flutter-sdk-v1-${{ runner.os }}-
+      - name: Cache Dart pub packages
+        id: pub_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pub-cache
+          key: pub-cache-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            pub-cache-v1-${{ runner.os }}-android-
+            pub-cache-v1-${{ runner.os }}-
+      - name: Cache Android NDK toolchain
+        id: android_ndk_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/android-ndk-cache
+          key: android-ndk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            android-ndk-v1-${{ runner.os }}-
+      - name: Cache mobile FreeRDP static SDK and source archives
+        id: mobile_freerdp_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/mobile-freerdp-cache
+            ${{ runner.temp }}/mobile-sdk-archives
+          key: mobile-freerdp-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            mobile-freerdp-v1-${{ runner.os }}-android-
+      - name: Install pinned sccache compiler launcher
+        id: sccache
+        run: node ci/install-sccache.mjs
+      - name: Install pinned native verification toolchain
+        if: ${{ inputs.run_test }}
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
+      - name: Verify public launcher contracts
+        if: ${{ inputs.run_test }}
+        run: |
+          bash ci/test-native-release.sh
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+      - name: Verify build without publishing
+        id: public_candidates
+        run: bash ci/native-release/run.sh verify-build
+        env:
+          RELEASE_TARGET: android
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ !inputs.build_only && secrets.BUILD_CONFIG || '{}' }}
+          SIGNING_CONFIG: ${{ !inputs.build_only && secrets.ANDROID_SIGNING_CONFIG || '' }}
+          STORAGE_CONFIG: ${{ !inputs.build_only && secrets.STORAGE_CONFIG || '' }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          FLUTTER_SDK_CACHE_DIR: ${{ format('{0}/flutter-sdk-cache', runner.temp) }}
+          PUB_CACHE_DIR: ${{ format('{0}/pub-cache', runner.temp) }}
+          ANDROID_NDK_CACHE_DIR: ${{ format('{0}/android-ndk-cache', runner.temp) }}
+          LEAP_MOBILE_FREERDP_CACHE_DIR: ${{ format('{0}/mobile-freerdp-cache', runner.temp) }}
+          LEAP_MOBILE_SDK_ARCHIVES_DIR: ${{ format('{0}/mobile-sdk-archives', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: android
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: verify-android
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+
+  web_track:
+    name: Web track (${{ needs.resolve.outputs.workflow_id }})
+    needs: [resolve]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'fast' || inputs.verify_target == 'web') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+    continue-on-error: true
+    environment: downloads
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+      - name: Cache sccache compiler objects
+        id: sccache_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-v1-${{ runner.os }}-web-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            sccache-v1-${{ runner.os }}-web-
+            sccache-v1-${{ runner.os }}-
+      - name: Cache Cargo registry and native stage tools
+        id: cargo_registry_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/cargo-registry-cache
+            ${{ runner.temp }}/leap-launcher-cache
+            ${{ runner.temp }}/leap-native-stage-cache
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-
+      - name: Cache pinned Flutter SDK git clone
+        id: flutter_sdk_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/flutter-sdk-cache
+          key: flutter-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            flutter-sdk-v1-${{ runner.os }}-
+      - name: Cache Dart pub packages
+        id: pub_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pub-cache
+          key: pub-cache-v1-${{ runner.os }}-web-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            pub-cache-v1-${{ runner.os }}-web-
+            pub-cache-v1-${{ runner.os }}-
+      - name: Install pinned sccache compiler launcher
+        id: sccache
+        run: node ci/install-sccache.mjs
+      - name: Install pinned native verification toolchain
+        if: ${{ inputs.run_test }}
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
+      - name: Verify public launcher contracts
+        if: ${{ inputs.run_test }}
+        run: |
+          bash ci/test-native-release.sh
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+      - name: Verify build without publishing
+        id: public_candidates
+        run: bash ci/native-release/run.sh verify-build
+        env:
+          RELEASE_TARGET: web
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ !inputs.build_only && secrets.BUILD_CONFIG || '{}' }}
+          STORAGE_CONFIG: ${{ !inputs.build_only && secrets.STORAGE_CONFIG || '' }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          FLUTTER_SDK_CACHE_DIR: ${{ format('{0}/flutter-sdk-cache', runner.temp) }}
+          PUB_CACHE_DIR: ${{ format('{0}/pub-cache', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: web
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: verify-web
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+
+  ios_track:
+    name: iOS track (${{ needs.resolve.outputs.workflow_id }})
+    needs: [resolve]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'slow' || inputs.verify_target == 'ios') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+    continue-on-error: true
+    environment: downloads
+    permissions:
+      contents: read
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+      - name: Cache sccache compiler objects
+        id: sccache_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-v1-${{ runner.os }}-ios-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            sccache-v1-${{ runner.os }}-ios-
+            sccache-v1-${{ runner.os }}-
+      - name: Cache Cargo registry and native stage tools
+        id: cargo_registry_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/cargo-registry-cache
+            ${{ runner.temp }}/leap-launcher-cache
+            ${{ runner.temp }}/leap-native-stage-cache
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-
+      - name: Cache pinned Flutter SDK git clone
+        id: flutter_sdk_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/flutter-sdk-cache
+          key: flutter-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            flutter-sdk-v1-${{ runner.os }}-
+      - name: Cache Dart pub packages
+        id: pub_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pub-cache
+          key: pub-cache-v1-${{ runner.os }}-ios-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            pub-cache-v1-${{ runner.os }}-ios-
+            pub-cache-v1-${{ runner.os }}-
+      - name: Cache mobile FreeRDP static SDK and source archives
+        id: mobile_freerdp_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/mobile-freerdp-cache
+            ${{ runner.temp }}/mobile-sdk-archives
+          key: mobile-freerdp-v1-${{ runner.os }}-ios-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            mobile-freerdp-v1-${{ runner.os }}-ios-
+      - name: Install pinned sccache compiler launcher
+        id: sccache
+        run: node ci/install-sccache.mjs
+      - name: Install pinned native verification toolchain
+        if: ${{ inputs.run_test }}
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
+      - name: Verify public launcher contracts
+        if: ${{ inputs.run_test }}
+        run: |
+          bash ci/test-native-release.sh
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+      - name: Verify build without publishing
+        id: public_candidates
+        run: bash ci/native-release/run.sh verify-build
+        env:
+          RELEASE_TARGET: ios
+          LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
+          LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_PUBLISHER_KEY_BASE64 }}
+          LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64: ${{ vars.LEAP_WINDOWS_SUITE_APPROVAL_KEY_BASE64 }}
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          BUILD_CONFIG: ${{ !inputs.build_only && secrets.BUILD_CONFIG || '{}' }}
+          SIGNING_CONFIG: ${{ !inputs.build_only && secrets.IOS_SIGNING_CONFIG || '' }}
+          APPLE_CONFIG: ${{ !inputs.build_only && secrets.APPLE_CONFIG || '' }}
+          STORAGE_CONFIG: ${{ !inputs.build_only && secrets.STORAGE_CONFIG || '' }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          FLUTTER_SDK_CACHE_DIR: ${{ format('{0}/flutter-sdk-cache', runner.temp) }}
+          PUB_CACHE_DIR: ${{ format('{0}/pub-cache', runner.temp) }}
+          LEAP_MOBILE_FREERDP_CACHE_DIR: ${{ format('{0}/mobile-freerdp-cache', runner.temp) }}
+          LEAP_MOBILE_SDK_ARCHIVES_DIR: ${{ format('{0}/mobile-sdk-archives', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
+      - name: Retain encrypted diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: ios
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: verify-ios
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
 
   validate:
     name: Validate release (${{ needs.resolve.outputs.workflow_id }})
@@ -1576,7 +2243,7 @@ jobs:
 
   option1_signatures:
     name: Sign exact verified public candidate bytes
-    needs: [resolve, verify]
+    needs: [resolve, linux_track, windows_track, macos_track, android_track, web_track, ios_track]
     if: ${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}
     environment: package-signing
     runs-on: ubuntu-24.04
@@ -1591,6 +2258,29 @@ jobs:
         with:
           node-version: '24.21.0'
           package-manager-cache: false
+      - name: Cache sccache compiler objects
+        id: sccache_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-v1-${{ runner.os }}-option1-signatures-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            sccache-v1-${{ runner.os }}-option1-signatures-
+            sccache-v1-${{ runner.os }}-
+      - name: Cache Cargo registry and native stage tools
+        id: cargo_registry_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/cargo-registry-cache
+            ${{ runner.temp }}/leap-launcher-cache
+            ${{ runner.temp }}/leap-native-stage-cache
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-
+      - name: Install pinned sccache compiler launcher
+        id: sccache
+        run: node ci/install-sccache.mjs
       - name: Prepare empty candidate directory for private storage materialization
         id: protected_candidates_download
         run: mkdir -p release-public-candidates
@@ -1615,6 +2305,15 @@ jobs:
           SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
 
       - name: Retain encrypted signing diagnostics privately
         if: ${{ always() }}
@@ -1634,11 +2333,14 @@ jobs:
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           RELEASE_ARTIFACT_KIND: diagnostics
           RELEASE_ARTIFACT_SCOPE: option1-signatures
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
 
   publish:
     name: Publish release (${{ needs.resolve.outputs.workflow_id }})
     if: ${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}
-    needs: [resolve, verify, option1_signatures]
+    needs: [resolve, linux_track, windows_track, macos_track, android_track, web_track, ios_track, option1_signatures]
     environment: public-release
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -1652,6 +2354,29 @@ jobs:
         with:
           node-version: '24.21.0'
           package-manager-cache: false
+      - name: Cache sccache compiler objects
+        id: sccache_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-v1-${{ runner.os }}-publish-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            sccache-v1-${{ runner.os }}-publish-
+            sccache-v1-${{ runner.os }}-
+      - name: Cache Cargo registry and native stage tools
+        id: cargo_registry_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/cargo-registry-cache
+            ${{ runner.temp }}/leap-launcher-cache
+            ${{ runner.temp }}/leap-native-stage-cache
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-
+      - name: Install pinned sccache compiler launcher
+        id: sccache
+        run: node ci/install-sccache.mjs
       - name: Prepare empty candidate directory for private storage materialization
         id: public_candidates_download
         run: mkdir -p release-public-candidates
@@ -1675,6 +2400,15 @@ jobs:
           SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
           SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
       - name: Retain the complete private encrypted archive
         id: private_final_archive
         run: bash ci/native-release/run.sh prepare-private-final-archive
@@ -1698,6 +2432,15 @@ jobs:
           APPROVED_NATIVE_VERIFIER_SHA256: ${{ steps.publication_candidates.outputs.native_verifier_sha256 }}
           APPROVED_PUBLICATION_PLAN_SHA256: ${{ steps.publication_candidates.outputs.publication_plan_sha256 }}
           PRIVATE_FINAL_ARCHIVE_INPUTS_FILE: ${{ vars.PRIVATE_FINAL_ARCHIVE_INPUTS_FILE }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
       - name: Independently read back the complete private archive
         id: private_final_archive_readback
         run: bash ci/native-release/run.sh verify-private-final-archive
@@ -1720,6 +2463,15 @@ jobs:
           DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
           APPROVED_NATIVE_VERIFIER_SHA256: ${{ steps.publication_candidates.outputs.native_verifier_sha256 }}
           APPROVED_PUBLICATION_PLAN_SHA256: ${{ steps.publication_candidates.outputs.publication_plan_sha256 }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
       - name: Publish the verified public candidate bytes
         run: bash ci/native-release/run.sh publish-candidates
         env:
@@ -1736,6 +2488,15 @@ jobs:
           SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
           LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
+          SCCACHE_DIR: ${{ format('{0}/sccache', runner.temp) }}
+          SCCACHE_CONF: ${{ format('{0}/sccache/sccache-config.toml', runner.temp) }}
+          SCCACHE_CACHED_CONF: ${{ format('{0}/sccache/sccache-cached-config.toml', runner.temp) }}
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+          RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
+          LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
       - name: Auto-promote candidates to internal store tracks
         if: ${{ inputs.auto_promote }}
         run: |
@@ -1797,3 +2558,6 @@ jobs:
           STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
           RELEASE_ARTIFACT_KIND: diagnostics
           RELEASE_ARTIFACT_SCOPE: publish
+          CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
+          LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
+          LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
