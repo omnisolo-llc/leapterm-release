@@ -36,10 +36,22 @@ export const BUILD_CACHE_DIRS = Object.freeze([
   'mobile-sdk-archives',
 ]);
 
+export const SCCACHE_DEFAULT_DISK_SIZE_BYTES = 1073741824; // 1.0 GB
+export const SCCACHE_DISK_SIZES_BYTES = Object.freeze({
+  windows: 1887436800,        // 1.8 GB
+  macos: 1572864000,          // 1.5 GB
+  ios: 1572864000,            // 1.5 GB
+  linux: 1073741824,          // 1.0 GB
+  android: 838860800,         // 800 MB
+  web: 524288000,             // 500 MB
+  'windows-sdk': 524288000,   // 500 MB
+});
+
 export async function installSccache({
   runnerOs = process.env.RUNNER_OS || '',
   runnerTemp = process.env.RUNNER_TEMP || '',
   githubOutput = process.env.GITHUB_OUTPUT || '',
+  target = process.env.SCCACHE_TARGET || process.env.RELEASE_TARGET || '',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
   specs = SCCACHE_SPECS,
@@ -61,20 +73,19 @@ export async function installSccache({
   fs.mkdirSync(distCacheDir, { recursive: true });
   const diskCacheDir = path.join(sccacheDir, 'disk');
   fs.mkdirSync(diskCacheDir, { recursive: true });
+  const normalizedTarget = (target || '').toLowerCase();
+  const cacheSizeBytes = SCCACHE_DISK_SIZES_BYTES[normalizedTarget] || SCCACHE_DEFAULT_DISK_SIZE_BYTES;
   const tomlContent = [
     '[cache.disk]',
     `dir = ${JSON.stringify(diskCacheDir)}`,
+    `size = ${cacheSizeBytes}`,
     '',
     '[dist]',
     `cache_dir = ${JSON.stringify(distCacheDir)}`,
     '',
   ].join('\n');
-  if (!fs.existsSync(confPath)) {
-    fs.writeFileSync(confPath, tomlContent);
-  }
-  if (!fs.existsSync(cachedConfPath)) {
-    fs.writeFileSync(cachedConfPath, tomlContent);
-  }
+  fs.writeFileSync(confPath, tomlContent);
+  fs.writeFileSync(cachedConfPath, tomlContent);
   const installRoot = path.join(runnerTemp, 'sccache-bin');
   fs.mkdirSync(installRoot, { recursive: true });
   const binaryPath = path.join(installRoot, spec.folder, spec.binary);
@@ -107,6 +118,7 @@ export async function installSccache({
     fs.appendFileSync(githubOutput, `wrapper=${resolvedBinary}\n`);
     fs.appendFileSync(githubOutput, `sccache_conf=${confPath}\n`);
     fs.appendFileSync(githubOutput, `sccache_cached_conf=${cachedConfPath}\n`);
+    fs.appendFileSync(githubOutput, `sccache_cache_size=${cacheSizeBytes}\n`);
   }
   return resolvedBinary;
 }
@@ -115,7 +127,8 @@ if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  installSccache().catch((err) => {
+  const cliTarget = process.argv[2] || '';
+  installSccache({ target: cliTarget || undefined }).catch((err) => {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   });
