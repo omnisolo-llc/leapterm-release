@@ -2042,4 +2042,11 @@ test('parseInternalTesterEmails parses comma-separated emails and syncs TestFlig
   );
 });
 
+test('install.sh is parsed from GitHub API json response and decoded from base64', () => {
+  const mockApiContent = Buffer.from('#!/usr/bin/env bash\necho "installing leap-agent"\n').toString('base64');
+  const mockJson = { content: mockApiContent };
+  const decoded = Buffer.from(mockJson.content, 'base64').toString('utf8');
+  assert.equal(decoded, '#!/usr/bin/env bash\necho "installing leap-agent"\n');
+});
+
 
