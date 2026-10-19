@@ -397,15 +397,20 @@ pub fn verify(
     .map_err(|_| "Source metadata missing")?;
     let entries = tree(&root, env)?;
     let module_map = modules(&root, &entries, env)?;
+    let mut verified_parents: std::collections::BTreeSet<PathBuf> =
+        std::collections::BTreeSet::new();
     for entry in entries {
         let path = root.join(&entry.path);
         let mut parent = root.clone();
         let components: Vec<_> = entry.path.split('/').collect();
         for part in &components[..components.len() - 1] {
             parent.push(part);
-            let info = fs::symlink_metadata(&parent).map_err(|_| "Source parent missing")?;
-            if !info.is_dir() || guards::reparse(&info) {
-                return Err("Unsafe source parent");
+            if !verified_parents.contains(&parent) {
+                let info = fs::symlink_metadata(&parent).map_err(|_| "Source parent missing")?;
+                if !info.is_dir() || guards::reparse(&info) {
+                    return Err("Unsafe source parent");
+                }
+                verified_parents.insert(parent.clone());
             }
         }
         if entry.mode == "160000" && entry.kind == "commit" {
