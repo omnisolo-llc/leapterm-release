@@ -1064,6 +1064,18 @@ export async function verifyGooglePlayStoreAccess({
   }
 }
 
+const APPLE_PRE_RELEASE_STORE_ACTIONS = new Set([
+  'internal',
+  'alpha',
+  'beta',
+  'testflight',
+]);
+const ANDROID_PRE_RELEASE_STORE_ACTIONS = new Set([
+  'internal',
+  'alpha',
+  'beta',
+]);
+
 export async function promoteAppleToAppStoreConnect({
   platform = 'ios',
   version,
@@ -1079,7 +1091,7 @@ export async function promoteAppleToAppStoreConnect({
   if (!['ios', 'macos'].includes(platform)) {
     throw new Error(`Unsupported Apple platform: ${platform}`);
   }
-  if (!['testflight', 'app-store'].includes(action)) {
+  if (!['internal', 'alpha', 'beta', 'testflight', 'app-store'].includes(action)) {
     throw new Error(`Unsupported ${platform}_store_action: ${action}`);
   }
   const ascPlatform = platform === 'macos' ? 'MAC_OS' : 'IOS';
@@ -1129,7 +1141,7 @@ export async function promoteAppleToAppStoreConnect({
     return data;
   };
 
-  if (action === 'testflight') {
+  if (action === 'internal' || action === 'testflight') {
     if (!packagePath || !fs.existsSync(packagePath)) {
       throw new Error(
         `TestFlight candidate upload for ${platform} requires verified packagePath`,
@@ -1287,14 +1299,17 @@ export async function promoteAppleToAppStoreConnect({
     }
     return {
       platform,
-      action: 'testflight',
+      action,
+      track: 'internal',
       version: normalizedVersion,
       build_number: normalizedBuild,
-      status: 'uploaded-to-testflight',
+      status:
+        action === 'internal'
+          ? 'uploaded-to-testflight-internal'
+          : 'uploaded-to-testflight',
     };
   }
 
-  // action === 'app-store': promote verified TestFlight build to App Store review
   const appsRes = await ascRequest(
     `/v1/apps?filter[bundleId]=${encodeURIComponent(appBundleId)}`,
   );
@@ -1324,6 +1339,63 @@ export async function promoteAppleToAppStoreConnect({
     );
   }
 
+  if (action === 'alpha' || action === 'beta') {
+    const groupsRes = await ascRequest(
+      `/v1/apps/${encodeURIComponent(app.id)}/betaGroups?limit=200`,
+    );
+    const groups = Array.isArray(groupsRes?.data) ? groupsRes.data : [];
+    const betaGroup = groups.find(
+      (g) =>
+        g?.attributes?.isInternalGroup === false &&
+        String(g?.attributes?.name || '').trim().toLowerCase() === action,
+    );
+    if (!betaGroup?.id) {
+      throw new Error(
+        `External TestFlight beta group "${action}" not found for ${platform} app ${appBundleId} (create an external group named "${action}" in App Store Connect)`,
+      );
+    }
+
+    const reviewRes = await ascRequest(
+      `/v1/betaAppReviewSubmissions?filter[build]=${encodeURIComponent(build.id)}`,
+    );
+    const existingReviews = Array.isArray(reviewRes?.data)
+      ? reviewRes.data
+      : [];
+    if (existingReviews.length === 0) {
+      await ascRequest('/v1/betaAppReviewSubmissions', 'POST', {
+        data: {
+          type: 'betaAppReviewSubmissions',
+          relationships: {
+            build: {
+              data: { type: 'builds', id: build.id },
+            },
+          },
+        },
+      });
+    }
+
+    await ascRequest(
+      `/v1/betaGroups/${encodeURIComponent(betaGroup.id)}/relationships/builds`,
+      'POST',
+      {
+        data: [{ type: 'builds', id: build.id }],
+      },
+    );
+
+    return {
+      platform,
+      action,
+      track: action,
+      version: normalizedVersion,
+      build_number: normalizedBuild,
+      asc_app_id: app.id,
+      asc_build_id: build.id,
+      asc_beta_group_id: betaGroup.id,
+      status: `promoted-to-testflight-${action}`,
+    };
+  }
+
+  // action === 'app-store': promote verified TestFlight build to App Store review
   const releaseType = automaticRelease ? 'AFTER_APPROVAL' : 'MANUAL';
   const versionsRes = await ascRequest(
     `/v1/apps/${encodeURIComponent(app.id)}/appStoreVersions?filter[versionString]=${encodeURIComponent(normalizedVersion)}&filter[platform]=${ascPlatform}`,
@@ -1384,6 +1456,7 @@ export async function promoteAppleToAppStoreConnect({
   return {
     platform,
     action: 'app-store',
+    track: 'app-store',
     version: normalizedVersion,
     build_number: normalizedBuild,
     asc_app_id: app.id,
@@ -1608,6 +1681,60 @@ export async function promoteAndroidToPlayStore({
   };
 }
 
+export function assertStoreTrackIsolation({
+  rolloutEnvironment = 'auto',
+  publishGithubRelease = false,
+  iosStoreAction = 'none',
+  macosStoreAction = 'none',
+  androidStoreAction = 'none',
+  verifyStoreCredentialsOnly = false,
+} = {}) {
+  if (verifyStoreCredentialsOnly) {
+    return;
+  }
+  const normalizeTrack = (action, allowedSet) => {
+    if (!allowedSet.has(action)) return null;
+    return action === 'testflight' ? 'internal' : action;
+  };
+  const preReleaseTracks = new Set(
+    [
+      normalizeTrack(iosStoreAction, APPLE_PRE_RELEASE_STORE_ACTIONS),
+      normalizeTrack(macosStoreAction, APPLE_PRE_RELEASE_STORE_ACTIONS),
+      normalizeTrack(androidStoreAction, ANDROID_PRE_RELEASE_STORE_ACTIONS),
+    ].filter(Boolean),
+  );
+  if (preReleaseTracks.size > 1) {
+    throw new Error(
+      'Cannot mix different pre-release store tracks in the same promotion; keep internal, alpha, and beta promotions isolated per track',
+    );
+  }
+  if (preReleaseTracks.size === 0) {
+    return;
+  }
+  if (publishGithubRelease) {
+    throw new Error(
+      'Cannot publish public GitHub Release in the same promotion as pre-release store tracks (internal/alpha/beta/testflight)',
+    );
+  }
+  const hasProductionStore =
+    iosStoreAction === 'app-store' ||
+    macosStoreAction === 'app-store' ||
+    androidStoreAction === 'production';
+  if (hasProductionStore) {
+    throw new Error(
+      'Cannot mix pre-release store tracks (internal/alpha/beta/testflight) with public production store tracks (app-store/production)',
+    );
+  }
+  const normalizedRollout = String(rolloutEnvironment || 'auto')
+    .trim()
+    .toLowerCase();
+  if (normalizedRollout === 'production') {
+    throw new Error(
+      'Cannot target production rollout_environment when promoting pre-release store tracks (internal/alpha/beta/testflight)',
+    );
+  }
+}
+
 export function resolveRolloutEnvironment({
   rolloutEnvironment = 'auto',
   publishGithubRelease = false,
@@ -1625,6 +1752,14 @@ export function resolveRolloutEnvironment({
   if (!['auto', 'none', 'staging', 'production'].includes(normalized)) {
     throw new Error(`Unsupported rollout_environment: ${rolloutEnvironment}`);
   }
+  assertStoreTrackIsolation({
+    rolloutEnvironment: normalized,
+    publishGithubRelease,
+    iosStoreAction,
+    macosStoreAction,
+    androidStoreAction,
+    verifyStoreCredentialsOnly,
+  });
   if (normalized !== 'auto') {
     return normalized;
   }
@@ -1636,9 +1771,9 @@ export function resolveRolloutEnvironment({
     return 'production';
   }
   const isStagingStore =
-    iosStoreAction === 'testflight' ||
-    macosStoreAction === 'testflight' ||
-    ['internal', 'alpha', 'beta'].includes(androidStoreAction);
+    APPLE_PRE_RELEASE_STORE_ACTIONS.has(iosStoreAction) ||
+    APPLE_PRE_RELEASE_STORE_ACTIONS.has(macosStoreAction) ||
+    ANDROID_PRE_RELEASE_STORE_ACTIONS.has(androidStoreAction);
   if (isStagingStore) {
     return 'staging';
   }
@@ -1988,7 +2123,7 @@ export async function promoteRelease({
   dockerHubPatReadWrite = '',
   dockerHubPatReadOnly = '',
   signingConfigJson,
-  publishGithubRelease = true,
+  publishGithubRelease = false,
   iosStoreAction = 'none',
   iosAutomaticRelease = false,
   iosSigningConfigJson = '',
@@ -2516,7 +2651,7 @@ export async function promoteRelease({
 
     if (iosStoreAction && iosStoreAction !== 'none') {
       let ipaPath = '';
-      if (iosStoreAction === 'testflight') {
+      if (['internal', 'testflight'].includes(iosStoreAction)) {
         const ipaName = `leapterm-${normalizedVersion}-ios-private.ipa`;
         if (assetsByName.has(ipaName)) {
           ipaPath = await requireStagingAsset(ipaName);
@@ -2611,7 +2746,7 @@ export async function promoteRelease({
 
     if (macosStoreAction && macosStoreAction !== 'none') {
       let macosPackagePath = '';
-      if (macosStoreAction === 'testflight') {
+      if (['internal', 'testflight'].includes(macosStoreAction)) {
         const macosZipName = `leapterm-${normalizedVersion}-macos-arm64.zip`;
         macosPackagePath = await requireStagingAsset(macosZipName);
         const macosShaPath = await requireStagingAsset(`${macosZipName}.sha256`);
@@ -2692,7 +2827,7 @@ if (
     dockerHubPatReadOnly: process.env.DOCKER_HUB_PAT_READ_ONLY || '',
     signingConfigJson: process.env.PACKAGE_SIGNING_CONFIG,
     publishGithubRelease:
-      String(process.env.PROMOTE_GITHUB_RELEASE ?? 'true') !== 'false',
+      String(process.env.PROMOTE_GITHUB_RELEASE ?? 'false') === 'true',
     iosStoreAction: process.env.PROMOTE_IOS_STORE_ACTION || 'none',
     iosAutomaticRelease:
       String(process.env.PROMOTE_IOS_AUTOMATIC_RELEASE ?? 'false') === 'true',

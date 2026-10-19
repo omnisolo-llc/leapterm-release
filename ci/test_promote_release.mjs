@@ -14,6 +14,7 @@ import {
   PUBLIC_TARGETS,
   FORBIDDEN_PRIVATE_TARGETS,
   assertNoPrivateLeakInPublicMetadata,
+  assertStoreTrackIsolation,
   buildEnvironmentRolloutPlan,
   buildPrivateIosStorageKeys,
   buildPublicSha256Sums,
@@ -472,6 +473,96 @@ test('promoteIosToAppStoreConnect and promoteMacosToAppStoreConnect support test
     assert.equal(storeRes.asc_build_id, 'build-mac-18');
     assert.equal(storeRes.release_type, 'MANUAL');
     assert.equal(apiCalls.length, 5);
+
+    const iosInternalRes = await promoteIosToAppStoreConnect({
+      version: '0.1.1',
+      buildNumber: '18',
+      action: 'internal',
+      ipaPath,
+      iosSigningConfigJson: appleSigningConfigJson,
+      execFileImpl: (cmd, args) => {
+        assert.equal(cmd, 'xcrun');
+        assert.ok(args.includes('--upload-app'));
+        assert.ok(args.includes('ios'));
+      },
+    });
+    assert.equal(iosInternalRes.action, 'internal');
+    assert.equal(iosInternalRes.track, 'internal');
+    assert.equal(iosInternalRes.status, 'uploaded-to-testflight-internal');
+
+    for (const track of ['alpha', 'beta']) {
+      const trackCalls = [];
+      const trackRes = await promoteIosToAppStoreConnect({
+        version: '0.1.1',
+        buildNumber: '18',
+        action: track,
+        iosSigningConfigJson: appleSigningConfigJson,
+        fetchImpl: async (url, opts = {}) => {
+          trackCalls.push({ url, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : null });
+          if (url.includes('/v1/apps?')) {
+            return new Response(
+              JSON.stringify({ data: [{ id: 'app-1', type: 'apps' }] }),
+              { status: 200 },
+            );
+          }
+          if (url.includes('/v1/builds?')) {
+            return new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: 'build-ios-18',
+                    type: 'builds',
+                    attributes: { processingState: 'VALID', expired: false },
+                  },
+                ],
+              }),
+              { status: 200 },
+            );
+          }
+          if (url.includes('/betaGroups?')) {
+            return new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: `internal-${track}`,
+                    type: 'betaGroups',
+                    attributes: { name: track, isInternalGroup: true },
+                  },
+                  {
+                    id: `external-${track}`,
+                    type: 'betaGroups',
+                    attributes: { name: track.toUpperCase(), isInternalGroup: false },
+                  },
+                ],
+              }),
+              { status: 200 },
+            );
+          }
+          if (url.includes('/v1/betaAppReviewSubmissions?')) {
+            return new Response(JSON.stringify({ data: [] }), { status: 200 });
+          }
+          if (url.endsWith('/v1/betaAppReviewSubmissions') && opts.method === 'POST') {
+            return new Response(
+              JSON.stringify({ data: { id: 'review-1', type: 'betaAppReviewSubmissions' } }),
+              { status: 201 },
+            );
+          }
+          if (url.endsWith(`/v1/betaGroups/external-${track}/relationships/builds`) && opts.method === 'POST') {
+            return new Response(null, { status: 204 });
+          }
+          throw new Error(`Unexpected TestFlight ${track} URL: ${url}`);
+        },
+      });
+      assert.equal(trackRes.platform, 'ios');
+      assert.equal(trackRes.action, track);
+      assert.equal(trackRes.track, track);
+      assert.equal(trackRes.asc_beta_group_id, `external-${track}`);
+      assert.equal(trackRes.status, `promoted-to-testflight-${track}`);
+      assert.equal(trackCalls.length, 6);
+      assert.deepEqual(trackCalls.at(-1).body, {
+        data: [{ type: 'builds', id: 'build-ios-18' }],
+      });
+    }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -637,17 +728,20 @@ test('buildPublicSha256Sums sorts deterministically and excludes private assets'
   assertNoPrivateLeakInPublicMetadata('SHA256SUMS', sums);
 });
 
-test('resolveRolloutEnvironment maps candidate and production promotion inputs', () => {
-  assert.equal(
-    resolveRolloutEnvironment({
-      rolloutEnvironment: 'auto',
-      publishGithubRelease: false,
-      iosStoreAction: 'testflight',
-      macosStoreAction: 'testflight',
-      androidStoreAction: 'internal',
-    }),
-    'staging',
-  );
+test('resolveRolloutEnvironment maps candidate and production promotion inputs and enforces track isolation', () => {
+  for (const track of ['internal', 'alpha', 'beta', 'testflight']) {
+    const androidTrack = track === 'testflight' ? 'internal' : track;
+    assert.equal(
+      resolveRolloutEnvironment({
+        rolloutEnvironment: 'auto',
+        publishGithubRelease: false,
+        iosStoreAction: track,
+        macosStoreAction: track,
+        androidStoreAction: androidTrack,
+      }),
+      'staging',
+    );
+  }
   assert.equal(
     resolveRolloutEnvironment({
       rolloutEnvironment: 'auto',
@@ -699,6 +793,38 @@ test('resolveRolloutEnvironment maps candidate and production promotion inputs',
   assert.throws(
     () => resolveRolloutEnvironment({ rolloutEnvironment: 'invalid-env' }),
     /Unsupported rollout_environment/,
+  );
+  assert.throws(
+    () =>
+      assertStoreTrackIsolation({
+        publishGithubRelease: true,
+        iosStoreAction: 'internal',
+      }),
+    /Cannot publish public GitHub Release in the same promotion as pre-release store tracks/,
+  );
+  assert.throws(
+    () =>
+      assertStoreTrackIsolation({
+        iosStoreAction: 'alpha',
+        androidStoreAction: 'beta',
+      }),
+    /Cannot mix different pre-release store tracks/,
+  );
+  assert.throws(
+    () =>
+      assertStoreTrackIsolation({
+        iosStoreAction: 'internal',
+        androidStoreAction: 'production',
+      }),
+    /Cannot mix pre-release store tracks.*with public production store tracks/,
+  );
+  assert.throws(
+    () =>
+      assertStoreTrackIsolation({
+        rolloutEnvironment: 'production',
+        androidStoreAction: 'alpha',
+      }),
+    /Cannot target production rollout_environment when promoting pre-release store tracks/,
   );
 });
 
@@ -1118,15 +1244,18 @@ test('Linux promotion resolves rollout from all actual inputs, including Apple-o
     .replace("import fs from 'node:fs';", '')
     .replace("import { resolveRolloutEnvironment } from './ci/promote-release.mjs';", '');
   const cases = [
+    [{ INPUT_IOS_STORE_ACTION: 'internal' }, 'staging'],
+    [{ INPUT_IOS_STORE_ACTION: 'alpha' }, 'staging'],
+    [{ INPUT_IOS_STORE_ACTION: 'beta' }, 'staging'],
     [{ INPUT_IOS_STORE_ACTION: 'testflight' }, 'staging'],
-    [{ INPUT_MACOS_STORE_ACTION: 'testflight' }, 'staging'],
+    [{ INPUT_MACOS_STORE_ACTION: 'internal' }, 'staging'],
     [{ INPUT_IOS_STORE_ACTION: 'app-store' }, 'production'],
     [{ INPUT_MACOS_STORE_ACTION: 'app-store' }, 'production'],
     [{ INPUT_ANDROID_STORE_ACTION: 'internal' }, 'staging'],
-    [{ INPUT_PUBLISH_GITHUB_RELEASE: 'true', INPUT_IOS_STORE_ACTION: 'testflight' }, 'production'],
-    [{ INPUT_ROLLOUT_ENVIRONMENT: 'none', INPUT_IOS_STORE_ACTION: 'testflight' }, 'none'],
+    [{ INPUT_PUBLISH_GITHUB_RELEASE: 'true', INPUT_IOS_STORE_ACTION: 'app-store' }, 'production'],
+    [{ INPUT_ROLLOUT_ENVIRONMENT: 'none', INPUT_IOS_STORE_ACTION: 'internal' }, 'none'],
     [{ INPUT_ROLLOUT_ENVIRONMENT: 'staging', INPUT_PUBLISH_GITHUB_RELEASE: 'true' }, 'staging'],
-    [{ INPUT_ROLLOUT_ENVIRONMENT: 'production', INPUT_IOS_STORE_ACTION: 'testflight' }, 'production'],
+    [{ INPUT_ROLLOUT_ENVIRONMENT: 'production', INPUT_IOS_STORE_ACTION: 'app-store' }, 'production'],
     [{ INPUT_VERIFY_STORE_CREDENTIALS_ONLY: 'true', INPUT_IOS_STORE_ACTION: 'app-store' }, 'none'],
   ];
   for (const [inputs, expected] of cases) {
@@ -1141,6 +1270,23 @@ test('Linux promotion resolves rollout from all actual inputs, including Apple-o
       } },
     });
     assert.deepEqual(outputs, [`environment=${expected}\n`]);
+  }
+  for (const rejectedInputs of [
+    { INPUT_PUBLISH_GITHUB_RELEASE: 'true', INPUT_IOS_STORE_ACTION: 'internal' },
+    { INPUT_ROLLOUT_ENVIRONMENT: 'production', INPUT_IOS_STORE_ACTION: 'testflight' },
+    { INPUT_IOS_STORE_ACTION: 'alpha', INPUT_ANDROID_STORE_ACTION: 'beta' },
+  ]) {
+    assert.throws(() =>
+      vm.runInNewContext(script, {
+        fs: { appendFileSync: () => {} },
+        resolveRolloutEnvironment,
+        process: { env: {
+          INPUT_ROLLOUT_ENVIRONMENT: 'auto', INPUT_PUBLISH_GITHUB_RELEASE: 'false',
+          INPUT_IOS_STORE_ACTION: 'none', INPUT_MACOS_STORE_ACTION: 'none', INPUT_ANDROID_STORE_ACTION: 'none',
+          INPUT_VERIFY_STORE_CREDENTIALS_ONLY: 'false', GITHUB_OUTPUT: 'mock-workflow-output', ...rejectedInputs,
+        } },
+      }),
+    );
   }
   const promotion = releaseWorkflowStep(job, 'Promote verified public release, Play Store track, and environment rollout');
   assert.match(promotion, /PROMOTE_ROLLOUT_ENVIRONMENT: \$\{\{ steps\.rollout_environment\.outputs\.environment \}\}/);

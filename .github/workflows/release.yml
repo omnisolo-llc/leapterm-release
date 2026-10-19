@@ -54,7 +54,7 @@ on:
         type: boolean
         default: true
       auto_promote:
-        description: 'Candidate promotion: automatically promote verified candidate to pre-release tracks (TestFlight & Play Store Alpha) upon completion. Never releases directly to users.'
+        description: 'Candidate promotion: automatically promote verified candidate to internal tracks (TestFlight Internal & Play Store Internal) upon completion. Never releases directly to public users.'
         type: boolean
         default: false
 
@@ -1718,7 +1718,7 @@ jobs:
           SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
           LEAPTERM_VPN_PROVIDER_PUBLIC_KEY: ${{ vars.LEAPTERM_VPN_PROVIDER_PUBLIC_KEY }}
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
-      - name: Auto-promote candidates to pre-release store tracks
+      - name: Auto-promote candidates to internal store tracks
         if: ${{ inputs.auto_promote }}
         run: |
           IOS_ACTION="none"
@@ -1726,29 +1726,29 @@ jobs:
           ANDROID_ACTION="none"
           case "${{ inputs.verify_target }}" in
             all)
-              IOS_ACTION="testflight"
-              MACOS_ACTION="testflight"
-              ANDROID_ACTION="alpha"
+              IOS_ACTION="internal"
+              MACOS_ACTION="internal"
+              ANDROID_ACTION="internal"
               ;;
             fast|android)
-              ANDROID_ACTION="alpha"
+              ANDROID_ACTION="internal"
               ;;
             slow)
-              IOS_ACTION="testflight"
-              MACOS_ACTION="testflight"
+              IOS_ACTION="internal"
+              MACOS_ACTION="internal"
               ;;
             ios)
-              IOS_ACTION="testflight"
+              IOS_ACTION="internal"
               ;;
             macos)
-              MACOS_ACTION="testflight"
+              MACOS_ACTION="internal"
               ;;
           esac
           if [ "${IOS_ACTION}" = "none" ] && [ "${MACOS_ACTION}" = "none" ] && [ "${ANDROID_ACTION}" = "none" ]; then
             echo "No store-backed platform targets active for verify_target=${{ inputs.verify_target }}; skipping store auto-promotion."
             exit 0
           fi
-          echo "Auto-promoting release candidate to pre-release tracks and staging environment (iOS=${IOS_ACTION}, macOS=${MACOS_ACTION}, Android=${ANDROID_ACTION})..."
+          echo "Auto-promoting release candidate to internal store tracks and staging environment (iOS=${IOS_ACTION}, macOS=${MACOS_ACTION}, Android=${ANDROID_ACTION})..."
           gh workflow run promote-release.yml \
             --ref main \
             -f version="${{ needs.resolve.outputs.version }}" \

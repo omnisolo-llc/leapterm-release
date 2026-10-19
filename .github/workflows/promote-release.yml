@@ -15,7 +15,7 @@ on:
       publish_github_release:
         description: Promote approved public client/agent binaries and self-hosted bundle to GitHub Releases
         required: false
-        default: true
+        default: false
         type: boolean
       rollout_environment:
         description: Environment rollout target for Cloudflare backend, container image, and cluster (auto, none, staging, or production)
@@ -28,12 +28,15 @@ on:
           - staging
           - production
       ios_store_action:
-        description: iOS App Store Connect action (none, testflight candidate upload, or app-store formal submission)
+        description: iOS App Store Connect track promotion (none, internal TestFlight, alpha TestFlight group, beta TestFlight group, testflight alias for internal, or app-store public submission)
         required: false
         default: none
         type: choice
         options:
           - none
+          - internal
+          - alpha
+          - beta
           - testflight
           - app-store
       ios_automatic_release:
@@ -42,12 +45,15 @@ on:
         default: false
         type: boolean
       macos_store_action:
-        description: macOS App Store Connect action (none, testflight candidate upload, or app-store formal submission)
+        description: macOS App Store Connect track promotion (none, internal TestFlight, alpha TestFlight group, beta TestFlight group, testflight alias for internal, or app-store public submission)
         required: false
         default: none
         type: choice
         options:
           - none
+          - internal
+          - alpha
+          - beta
           - testflight
           - app-store
       macos_automatic_release:
