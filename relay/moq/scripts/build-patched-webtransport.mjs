@@ -155,10 +155,8 @@ async function main() {
       throw new Error('WebTransport gitlink parent revision mismatch');
     }
 
-    for (const path of submodules) {
-      await runOwned('git', ['-C', sourceRoot, 'submodule', 'update', '--init', '--recursive',
-        '--depth=1', '--', path]);
-    }
+    await runOwned('git', ['-C', sourceRoot, 'submodule', 'update', '--init', '--recursive',
+      '--depth=1', '--jobs=4', '--', ...submodules]);
 
     const quichePath = 'transports/http3-quiche/third_party/quiche';
     const gitlink = await runOwned('git', ['-C', sourceRoot, 'ls-tree', 'HEAD', '--', quichePath],

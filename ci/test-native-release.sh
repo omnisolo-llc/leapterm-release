@@ -12,7 +12,13 @@ for tool in python python2 python3 python3.12 python3.13 python3.14 pip pip3 pip
   chmod 700 "$guard/bin/$tool"
 done
 export PATH="$guard/bin:$PATH"
-export CARGO_BUILD_JOBS=1
+jobs="${CARGO_BUILD_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-2}")}"
+case "$jobs" in
+  [1-9]|[1-5][0-9]|6[0-4]) ;;
+  [6-9][0-9]|[1-9][0-9][0-9]*) jobs=64 ;;
+  *) jobs=2 ;;
+esac
+export CARGO_BUILD_JOBS="$jobs"
 check() {
   local phase="$1"
   shift
