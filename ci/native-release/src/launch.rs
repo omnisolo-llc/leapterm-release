@@ -874,7 +874,10 @@ fn copy_regular_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
             let same = fs::symlink_metadata(&child_dst)
                 .is_ok_and(|existing| existing.is_file() && existing.len() == child_meta.len());
             if !same {
-                let _ = fs::copy(&child_src, &child_dst);
+                let _ = fs::remove_file(&child_dst);
+                if fs::hard_link(&child_src, &child_dst).is_err() {
+                    let _ = fs::copy(&child_src, &child_dst);
+                }
             }
         }
     }
@@ -916,8 +919,6 @@ fn build_native_stage(
     source::verify_tools(src, &checkout)?;
     let frozen = crate::guards::Frozen::tree(&src.join("tools"), false)?;
     frozen.verify()?;
-    source::verify(src, source_sha, &checkout, false, 0)?;
-    source::verify_tools(src, &checkout)?;
     let mut build = clean_environment(env);
     let rustup = env
         .get("RUSTUP_HOME")
