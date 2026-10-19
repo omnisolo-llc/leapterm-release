@@ -167,8 +167,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-v1-${{ runner.os }}-windows-sdk-${{ needs.resolve.outputs.source_sha }}
+          key: sccache-v1-${{ runner.os }}-windows-sdk-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            sccache-v1-${{ runner.os }}-windows-sdk-${{ needs.resolve.outputs.source_sha }}-
             sccache-v1-${{ runner.os }}-windows-sdk-
             sccache-v1-${{ runner.os }}-
       - name: Cache Cargo registry and native stage tools
@@ -179,8 +180,9 @@ jobs:
             ${{ runner.temp }}/cargo-registry-cache
             ${{ runner.temp }}/leap-launcher-cache
             ${{ runner.temp }}/leap-native-stage-cache
-          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-
             cargo-registry-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
         id: sccache
@@ -385,8 +387,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-v1-${{ runner.os }}-linux-${{ needs.resolve.outputs.source_sha }}
+          key: sccache-v1-${{ runner.os }}-linux-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            sccache-v1-${{ runner.os }}-linux-${{ needs.resolve.outputs.source_sha }}-
             sccache-v1-${{ runner.os }}-linux-
             sccache-v1-${{ runner.os }}-
       - name: Cache Cargo registry and native stage tools
@@ -397,8 +400,9 @@ jobs:
             ${{ runner.temp }}/cargo-registry-cache
             ${{ runner.temp }}/leap-launcher-cache
             ${{ runner.temp }}/leap-native-stage-cache
-          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-
             cargo-registry-v1-${{ runner.os }}-
       - name: Cache pinned Flutter SDK git clone
         id: flutter_sdk_cache
@@ -413,8 +417,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pub-cache
-          key: pub-cache-v1-${{ runner.os }}-linux-${{ needs.resolve.outputs.source_sha }}
+          key: pub-cache-v1-${{ runner.os }}-linux-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            pub-cache-v1-${{ runner.os }}-linux-${{ needs.resolve.outputs.source_sha }}-
             pub-cache-v1-${{ runner.os }}-linux-
             pub-cache-v1-${{ runner.os }}-
       - name: Cache Linux FreeRDP SDK
@@ -514,8 +519,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-v1-${{ runner.os }}-windows-${{ needs.resolve.outputs.source_sha }}
+          key: sccache-v1-${{ runner.os }}-windows-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            sccache-v1-${{ runner.os }}-windows-${{ needs.resolve.outputs.source_sha }}-
             sccache-v1-${{ runner.os }}-windows-
             sccache-v1-${{ runner.os }}-
       - name: Cache Cargo registry and native stage tools
@@ -526,8 +532,9 @@ jobs:
             ${{ runner.temp }}/cargo-registry-cache
             ${{ runner.temp }}/leap-launcher-cache
             ${{ runner.temp }}/leap-native-stage-cache
-          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-
             cargo-registry-v1-${{ runner.os }}-
       - name: Cache pinned Flutter SDK git clone
         id: flutter_sdk_cache
@@ -542,8 +549,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pub-cache
-          key: pub-cache-v1-${{ runner.os }}-windows-${{ needs.resolve.outputs.source_sha }}
+          key: pub-cache-v1-${{ runner.os }}-windows-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            pub-cache-v1-${{ runner.os }}-windows-${{ needs.resolve.outputs.source_sha }}-
             pub-cache-v1-${{ runner.os }}-windows-
             pub-cache-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
@@ -675,8 +683,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-v1-${{ runner.os }}-macos-${{ needs.resolve.outputs.source_sha }}
+          key: sccache-v1-${{ runner.os }}-macos-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            sccache-v1-${{ runner.os }}-macos-${{ needs.resolve.outputs.source_sha }}-
             sccache-v1-${{ runner.os }}-macos-
             sccache-v1-${{ runner.os }}-
       - name: Cache Cargo registry and native stage tools
@@ -687,8 +696,9 @@ jobs:
             ${{ runner.temp }}/cargo-registry-cache
             ${{ runner.temp }}/leap-launcher-cache
             ${{ runner.temp }}/leap-native-stage-cache
-          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-
             cargo-registry-v1-${{ runner.os }}-
       - name: Cache pinned Flutter SDK git clone
         id: flutter_sdk_cache
@@ -703,8 +713,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pub-cache
-          key: pub-cache-v1-${{ runner.os }}-macos-${{ needs.resolve.outputs.source_sha }}
+          key: pub-cache-v1-${{ runner.os }}-macos-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            pub-cache-v1-${{ runner.os }}-macos-${{ needs.resolve.outputs.source_sha }}-
             pub-cache-v1-${{ runner.os }}-macos-
             pub-cache-v1-${{ runner.os }}-
       - name: Cache macOS FreeRDP SDK and source archives
@@ -812,8 +823,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}
+          key: sccache-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            sccache-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}-
             sccache-v1-${{ runner.os }}-android-
             sccache-v1-${{ runner.os }}-
       - name: Cache Cargo registry and native stage tools
@@ -824,8 +836,9 @@ jobs:
             ${{ runner.temp }}/cargo-registry-cache
             ${{ runner.temp }}/leap-launcher-cache
             ${{ runner.temp }}/leap-native-stage-cache
-          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-
             cargo-registry-v1-${{ runner.os }}-
       - name: Cache pinned Flutter SDK git clone
         id: flutter_sdk_cache
@@ -840,10 +853,20 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pub-cache
-          key: pub-cache-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}
+          key: pub-cache-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            pub-cache-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}-
             pub-cache-v1-${{ runner.os }}-android-
             pub-cache-v1-${{ runner.os }}-
+      - name: Cache Gradle dependencies and build cache
+        id: gradle_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gradle-cache
+          key: gradle-cache-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
+          restore-keys: |
+            gradle-cache-v1-${{ runner.os }}-android-${{ needs.resolve.outputs.source_sha }}-
+            gradle-cache-v1-${{ runner.os }}-android-
       - name: Cache Android NDK toolchain
         id: android_ndk_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -903,6 +926,7 @@ jobs:
           LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
           FLUTTER_SDK_CACHE_DIR: ${{ format('{0}/flutter-sdk-cache', runner.temp) }}
           PUB_CACHE_DIR: ${{ format('{0}/pub-cache', runner.temp) }}
+          GRADLE_CACHE_DIR: ${{ format('{0}/gradle-cache', runner.temp) }}
           ANDROID_NDK_CACHE_DIR: ${{ format('{0}/android-ndk-cache', runner.temp) }}
           LEAP_MOBILE_FREERDP_CACHE_DIR: ${{ format('{0}/mobile-freerdp-cache', runner.temp) }}
           LEAP_MOBILE_SDK_ARCHIVES_DIR: ${{ format('{0}/mobile-sdk-archives', runner.temp) }}
@@ -953,8 +977,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-v1-${{ runner.os }}-web-${{ needs.resolve.outputs.source_sha }}
+          key: sccache-v1-${{ runner.os }}-web-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            sccache-v1-${{ runner.os }}-web-${{ needs.resolve.outputs.source_sha }}-
             sccache-v1-${{ runner.os }}-web-
             sccache-v1-${{ runner.os }}-
       - name: Cache Cargo registry and native stage tools
@@ -965,8 +990,9 @@ jobs:
             ${{ runner.temp }}/cargo-registry-cache
             ${{ runner.temp }}/leap-launcher-cache
             ${{ runner.temp }}/leap-native-stage-cache
-          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-
             cargo-registry-v1-${{ runner.os }}-
       - name: Cache pinned Flutter SDK git clone
         id: flutter_sdk_cache
@@ -981,8 +1007,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pub-cache
-          key: pub-cache-v1-${{ runner.os }}-web-${{ needs.resolve.outputs.source_sha }}
+          key: pub-cache-v1-${{ runner.os }}-web-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            pub-cache-v1-${{ runner.os }}-web-${{ needs.resolve.outputs.source_sha }}-
             pub-cache-v1-${{ runner.os }}-web-
             pub-cache-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
@@ -1072,8 +1099,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-v1-${{ runner.os }}-ios-${{ needs.resolve.outputs.source_sha }}
+          key: sccache-v1-${{ runner.os }}-ios-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            sccache-v1-${{ runner.os }}-ios-${{ needs.resolve.outputs.source_sha }}-
             sccache-v1-${{ runner.os }}-ios-
             sccache-v1-${{ runner.os }}-
       - name: Cache Cargo registry and native stage tools
@@ -1084,8 +1112,9 @@ jobs:
             ${{ runner.temp }}/cargo-registry-cache
             ${{ runner.temp }}/leap-launcher-cache
             ${{ runner.temp }}/leap-native-stage-cache
-          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-
             cargo-registry-v1-${{ runner.os }}-
       - name: Cache pinned Flutter SDK git clone
         id: flutter_sdk_cache
@@ -1100,8 +1129,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pub-cache
-          key: pub-cache-v1-${{ runner.os }}-ios-${{ needs.resolve.outputs.source_sha }}
+          key: pub-cache-v1-${{ runner.os }}-ios-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            pub-cache-v1-${{ runner.os }}-ios-${{ needs.resolve.outputs.source_sha }}-
             pub-cache-v1-${{ runner.os }}-ios-
             pub-cache-v1-${{ runner.os }}-
       - name: Cache mobile FreeRDP static SDK and source archives
@@ -2263,8 +2293,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-v1-${{ runner.os }}-option1-signatures-${{ needs.resolve.outputs.source_sha }}
+          key: sccache-v1-${{ runner.os }}-option1-signatures-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            sccache-v1-${{ runner.os }}-option1-signatures-${{ needs.resolve.outputs.source_sha }}-
             sccache-v1-${{ runner.os }}-option1-signatures-
             sccache-v1-${{ runner.os }}-
       - name: Cache Cargo registry and native stage tools
@@ -2275,8 +2306,9 @@ jobs:
             ${{ runner.temp }}/cargo-registry-cache
             ${{ runner.temp }}/leap-launcher-cache
             ${{ runner.temp }}/leap-native-stage-cache
-          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-
             cargo-registry-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
         id: sccache
@@ -2359,8 +2391,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-v1-${{ runner.os }}-publish-${{ needs.resolve.outputs.source_sha }}
+          key: sccache-v1-${{ runner.os }}-publish-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            sccache-v1-${{ runner.os }}-publish-${{ needs.resolve.outputs.source_sha }}-
             sccache-v1-${{ runner.os }}-publish-
             sccache-v1-${{ runner.os }}-
       - name: Cache Cargo registry and native stage tools
@@ -2371,8 +2404,9 @@ jobs:
             ${{ runner.temp }}/cargo-registry-cache
             ${{ runner.temp }}/leap-launcher-cache
             ${{ runner.temp }}/leap-native-stage-cache
-          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}
+          key: cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}
           restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-
             cargo-registry-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
         id: sccache

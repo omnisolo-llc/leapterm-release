@@ -240,6 +240,16 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
                 role == CandidateRole::Produce
                     && value.as_str() == Some("${{ format('{0}/pub-cache', runner.temp) }}")
             }
+            "GRADLE_CACHE_DIR" => {
+                role == CandidateRole::Produce
+                    && matches!(
+                        value.as_str(),
+                        Some(
+                            "${{ matrix.target == 'android' && format('{0}/gradle-cache', runner.temp) || '' }}"
+                                | "${{ format('{0}/gradle-cache', runner.temp) }}"
+                        )
+                    )
+            }
             "ANDROID_NDK_CACHE_DIR" => {
                 role == CandidateRole::Produce
                     && matches!(
@@ -560,10 +570,14 @@ pub fn reviewed_windows_sdk_cache(
                 Some("sccache_cache"),
                 Some(
                     "sccache-v1-${{ runner.os }}-windows-sdk-${{ needs.resolve.outputs.source_sha }}"
+                        | "sccache-v1-${{ runner.os }}-windows-sdk-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}"
                 ),
             ) | (
                 Some("cargo_registry_cache"),
-                Some("cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"),
+                Some(
+                    "cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"
+                        | "cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}"
+                ),
             )
         )
 }
@@ -587,10 +601,14 @@ pub fn reviewed_build_cache(workflow: &str, job: &str, definition: &Value, step:
                 Some("sccache_cache"),
                 Some(
                     "sccache-v1-${{ runner.os }}-option1-signatures-${{ needs.resolve.outputs.source_sha }}"
+                        | "sccache-v1-${{ runner.os }}-option1-signatures-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}"
                 ),
             ) | (
                 Some("cargo_registry_cache"),
-                Some("cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"),
+                Some(
+                    "cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"
+                        | "cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}"
+                ),
             )
         );
     }
@@ -602,10 +620,16 @@ pub fn reviewed_build_cache(workflow: &str, job: &str, definition: &Value, step:
             (step["id"].as_str(), step["with"]["key"].as_str()),
             (
                 Some("sccache_cache"),
-                Some("sccache-v1-${{ runner.os }}-publish-${{ needs.resolve.outputs.source_sha }}"),
+                Some(
+                    "sccache-v1-${{ runner.os }}-publish-${{ needs.resolve.outputs.source_sha }}"
+                        | "sccache-v1-${{ runner.os }}-publish-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}"
+                ),
             ) | (
                 Some("cargo_registry_cache"),
-                Some("cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"),
+                Some(
+                    "cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"
+                        | "cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}"
+                ),
             )
         );
     }
@@ -633,19 +657,41 @@ pub fn reviewed_build_cache(workflow: &str, job: &str, definition: &Value, step:
         return false;
     };
     (id == "sccache_cache"
-        && key
+        && (key
             == format!(
                 "sccache-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}"
-            ))
+            )
+            || key
+                == format!(
+                    "sccache-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}-${{{{ github.run_id }}}}"
+                )))
         || (id == "cargo_registry_cache"
-            && key == "cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}")
+            && matches!(
+                key,
+                "cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}"
+                    | "cargo-registry-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}-${{ github.run_id }}"
+            ))
         || (id == "flutter_sdk_cache"
             && key == "flutter-sdk-v1-${{ runner.os }}-${{ needs.resolve.outputs.source_sha }}")
         || (id == "pub_cache"
-            && key
+            && (key
                 == format!(
                     "pub-cache-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}"
-                ))
+                )
+                || key
+                    == format!(
+                        "pub-cache-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}-${{{{ github.run_id }}}}"
+                    )))
+        || (id == "gradle_cache"
+            && matches!(target, "android" | "${{ matrix.target }}")
+            && (key
+                == format!(
+                    "gradle-cache-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}"
+                )
+                || key
+                    == format!(
+                        "gradle-cache-v1-${{{{ runner.os }}}}-{target}-${{{{ needs.resolve.outputs.source_sha }}}}-${{{{ github.run_id }}}}"
+                    )))
         || (id == "linux_freerdp_cache"
             && matches!(target, "linux" | "${{ matrix.target }}")
             && key

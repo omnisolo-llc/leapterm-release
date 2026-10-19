@@ -147,6 +147,7 @@ pub fn clean_environment(parent: &Environment) -> Environment {
                 "SCCACHE_DIR"
                 | "FLUTTER_SDK_CACHE_DIR"
                 | "PUB_CACHE_DIR"
+                | "GRADLE_CACHE_DIR"
                 | "ANDROID_NDK_CACHE_DIR"
                 | "LEAP_LINUX_FREERDP_CACHE_DIR"
                 | "LEAP_MACOS_FREERDP_CACHE_DIR"
