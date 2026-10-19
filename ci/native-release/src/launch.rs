@@ -842,6 +842,57 @@ enum NativeStage<'a> {
     WindowsSdk(&'a Request, &'a str),
     RetainedArtifacts(&'a Request, &'a crate::retained_artifacts::Artifact),
 }
+fn paths_overlap(left: &Path, right: &Path) -> bool {
+    left.starts_with(right) || right.starts_with(left)
+}
+
+fn copy_regular_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let meta = fs::symlink_metadata(src)?;
+    if !meta.is_dir() || crate::guards::reparse(&meta) {
+        return Ok(());
+    }
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if matches!(
+            name_str.as_ref(),
+            ".cargo-lock" | ".package-cache" | ".package-cache-lock" | ".cargo-ok"
+        ) {
+            continue;
+        }
+        let child_src = entry.path();
+        let child_meta = fs::symlink_metadata(&child_src)?;
+        if crate::guards::reparse(&child_meta) {
+            continue;
+        }
+        let child_dst = dst.join(&name);
+        if child_meta.is_dir() {
+            copy_regular_tree(&child_src, &child_dst)?;
+        } else if child_meta.is_file() {
+            let same = fs::symlink_metadata(&child_dst)
+                .is_ok_and(|existing| existing.is_file() && existing.len() == child_meta.len());
+            if !same {
+                let _ = fs::copy(&child_src, &child_dst);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn sync_cargo_registry(src_home: &Path, dst_home: &Path) {
+    if paths_overlap(src_home, dst_home) {
+        return;
+    }
+    for sub in ["registry/index", "registry/cache", "git/db"] {
+        let from = src_home.join(sub);
+        if from.exists() {
+            let _ = copy_regular_tree(&from, &dst_home.join(sub));
+        }
+    }
+}
+
 fn build_native_stage(
     src: &Path,
     root: &Path,
@@ -886,6 +937,13 @@ fn build_native_stage(
         directory(&location)?;
         build.insert(name.into(), location.to_string_lossy().into_owned());
     }
+    if let Some(registry_cache) = checkout
+        .get("CARGO_REGISTRY_CACHE_DIR")
+        .map(Path::new)
+        .filter(|cache| !paths_overlap(cache, root))
+    {
+        sync_cargo_registry(registry_cache, &root.join("cargo-home"));
+    }
     build.insert("RUSTUP_HOME".into(), rustup.to_string_lossy().into_owned());
     let cargo_jobs = env
         .get("CARGO_BUILD_JOBS")
@@ -902,22 +960,6 @@ fn build_native_stage(
     if !manifest.is_file() || !src.join("tools/release-cli/Cargo.lock").is_file() {
         return Err("Pinned source does not contain native release tooling");
     }
-    println!("Native release phase: native-toolchain");
-    process::run(
-        Path::new("rustup"),
-        &git_args(&[
-            "toolchain",
-            "install",
-            "1.95.0",
-            "--profile",
-            "minimal",
-            "--no-self-update",
-        ]),
-        root,
-        &build,
-        Duration::from_secs(900),
-        Some(bootstrap),
-    )?;
     let skip_tool_tests = match &stage {
         NativeStage::RetainedArtifacts(_, _) | NativeStage::WindowsSdk(_, _) => true,
         NativeStage::Release(
@@ -931,14 +973,87 @@ fn build_native_stage(
         NativeStage::Release(request, "verify-build") => !request.run_test,
         _ => false,
     };
-    if !skip_tool_tests {
-        println!("Native release phase: native-tool-tests");
+    let binary_name = if cfg!(windows) {
+        "leap-release.exe"
+    } else {
+        "leap-release"
+    };
+    let binary = root.join("native-target/release").join(binary_name);
+    let stage_cache_entry = checkout
+        .get("LEAP_NATIVE_STAGE_CACHE_DIR")
+        .map(PathBuf::from)
+        .filter(|cache| !paths_overlap(cache, root))
+        .and_then(|cache| {
+            let builder_sha = env.get("GITHUB_SHA")?;
+            if builder_sha.len() != 40 || !builder_sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return None;
+            }
+            Some(
+                cache
+                    .join(format!("{source_sha}-{builder_sha}"))
+                    .join(binary_name),
+            )
+        });
+    let mut restored_from_cache = false;
+    if skip_tool_tests
+        && let Some(cached) = &stage_cache_entry
+        && fs::symlink_metadata(cached)
+            .is_ok_and(|meta| meta.is_file() && !crate::guards::reparse(&meta))
+    {
+        if let Some(parent) = binary.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if fs::copy(cached, &binary).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&binary, fs::Permissions::from_mode(0o700));
+            }
+            restored_from_cache = true;
+        }
+    }
+    if !restored_from_cache {
+        println!("Native release phase: native-toolchain");
+        process::run(
+            Path::new("rustup"),
+            &git_args(&[
+                "toolchain",
+                "install",
+                "1.95.0",
+                "--profile",
+                "minimal",
+                "--no-self-update",
+            ]),
+            root,
+            &build,
+            Duration::from_secs(900),
+            Some(bootstrap),
+        )?;
+        if !skip_tool_tests {
+            println!("Native release phase: native-tool-tests");
+            process::run(
+                Path::new("cargo"),
+                &[
+                    "+1.95.0".into(),
+                    "test".into(),
+                    "--locked".into(),
+                    "--manifest-path".into(),
+                    manifest.to_string_lossy().into_owned(),
+                ],
+                root,
+                &build,
+                Duration::from_secs(1800),
+                Some(bootstrap),
+            )?;
+        }
+        println!("Native release phase: native-tool-build");
         process::run(
             Path::new("cargo"),
             &[
                 "+1.95.0".into(),
-                "test".into(),
+                "build".into(),
                 "--locked".into(),
+                "--release".into(),
                 "--manifest-path".into(),
                 manifest.to_string_lossy().into_owned(),
             ],
@@ -948,32 +1063,11 @@ fn build_native_stage(
             Some(bootstrap),
         )?;
     }
-    println!("Native release phase: native-tool-build");
-    process::run(
-        Path::new("cargo"),
-        &[
-            "+1.95.0".into(),
-            "build".into(),
-            "--locked".into(),
-            "--release".into(),
-            "--manifest-path".into(),
-            manifest.to_string_lossy().into_owned(),
-        ],
-        root,
-        &build,
-        Duration::from_secs(1800),
-        Some(bootstrap),
-    )?;
     frozen.verify()?;
     source::verify_tools(src, &checkout)?;
     source::verify(src, source_sha, &checkout, false, 0)?;
     let work = root.join("release-work");
     directory(&work)?;
-    let binary = root.join(if cfg!(windows) {
-        "native-target/release/leap-release.exe"
-    } else {
-        "native-target/release/leap-release"
-    });
     if !fs::symlink_metadata(&binary).is_ok_and(|m| m.is_file() && !m.file_type().is_symlink()) {
         return Err("Native release executable missing");
     }
@@ -986,6 +1080,28 @@ fn build_native_stage(
             let temp = binary.with_extension("single-link.tmp");
             fs::copy(&binary, &temp).map_err(|_| "Failed to copy native binary")?;
             fs::rename(&temp, &binary).map_err(|_| "Failed to replace native binary")?;
+        }
+    }
+    if !restored_from_cache
+        && let Some(cached) = &stage_cache_entry
+        && let Some(parent) = cached.parent()
+    {
+        if let Some(cache_root) = parent.parent()
+            && let Some(current_name) = parent.file_name()
+            && let Ok(entries) = fs::read_dir(cache_root)
+        {
+            for entry in entries.flatten() {
+                if entry.file_name() != current_name {
+                    let _ = fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+        let _ = fs::create_dir_all(parent);
+        let temp = cached.with_extension(format!("tmp.{}", std::process::id()));
+        if fs::copy(&binary, &temp).is_ok() {
+            let _ = fs::rename(&temp, cached);
+        } else {
+            let _ = fs::remove_file(&temp);
         }
     }
     let mut task = match &stage {
@@ -1277,6 +1393,13 @@ fn build_native_stage(
     frozen.verify()?;
     source::verify_tools(src, &checkout)?;
     source::verify(src, source_sha, &checkout, false, 0)?;
+    if let Some(registry_cache) = checkout
+        .get("CARGO_REGISTRY_CACHE_DIR")
+        .map(Path::new)
+        .filter(|cache| !paths_overlap(cache, root))
+    {
+        sync_cargo_registry(&root.join("cargo-home"), registry_cache);
+    }
     if matches!(&stage, NativeStage::Ci(_)) {
         // The authenticated source-CI parent owns its exact receipt handoff.
         // This compiler boundary has no release output mirror or upload role.
