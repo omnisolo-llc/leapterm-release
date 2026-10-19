@@ -156,13 +156,16 @@ fn public_writer_requires_ordered_native_archive_and_independent_readback_output
     assert_eq!(node["with"]["package-manager-cache"], false);
     let automatic = steps
         .iter()
-        .find(|step| step["name"] == "Auto-promote candidates to internal store tracks")
+        .find(|step| step["name"] == "Auto-promote candidates to pre-release store tracks")
         .unwrap();
     assert_eq!(automatic["if"], "${{ inputs.auto_promote }}");
     let script = automatic["run"].as_str().unwrap();
     assert!(script.contains("promote-release.yml"));
     assert!(script.contains("-f publish_github_release=false"));
-    assert!(script.contains("-f ios_store_action=testflight"));
-    assert!(script.contains("-f macos_store_action=testflight"));
-    assert!(script.contains("-f android_store_action=internal"));
+    assert!(script.contains("IOS_ACTION=\"testflight\""));
+    assert!(script.contains("MACOS_ACTION=\"testflight\""));
+    assert!(script.contains("ANDROID_ACTION=\"alpha\""));
+    assert!(script.contains("-f ios_store_action=\"${IOS_ACTION}\""));
+    assert!(script.contains("-f macos_store_action=\"${MACOS_ACTION}\""));
+    assert!(script.contains("-f android_store_action=\"${ANDROID_ACTION}\""));
 }
