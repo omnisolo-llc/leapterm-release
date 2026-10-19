@@ -160,6 +160,8 @@ jobs:
           SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
           GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+          ADMIN_OPERATOR_ROLES: ${{ secrets.ADMIN_OPERATOR_ROLES }}
+          INTERNAL_TESTER_EMAILS: ${{ secrets.INTERNAL_TESTER_EMAILS }}
         run: node ci/promote-release.mjs
 
   promote_apple:
@@ -199,4 +201,5 @@ jobs:
           IOS_SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
           MACOS_SIGNING_CONFIG: ${{ secrets.MACOS_SIGNING_CONFIG }}
           APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
+          INTERNAL_TESTER_EMAILS: ${{ secrets.INTERNAL_TESTER_EMAILS }}
         run: node ci/promote-release.mjs

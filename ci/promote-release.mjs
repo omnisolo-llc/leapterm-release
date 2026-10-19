@@ -1076,6 +1076,117 @@ const ANDROID_PRE_RELEASE_STORE_ACTIONS = new Set([
   'beta',
 ]);
 
+export function parseInternalTesterEmails(raw = '') {
+  const items = String(raw || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  const seen = new Set();
+  const emails = [];
+  for (const email of items) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error(`Invalid email in INTERNAL_TESTER_EMAILS: ${email}`);
+    }
+    if (!seen.has(email)) {
+      seen.add(email);
+      emails.push(email);
+    }
+  }
+  return emails;
+}
+
+export async function syncAppleInternalTesters({
+  ascRequest,
+  appBundleId = 'com.leapterm.app',
+  internalTesterEmails = '',
+}) {
+  const emails = parseInternalTesterEmails(internalTesterEmails);
+  if (emails.length === 0) {
+    return { synced: [], group_id: null };
+  }
+  const appsRes = await ascRequest(
+    `/v1/apps?filter[bundleId]=${encodeURIComponent(appBundleId)}`,
+  );
+  const app = appsRes?.data?.[0];
+  if (!app?.id) {
+    throw new Error(
+      `App Store Connect app not found for bundleId ${appBundleId}`,
+    );
+  }
+  const groupsRes = await ascRequest(
+    `/v1/apps/${encodeURIComponent(app.id)}/betaGroups?limit=200`,
+  );
+  const groups = Array.isArray(groupsRes?.data) ? groupsRes.data : [];
+  let internalGroup = groups.find(
+    (g) => g?.attributes?.isInternalGroup === true,
+  );
+  if (!internalGroup?.id) {
+    const createdGroup = await ascRequest('/v1/betaGroups', 'POST', {
+      data: {
+        type: 'betaGroups',
+        attributes: {
+          name: 'Internal Testers',
+          isInternalGroup: true,
+          hasAccessToAllBuilds: true,
+        },
+        relationships: {
+          app: { data: { type: 'apps', id: app.id } },
+        },
+      },
+    });
+    internalGroup = createdGroup?.data;
+  }
+  if (!internalGroup?.id) {
+    throw new Error(
+      `Unable to resolve or create internal TestFlight beta group for ${appBundleId}`,
+    );
+  }
+
+  const groupTestersRes = await ascRequest(
+    `/v1/betaGroups/${encodeURIComponent(internalGroup.id)}/betaTesters?limit=200`,
+  );
+  const existingEmails = new Set(
+    (Array.isArray(groupTestersRes?.data) ? groupTestersRes.data : [])
+      .map((t) => String(t?.attributes?.email || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  for (const email of emails) {
+    if (existingEmails.has(email)) {
+      continue;
+    }
+    const existingRes = await ascRequest(
+      `/v1/betaTesters?filter[email]=${encodeURIComponent(email)}`,
+    );
+    const existingTester = Array.isArray(existingRes?.data)
+      ? existingRes.data[0]
+      : null;
+    if (existingTester?.id) {
+      await ascRequest(
+        `/v1/betaGroups/${encodeURIComponent(internalGroup.id)}/relationships/betaTesters`,
+        'POST',
+        {
+          data: [{ type: 'betaTesters', id: existingTester.id }],
+        },
+      );
+    } else {
+      await ascRequest('/v1/betaTesters', 'POST', {
+        data: {
+          type: 'betaTesters',
+          attributes: { email },
+          relationships: {
+            betaGroups: {
+              data: [{ type: 'betaGroups', id: internalGroup.id }],
+            },
+          },
+        },
+      });
+    }
+  }
+
+  return { synced: emails, group_id: internalGroup.id };
+}
+
 export async function promoteAppleToAppStoreConnect({
   platform = 'ios',
   version,
@@ -1084,6 +1195,7 @@ export async function promoteAppleToAppStoreConnect({
   automaticRelease = false,
   packagePath = '',
   appleSigningConfigJson,
+  internalTesterEmails = '',
   appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
@@ -1297,12 +1409,23 @@ export async function promoteAppleToAppStoreConnect({
       }
       fs.rmSync(keyDir, { recursive: true, force: true });
     }
+    const testerSync = await syncAppleInternalTesters({
+      ascRequest,
+      appBundleId,
+      internalTesterEmails,
+    });
     return {
       platform,
       action,
       track: 'internal',
       version: normalizedVersion,
       build_number: normalizedBuild,
+      ...(testerSync.group_id
+        ? {
+            asc_internal_beta_group_id: testerSync.group_id,
+            internal_testers_synced: testerSync.synced,
+          }
+        : {}),
       status:
         action === 'internal'
           ? 'uploaded-to-testflight-internal'
@@ -1474,6 +1597,7 @@ export async function promoteIosToAppStoreConnect({
   automaticRelease = false,
   ipaPath = '',
   iosSigningConfigJson,
+  internalTesterEmails = '',
   appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
@@ -1486,6 +1610,7 @@ export async function promoteIosToAppStoreConnect({
     automaticRelease,
     packagePath: ipaPath,
     appleSigningConfigJson: iosSigningConfigJson,
+    internalTesterEmails,
     appBundleId,
     fetchImpl,
     execFileImpl,
@@ -1499,6 +1624,7 @@ export async function promoteMacosToAppStoreConnect({
   automaticRelease = false,
   packagePath = '',
   macosSigningConfigJson,
+  internalTesterEmails = '',
   appBundleId = 'com.leapterm.app',
   fetchImpl = fetch,
   execFileImpl = execFileSync,
@@ -1511,6 +1637,7 @@ export async function promoteMacosToAppStoreConnect({
     automaticRelease,
     packagePath,
     appleSigningConfigJson: macosSigningConfigJson,
+    internalTesterEmails,
     appBundleId,
     fetchImpl,
     execFileImpl,
@@ -2131,6 +2258,7 @@ export async function promoteRelease({
   macosAutomaticRelease = false,
   macosSigningConfigJson = '',
   appleConfigJson = '',
+  internalTesterEmails = '',
   androidStoreAction = 'none',
   googlePlayServiceAccountJson = '',
   rolloutEnvironment = 'auto',
@@ -2738,6 +2866,7 @@ export async function promoteRelease({
         automaticRelease: iosAutomaticRelease,
         ipaPath,
         iosSigningConfigJson,
+        internalTesterEmails,
       });
       console.log(
         `Promoted iOS candidate v${normalizedVersion} (${resolvedBuildNumber}) via action "${iosResult.action}" (${iosResult.status}).`,
@@ -2770,6 +2899,7 @@ export async function promoteRelease({
         automaticRelease: macosAutomaticRelease,
         packagePath: macosPackagePath,
         macosSigningConfigJson: macosSigningConfigJson || iosSigningConfigJson,
+        internalTesterEmails,
       });
       console.log(
         `Promoted macOS candidate v${normalizedVersion} (${resolvedBuildNumber}) via action "${macosResult.action}" (${macosResult.status}).`,
@@ -2837,6 +2967,7 @@ if (
       String(process.env.PROMOTE_MACOS_AUTOMATIC_RELEASE ?? 'false') === 'true',
     macosSigningConfigJson: process.env.MACOS_SIGNING_CONFIG || '',
     appleConfigJson: process.env.APPLE_CONFIG || '',
+    internalTesterEmails: process.env.INTERNAL_TESTER_EMAILS || '',
     androidStoreAction: process.env.PROMOTE_ANDROID_STORE_ACTION || 'none',
     googlePlayServiceAccountJson:
       process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || '',

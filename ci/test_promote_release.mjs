@@ -26,6 +26,7 @@ import {
   filterPublicProvenance,
   mergeAppleSigningConfig,
   mergeWaveStagingMetadata,
+  parseInternalTesterEmails,
   promoteAndroidToPlayStore,
   promoteIosToAppStoreConnect,
   promoteMacosToAppStoreConnect,
@@ -1872,4 +1873,162 @@ test('mergeWaveStagingMetadata combines fast and slow wave releases and enforces
     /source_sha mismatch/,
   );
 });
+
+test('parseInternalTesterEmails parses comma-separated emails and syncs TestFlight internal testers', async () => {
+  assert.deepEqual(parseInternalTesterEmails(''), []);
+  assert.deepEqual(parseInternalTesterEmails('   ,  '), []);
+  assert.deepEqual(
+    parseInternalTesterEmails(
+      ' Alice@Example.com , bob@example.com, alice@example.com , ',
+    ),
+    ['alice@example.com', 'bob@example.com'],
+  );
+  assert.throws(
+    () => parseInternalTesterEmails('alice@example.com, invalid-email'),
+    /Invalid email in INTERNAL_TESTER_EMAILS/,
+  );
+
+  const { privateKey } = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1',
+  });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const appleSigningConfigJson = JSON.stringify({
+    APP_STORE_CONNECT_KEY_ID: 'ABC1234567',
+    APP_STORE_CONNECT_ISSUER_ID: '00000000-0000-0000-0000-000000000001',
+    APP_STORE_CONNECT_API_KEY_BASE64: Buffer.from(pem, 'utf8').toString('base64'),
+  });
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-internal-testers-'));
+  try {
+    const ipaPath = path.join(tempDir, 'leapterm-0.1.1-ios-private.ipa');
+    fs.writeFileSync(ipaPath, 'signed-ipa-fixture');
+
+    const apiCalls = [];
+    const res = await promoteIosToAppStoreConnect({
+      version: '0.1.1',
+      buildNumber: '25',
+      action: 'internal',
+      ipaPath,
+      iosSigningConfigJson: appleSigningConfigJson,
+      internalTesterEmails: 'alice@example.com, bob@example.com',
+      execFileImpl: (cmd, args) => {
+        assert.equal(cmd, 'xcrun');
+        assert.ok(args.includes('--upload-app'));
+      },
+      fetchImpl: async (url, opts = {}) => {
+        apiCalls.push({
+          url,
+          method: opts.method || 'GET',
+          body: opts.body ? JSON.parse(opts.body) : null,
+        });
+        if (url.includes('/v1/apps?filter[bundleId]=com.leapterm.app')) {
+          return new Response(
+            JSON.stringify({ data: [{ id: 'app-1', type: 'apps' }] }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith('/v1/apps/app-1/betaGroups?limit=200')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'internal-grp-1',
+                  type: 'betaGroups',
+                  attributes: { name: 'Internal', isInternalGroup: true },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith('/v1/betaGroups/internal-grp-1/betaTesters?limit=200')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'tester-charlie',
+                  type: 'betaTesters',
+                  attributes: { email: 'charlie@example.com' },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes('/v1/betaTesters?filter[email]=alice%40example.com')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'tester-alice',
+                  type: 'betaTesters',
+                  attributes: { email: 'alice@example.com' },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (
+          url.endsWith('/v1/betaGroups/internal-grp-1/relationships/betaTesters') &&
+          opts.method === 'POST'
+        ) {
+          return new Response(null, { status: 204 });
+        }
+        if (url.includes('/v1/betaTesters?filter[email]=bob%40example.com')) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        if (url.endsWith('/v1/betaTesters') && opts.method === 'POST') {
+          return new Response(
+            JSON.stringify({ data: { id: 'tester-bob', type: 'betaTesters' } }),
+            { status: 201 },
+          );
+        }
+        throw new Error(`Unexpected ASC URL: ${url}`);
+      },
+    });
+
+    assert.equal(res.status, 'uploaded-to-testflight-internal');
+    assert.equal(res.asc_internal_beta_group_id, 'internal-grp-1');
+    assert.deepEqual(res.internal_testers_synced, [
+      'alice@example.com',
+      'bob@example.com',
+    ]);
+    assert.equal(apiCalls.length, 7);
+    assert.deepEqual(
+      apiCalls.find((c) => c.url.endsWith('/relationships/betaTesters'))?.body,
+      { data: [{ type: 'betaTesters', id: 'tester-alice' }] },
+    );
+    assert.deepEqual(
+      apiCalls.find((c) => c.url.endsWith('/v1/betaTesters'))?.body,
+      {
+        data: {
+          type: 'betaTesters',
+          attributes: { email: 'bob@example.com' },
+          relationships: {
+            betaGroups: {
+              data: [{ type: 'betaGroups', id: 'internal-grp-1' }],
+            },
+          },
+        },
+      },
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  const workflow = fs.readFileSync(
+    path.resolve(import.meta.dirname, '..', '.github/workflows/promote-release.yml'),
+    'utf8',
+  );
+  assert.match(
+    workflow,
+    /INTERNAL_TESTER_EMAILS:\s*\$\{\{\s*secrets\.INTERNAL_TESTER_EMAILS\s*\}\}/,
+  );
+  assert.match(
+    workflow,
+    /ADMIN_OPERATOR_ROLES:\s*\$\{\{\s*secrets\.ADMIN_OPERATOR_ROLES\s*\}\}/,
+  );
+});
+
 
