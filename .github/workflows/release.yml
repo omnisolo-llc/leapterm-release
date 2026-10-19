@@ -151,7 +151,7 @@ jobs:
       - name: Install native Windows cross compilation tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 cmake ninja-build make perl gawk pkg-config curl patch llvm
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 cmake ninja-build make perl gawk pkg-config curl patch llvm
       - name: Cache Windows cross-compiled SDK
         id: sdk_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
