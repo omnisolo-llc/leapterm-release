@@ -5,7 +5,12 @@ umask 077
 caller="$(pwd -P)"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-scratch="$(mktemp -d "$base/leap-native-launcher.XXXXXXXX")"
+if [[ -n "${RUNNER_TEMP:-}" ]] && mkdir "$base/leap-native-launcher" 2>/dev/null; then
+  chmod 700 "$base/leap-native-launcher"
+  scratch="$base/leap-native-launcher"
+else
+  scratch="$(mktemp -d "$base/leap-native-launcher.XXXXXXXX")"
+fi
 scratch="$(cd "$scratch" && pwd -P)"
 trap 'rm -rf -- "$scratch" 2>/dev/null || { sleep 1; rm -rf -- "$scratch" 2>/dev/null; } || true' EXIT
 trap 'exit 143' TERM

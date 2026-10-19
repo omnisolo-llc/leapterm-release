@@ -451,6 +451,46 @@ fn strip_verbatim(path: PathBuf) -> PathBuf {
     }
 }
 
+enum PrivateTaskDir {
+    Deterministic(PathBuf),
+    Temporary(tempfile::TempDir),
+}
+
+impl PrivateTaskDir {
+    fn create(runner: &Path) -> Result<Self> {
+        let candidate = runner.join("native-private-task");
+        if directory(&candidate).is_ok() {
+            return Ok(Self::Deterministic(candidate));
+        }
+        let temp = tempfile::Builder::new()
+            .prefix("native-private-task-")
+            .tempdir_in(runner)
+            .map_err(|_| "Private temporary directory unavailable")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700))
+                .map_err(|_| "Cannot secure release directory")?;
+        }
+        Ok(Self::Temporary(temp))
+    }
+
+    fn path(&self) -> &Path {
+        match self {
+            Self::Deterministic(path) => path.as_path(),
+            Self::Temporary(temp) => temp.path(),
+        }
+    }
+}
+
+impl Drop for PrivateTaskDir {
+    fn drop(&mut self) {
+        if let Self::Deterministic(path) = self {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+}
+
 pub fn run(command: &str) -> Result<()> {
     let mut env: Environment = std::env::vars().collect();
     if command == "publish-candidates" {
@@ -604,10 +644,7 @@ pub fn run(command: &str) -> Result<()> {
             .canonicalize()
             .map_err(|_| "Runner temporary directory missing")?,
     );
-    let temp = tempfile::Builder::new()
-        .prefix("native-private-task-")
-        .tempdir_in(&runner)
-        .map_err(|_| "Private temporary directory unavailable")?;
+    let temp = PrivateTaskDir::create(&runner)?;
     let root = strip_verbatim(
         temp.path()
             .canonicalize()
@@ -1400,6 +1437,7 @@ fn build_native_stage(
         .filter(|cache| !paths_overlap(cache, root))
     {
         sync_cargo_registry(&root.join("cargo-home"), registry_cache);
+        sync_cargo_registry(&work.join("cargo"), registry_cache);
     }
     if matches!(&stage, NativeStage::Ci(_)) {
         // The authenticated source-CI parent owns its exact receipt handoff.
