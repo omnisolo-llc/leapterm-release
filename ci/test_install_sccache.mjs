@@ -100,3 +100,41 @@ test('installSccache skips download when cached binary already exists and reject
   );
   fs.rmSync(mismatchTemp, { recursive: true, force: true });
 });
+
+test('installSccache bounds sccache disk cache size per target to prevent repository cache eviction', async () => {
+  const runnerTemp = makeTempDir();
+  const githubOutput = path.join(runnerTemp, 'github_output.txt');
+  const linuxSpec = SCCACHE_SPECS.Linux;
+  const preseededDir = path.join(runnerTemp, 'sccache-bin', linuxSpec.folder);
+  fs.mkdirSync(preseededDir, { recursive: true });
+  fs.writeFileSync(path.join(preseededDir, linuxSpec.binary), 'cached');
+
+  await installSccache({
+    runnerOs: 'Linux',
+    runnerTemp,
+    githubOutput,
+    target: 'windows',
+    fetchImpl: async () => { throw new Error('unused'); },
+    execFileImpl: () => { throw new Error('unused'); },
+  });
+
+  const confContent = fs.readFileSync(path.join(runnerTemp, 'sccache', 'sccache-config.toml'), 'utf8');
+  assert.match(confContent, /size = 1887436800/);
+  const outputContent = fs.readFileSync(githubOutput, 'utf8');
+  assert.match(outputContent, /sccache_cache_size=1887436800/);
+
+  // Test android target bound
+  await installSccache({
+    runnerOs: 'Linux',
+    runnerTemp,
+    githubOutput,
+    target: 'android',
+    fetchImpl: async () => { throw new Error('unused'); },
+    execFileImpl: () => { throw new Error('unused'); },
+  });
+
+  const androidConf = fs.readFileSync(path.join(runnerTemp, 'sccache', 'sccache-config.toml'), 'utf8');
+  assert.match(androidConf, /size = 838860800/);
+
+  fs.rmSync(runnerTemp, { recursive: true, force: true });
+});

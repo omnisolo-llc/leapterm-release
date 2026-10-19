@@ -171,6 +171,7 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-windows-sdk-
             sccache-v1-${{ runner.os }}-
+          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -184,7 +185,7 @@ jobs:
             cargo-registry-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
         id: sccache
-        run: node ci/install-sccache.mjs
+        run: node ci/install-sccache.mjs windows-sdk
       - name: Produce and retain the complete reviewed SDK privately
         id: sdk
         run: bash ci/native-release/run.sh windows-sdk
@@ -389,6 +390,7 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-linux-
             sccache-v1-${{ runner.os }}-
+          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -427,7 +429,7 @@ jobs:
             linux-freerdp-v1-${{ runner.os }}-linux-
       - name: Install pinned sccache compiler launcher
         id: sccache
-        run: node ci/install-sccache.mjs
+        run: node ci/install-sccache.mjs linux
       - name: Install pinned native verification toolchain
         if: ${{ inputs.run_test }}
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
@@ -518,6 +520,7 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-windows-
             sccache-v1-${{ runner.os }}-
+          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -548,7 +551,7 @@ jobs:
             pub-cache-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
         id: sccache
-        run: node ci/install-sccache.mjs
+        run: node ci/install-sccache.mjs windows
       - name: Install pinned native verification toolchain
         if: ${{ inputs.run_test }}
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
@@ -679,6 +682,7 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-macos-
             sccache-v1-${{ runner.os }}-
+          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -719,7 +723,7 @@ jobs:
             macos-freerdp-v1-${{ runner.os }}-macos-
       - name: Install pinned sccache compiler launcher
         id: sccache
-        run: node ci/install-sccache.mjs
+        run: node ci/install-sccache.mjs macos
       - name: Install pinned native verification toolchain
         if: ${{ inputs.run_test }}
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
@@ -816,6 +820,7 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-android-
             sccache-v1-${{ runner.os }}-
+          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -864,7 +869,7 @@ jobs:
             mobile-freerdp-v1-${{ runner.os }}-android-
       - name: Install pinned sccache compiler launcher
         id: sccache
-        run: node ci/install-sccache.mjs
+        run: node ci/install-sccache.mjs android
       - name: Install pinned native verification toolchain
         if: ${{ inputs.run_test }}
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
@@ -957,6 +962,7 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-web-
             sccache-v1-${{ runner.os }}-
+          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -987,7 +993,7 @@ jobs:
             pub-cache-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
         id: sccache
-        run: node ci/install-sccache.mjs
+        run: node ci/install-sccache.mjs web
       - name: Install pinned native verification toolchain
         if: ${{ inputs.run_test }}
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
@@ -1076,6 +1082,7 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-ios-
             sccache-v1-${{ runner.os }}-
+          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -1116,7 +1123,7 @@ jobs:
             mobile-freerdp-v1-${{ runner.os }}-ios-
       - name: Install pinned sccache compiler launcher
         id: sccache
-        run: node ci/install-sccache.mjs
+        run: node ci/install-sccache.mjs ios
       - name: Install pinned native verification toolchain
         if: ${{ inputs.run_test }}
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
@@ -2267,6 +2274,7 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-option1-signatures-
             sccache-v1-${{ runner.os }}-
+          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -2280,7 +2288,7 @@ jobs:
             cargo-registry-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
         id: sccache
-        run: node ci/install-sccache.mjs
+        run: node ci/install-sccache.mjs publish
       - name: Prepare empty candidate directory for private storage materialization
         id: protected_candidates_download
         run: mkdir -p release-public-candidates
@@ -2363,6 +2371,7 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-publish-
             sccache-v1-${{ runner.os }}-
+          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -2376,7 +2385,7 @@ jobs:
             cargo-registry-v1-${{ runner.os }}-
       - name: Install pinned sccache compiler launcher
         id: sccache
-        run: node ci/install-sccache.mjs
+        run: node ci/install-sccache.mjs publish
       - name: Prepare empty candidate directory for private storage materialization
         id: public_candidates_download
         run: mkdir -p release-public-candidates
