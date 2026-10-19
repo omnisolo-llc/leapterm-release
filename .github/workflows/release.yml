@@ -54,7 +54,7 @@ on:
         type: boolean
         default: true
       auto_promote:
-        description: 'Candidate promotion: automatically promote verified candidate to pre-release tracks (TestFlight & Play Store Internal) upon completion. Never releases directly to users.'
+        description: 'Candidate promotion: automatically promote verified candidate to internal tracks (TestFlight Internal & Play Store Internal) upon completion. Never releases directly to public users.'
         type: boolean
         default: false
 
@@ -1721,16 +1721,43 @@ jobs:
       - name: Auto-promote candidates to internal store tracks
         if: ${{ inputs.auto_promote }}
         run: |
-          echo "Auto-promoting release candidate to pre-release tracks and staging environment (TestFlight, Google Play Internal, and staging rollout)..."
+          IOS_ACTION="none"
+          MACOS_ACTION="none"
+          ANDROID_ACTION="none"
+          case "${{ inputs.verify_target }}" in
+            all)
+              IOS_ACTION="internal"
+              MACOS_ACTION="internal"
+              ANDROID_ACTION="internal"
+              ;;
+            fast|android)
+              ANDROID_ACTION="internal"
+              ;;
+            slow)
+              IOS_ACTION="internal"
+              MACOS_ACTION="internal"
+              ;;
+            ios)
+              IOS_ACTION="internal"
+              ;;
+            macos)
+              MACOS_ACTION="internal"
+              ;;
+          esac
+          if [ "${IOS_ACTION}" = "none" ] && [ "${MACOS_ACTION}" = "none" ] && [ "${ANDROID_ACTION}" = "none" ]; then
+            echo "No store-backed platform targets active for verify_target=${{ inputs.verify_target }}; skipping store auto-promotion."
+            exit 0
+          fi
+          echo "Auto-promoting release candidate to internal store tracks and staging environment (iOS=${IOS_ACTION}, macOS=${MACOS_ACTION}, Android=${ANDROID_ACTION})..."
           gh workflow run promote-release.yml \
             --ref main \
             -f version="${{ needs.resolve.outputs.version }}" \
             -f build_number="${{ needs.resolve.outputs.build_number }}" \
             -f publish_github_release=false \
             -f rollout_environment=staging \
-            -f ios_store_action=testflight \
-            -f macos_store_action=testflight \
-            -f android_store_action=internal
+            -f ios_store_action="${IOS_ACTION}" \
+            -f macos_store_action="${MACOS_ACTION}" \
+            -f android_store_action="${ANDROID_ACTION}"
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN || github.token }}
 

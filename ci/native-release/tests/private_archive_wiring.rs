@@ -162,7 +162,10 @@ fn public_writer_requires_ordered_native_archive_and_independent_readback_output
     let script = automatic["run"].as_str().unwrap();
     assert!(script.contains("promote-release.yml"));
     assert!(script.contains("-f publish_github_release=false"));
-    assert!(script.contains("-f ios_store_action=testflight"));
-    assert!(script.contains("-f macos_store_action=testflight"));
-    assert!(script.contains("-f android_store_action=internal"));
+    assert!(script.contains("IOS_ACTION=\"internal\""));
+    assert!(script.contains("MACOS_ACTION=\"internal\""));
+    assert!(script.contains("ANDROID_ACTION=\"internal\""));
+    assert!(script.contains("-f ios_store_action=\"${IOS_ACTION}\""));
+    assert!(script.contains("-f macos_store_action=\"${MACOS_ACTION}\""));
+    assert!(script.contains("-f android_store_action=\"${ANDROID_ACTION}\""));
 }
