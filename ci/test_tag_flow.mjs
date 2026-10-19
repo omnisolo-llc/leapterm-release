@@ -50,9 +50,22 @@ test('parseTag correctly resolves version and track from diverse tag formats', (
   // Production or promotion tags
   const prod = parseTag('v0.1.1-prod');
   assert.equal(prod.buildOnly, false);
+  assert.equal(prod.autoPromote, false);
 
   const promote = parseTag('v0.1.1-promote');
   assert.equal(promote.autoPromote, true);
+  assert.equal(promote.buildOnly, false);
+
+  const publish = parseTag('v0.1.1-b27-publish');
+  assert.equal(publish.buildOnly, false);
+  assert.equal(publish.autoPromote, false);
+  assert.equal(publish.buildNumber, '27');
+
+  // Single track never publishes or auto-promotes even with keyword
+  const singleTrackPromote = parseTag('v0.1.1-macos-promote');
+  assert.equal(singleTrackPromote.track, 'macos');
+  assert.equal(singleTrackPromote.buildOnly, true);
+  assert.equal(singleTrackPromote.autoPromote, false);
 
   // Build number tags
   const withBuild1 = parseTag('v0.1.1-b27-macos');
@@ -83,6 +96,15 @@ test('buildDispatchArguments formats gh workflow run args properly', () => {
   assert.ok(args.includes('version=0.1.1'));
   assert.ok(args.includes('build_number=42'));
   assert.ok(args.includes('release_route=option1'));
+  assert.ok(!args.includes('ios_action=upload'));
+
+  const parsedPromote = parseTag('v0.1.1-b27-promote');
+  const argsPromote = buildDispatchArguments({ parsed: parsedPromote });
+  assert.ok(argsPromote.includes('verify_target=all'));
+  assert.ok(argsPromote.includes('build_only=false'));
+  assert.ok(argsPromote.includes('auto_promote=true'));
+  assert.ok(argsPromote.includes('build_number=27'));
+  assert.ok(argsPromote.includes('ios_action=upload'));
 });
 
 test('dispatchTagFlow executes gh workflow run with correct token', async () => {

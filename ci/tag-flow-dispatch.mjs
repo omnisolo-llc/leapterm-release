@@ -44,8 +44,9 @@ export function parseTag(rawTag) {
     }
   }
 
-  const buildOnly = !lower.includes('prod') && !lower.includes('publish') && !lower.includes('full');
-  const autoPromote = lower.includes('promote');
+  const isMultiTrack = ['all', 'fast', 'slow'].includes(track);
+  const autoPromote = isMultiTrack && lower.includes('promote');
+  const buildOnly = !isMultiTrack || (!lower.includes('prod') && !lower.includes('publish') && !lower.includes('full') && !autoPromote);
 
   return {
     version,
@@ -64,7 +65,7 @@ export function buildDispatchArguments({
   ref = 'main',
 }) {
   const finalBuildNumber = parsed?.buildNumber || buildNumber;
-  return [
+  const args = [
     'workflow',
     'run',
     'release.yml',
@@ -85,6 +86,10 @@ export function buildDispatchArguments({
     '-f',
     `auto_promote=${parsed.autoPromote}`,
   ];
+  if (!parsed.buildOnly) {
+    args.push('-f', 'ios_action=upload');
+  }
+  return args;
 }
 
 export async function dispatchTagFlow({
