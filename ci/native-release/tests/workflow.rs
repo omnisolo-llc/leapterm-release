@@ -1399,3 +1399,26 @@ fn public_moq_cutoff_patch_and_locked_rebuild_contract_is_preserved() {
         assert!(patch.contains(text));
     }
 }
+
+#[test]
+fn run_test_input_gates_verify_contracts_uniformly() {
+    let release = workflow("release");
+    let input = &release["on"]["workflow_dispatch"]["inputs"]["run_test"];
+    assert_eq!(input["type"].as_str(), Some("boolean"));
+    assert_eq!(input["default"].as_bool(), Some(false));
+    let verify_steps = steps(&release["jobs"]["verify"]);
+    for name in [
+        "Install pinned native verification toolchain",
+        "Verify public launcher contracts",
+    ] {
+        let step = verify_steps
+            .iter()
+            .find(|step| step["name"].as_str() == Some(name))
+            .unwrap_or_else(|| panic!("missing verify step {name}"));
+        assert_eq!(
+            step["if"].as_str(),
+            Some("${{ inputs.run_test }}"),
+            "{name} must be gated by inputs.run_test"
+        );
+    }
+}

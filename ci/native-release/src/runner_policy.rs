@@ -205,6 +205,13 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
                             "${{ matrix.target == 'android' && format('{0}/android-ndk-cache', runner.temp) || '' }}",
                         )
             }
+            "LEAP_MACOS_FREERDP_CACHE_DIR" => {
+                role == CandidateRole::Produce
+                    && value.as_str()
+                        == Some(
+                            "${{ matrix.target == 'macos' && format('{0}/macos-freerdp-cache', runner.temp) || '' }}",
+                        )
+            }
             "LEAP_MOBILE_FREERDP_CACHE_DIR" => {
                 role == CandidateRole::Produce
                     && value.as_str()
@@ -216,7 +223,7 @@ fn candidate_identity(env: &Value, target: &str, role: CandidateRole) -> bool {
                 role == CandidateRole::Produce
                     && value.as_str()
                         == Some(
-                            "${{ (matrix.target == 'android' || matrix.target == 'ios') && format('{0}/mobile-sdk-archives', runner.temp) || '' }}",
+                            "${{ (matrix.target == 'android' || matrix.target == 'ios' || matrix.target == 'macos') && format('{0}/mobile-sdk-archives', runner.temp) || '' }}",
                         )
             }
             "RUSTC_WRAPPER" | "CARGO_BUILD_RUSTC_WRAPPER" | "LEAP_C_COMPILER_LAUNCHER" => {
@@ -469,6 +476,11 @@ pub fn reviewed_build_cache(workflow: &str, job: &str, definition: &Value, step:
             Some("mobile_freerdp_cache"),
             Some(
                 "mobile-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}"
+            ),
+        ) | (
+            Some("macos_freerdp_cache"),
+            Some(
+                "macos-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}"
             ),
         )
     )

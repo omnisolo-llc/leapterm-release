@@ -49,6 +49,8 @@ pub struct Request {
     pub preview_windows_self_sign: bool,
     #[serde(default)]
     pub auto_promote: bool,
+    #[serde(default)]
+    pub run_test: bool,
 }
 fn yes() -> bool {
     true
@@ -185,6 +187,9 @@ impl Request {
         let object = value.as_object_mut().ok_or("Invalid release request")?;
         if self.build_only || self.verify_target == "all" {
             object.remove("verify_target");
+        }
+        if !self.run_test {
+            object.remove("run_test");
         }
         object.remove("builder_sha");
         object.remove("preview_windows_self_sign");

@@ -57,6 +57,10 @@ on:
         description: 'Candidate promotion: automatically promote verified candidate to internal tracks (TestFlight Internal & Play Store Internal) upon completion. Never releases directly to public users.'
         type: boolean
         default: false
+      run_test:
+        description: 'Run consistent launcher, release-tool, and platform tests on every selected platform'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -398,12 +402,25 @@ jobs:
           key: mobile-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}
           restore-keys: |
             mobile-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-
+      - name: Cache macOS FreeRDP SDK and source archives
+        id: macos_freerdp_cache
+        if: matrix.target == 'macos'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/macos-freerdp-cache
+            ${{ runner.temp }}/mobile-sdk-archives
+          key: macos-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}
+          restore-keys: |
+            macos-freerdp-v1-${{ runner.os }}-${{ matrix.target }}-
       - name: Install pinned sccache compiler launcher
         id: sccache
         run: node ci/install-sccache.mjs
       - name: Install pinned native verification toolchain
+        if: ${{ inputs.run_test }}
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
       - name: Verify public launcher contracts
+        if: ${{ inputs.run_test }}
         run: |
           bash ci/test-native-release.sh
           node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
@@ -456,8 +473,9 @@ jobs:
           FLUTTER_SDK_CACHE_DIR: ${{ format('{0}/flutter-sdk-cache', runner.temp) }}
           PUB_CACHE_DIR: ${{ format('{0}/pub-cache', runner.temp) }}
           ANDROID_NDK_CACHE_DIR: ${{ matrix.target == 'android' && format('{0}/android-ndk-cache', runner.temp) || '' }}
+          LEAP_MACOS_FREERDP_CACHE_DIR: ${{ matrix.target == 'macos' && format('{0}/macos-freerdp-cache', runner.temp) || '' }}
           LEAP_MOBILE_FREERDP_CACHE_DIR: ${{ (matrix.target == 'android' || matrix.target == 'ios') && format('{0}/mobile-freerdp-cache', runner.temp) || '' }}
-          LEAP_MOBILE_SDK_ARCHIVES_DIR: ${{ (matrix.target == 'android' || matrix.target == 'ios') && format('{0}/mobile-sdk-archives', runner.temp) || '' }}
+          LEAP_MOBILE_SDK_ARCHIVES_DIR: ${{ (matrix.target == 'android' || matrix.target == 'ios' || matrix.target == 'macos') && format('{0}/mobile-sdk-archives', runner.temp) || '' }}
           RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
           CARGO_BUILD_RUSTC_WRAPPER: ${{ steps.sccache.outputs.wrapper || '' }}
           LEAP_C_COMPILER_LAUNCHER: ${{ steps.sccache.outputs.wrapper || '' }}
