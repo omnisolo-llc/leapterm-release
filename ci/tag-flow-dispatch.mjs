@@ -29,6 +29,11 @@ export function parseTag(rawTag) {
   }
   const version = versionMatch[1];
 
+  // Extract optional build number from tag (e.g. -b27, -build27, or trailing -27 or _b27)
+  const remaining = tag.replace(version, '');
+  const buildMatch = remaining.match(/(?:b|build)[-_.]?(\d+)|(?:^|[-_.])(\d{1,4})(?:$|[-_.])/i);
+  const buildNumber = buildMatch ? (buildMatch[1] || buildMatch[2]) : null;
+
   // Detect track from tag
   const lower = tag.toLowerCase();
   let track = 'all';
@@ -44,6 +49,7 @@ export function parseTag(rawTag) {
 
   return {
     version,
+    buildNumber,
     track,
     buildOnly,
     autoPromote,
@@ -53,10 +59,11 @@ export function parseTag(rawTag) {
 
 export function buildDispatchArguments({
   parsed,
-  buildNumber = process.env.GITHUB_RUN_NUMBER || '1',
+  buildNumber = parsed?.buildNumber || process.env.GITHUB_RUN_NUMBER || '1',
   repo = process.env.GITHUB_REPOSITORY || 'omnisolo-llc/leapterm-release',
   ref = 'main',
 }) {
+  const finalBuildNumber = parsed?.buildNumber || buildNumber;
   return [
     'workflow',
     'run',
@@ -74,7 +81,7 @@ export function buildDispatchArguments({
     '-f',
     `version=${parsed.version}`,
     '-f',
-    `build_number=${buildNumber}`,
+    `build_number=${finalBuildNumber}`,
     '-f',
     `auto_promote=${parsed.autoPromote}`,
   ];
@@ -88,7 +95,7 @@ export async function dispatchTagFlow({
   execFileImpl = execFileSync,
 } = {}) {
   const parsed = parseTag(tag);
-  console.log(`[Tag Flow] Tag "${parsed.originalTag}" resolved: version=${parsed.version}, track=${parsed.track}, buildOnly=${parsed.buildOnly}`);
+  console.log(`[Tag Flow] Tag "${parsed.originalTag}" resolved: version=${parsed.version}, buildNumber=${parsed.buildNumber ?? buildNumber}, track=${parsed.track}, buildOnly=${parsed.buildOnly}, autoPromote=${parsed.autoPromote}`);
   const args = buildDispatchArguments({ parsed, buildNumber, repo });
   console.log(`[Tag Flow] Executing: gh ${args.join(' ')}`);
   const env = {

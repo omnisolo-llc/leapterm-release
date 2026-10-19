@@ -53,6 +53,22 @@ test('parseTag correctly resolves version and track from diverse tag formats', (
 
   const promote = parseTag('v0.1.1-promote');
   assert.equal(promote.autoPromote, true);
+
+  // Build number tags
+  const withBuild1 = parseTag('v0.1.1-b27-macos');
+  assert.equal(withBuild1.version, '0.1.1');
+  assert.equal(withBuild1.buildNumber, '27');
+  assert.equal(withBuild1.track, 'macos');
+
+  const withBuild2 = parseTag('v0.1.1-build42');
+  assert.equal(withBuild2.version, '0.1.1');
+  assert.equal(withBuild2.buildNumber, '42');
+  assert.equal(withBuild2.track, 'all');
+
+  const withBuild3 = parseTag('track-windows-v0.1.2-b99');
+  assert.equal(withBuild3.version, '0.1.2');
+  assert.equal(withBuild3.buildNumber, '99');
+  assert.equal(withBuild3.track, 'windows');
 });
 
 test('parseTag rejects invalid tags missing semver', () => {

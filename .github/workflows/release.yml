@@ -171,7 +171,6 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-windows-sdk-
             sccache-v1-${{ runner.os }}-
-          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -390,7 +389,6 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-linux-
             sccache-v1-${{ runner.os }}-
-          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -520,7 +518,6 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-windows-
             sccache-v1-${{ runner.os }}-
-          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -682,7 +679,6 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-macos-
             sccache-v1-${{ runner.os }}-
-          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -820,7 +816,6 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-android-
             sccache-v1-${{ runner.os }}-
-          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -962,7 +957,6 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-web-
             sccache-v1-${{ runner.os }}-
-          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -1082,7 +1076,6 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-ios-
             sccache-v1-${{ runner.os }}-
-          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -2274,7 +2267,6 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-option1-signatures-
             sccache-v1-${{ runner.os }}-
-          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -2371,7 +2363,6 @@ jobs:
           restore-keys: |
             sccache-v1-${{ runner.os }}-publish-
             sccache-v1-${{ runner.os }}-
-          save-always: true
       - name: Cache Cargo registry and native stage tools
         id: cargo_registry_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
