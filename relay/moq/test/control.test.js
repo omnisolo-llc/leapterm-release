@@ -531,3 +531,63 @@ test('a Worker usage refusal closes and drains its publisher without waiting on 
     assert.equal(service.activeSessionCount, 0);
     assert.equal(usageEvents.length, 1);
   });
+
+test('pre-authorized usageCreditWindowBytes amortizes Worker usage calls while enforcing room byte limits',
+  {timeout: 15000}, async t => {
+    const usageEvents = [];
+    const {origin, certificate, service} = await fixture(t, {
+      ...managedOptions,
+      usageCreditWindowBytes: 4096,
+      usageFetcher: usageAuthority(body => {
+        usageEvents.push(body);
+        return Response.json({status: 'charged', event_id: body.event_id});
+      }),
+    });
+    const created = await controlRequest(origin, certificate, '/v1/relays', {
+      body: {shareId: 'MoqCred1', epoch: 'credit-window-epoch-0001',
+        expiresAt: Date.now() + 60000, maxBytes: 6000,
+        usageOrigin: 'https://api.example.test'},
+    });
+    assert.equal(created.status, 201);
+    const room = created.value;
+    const publisher = await connectParticipant(t, origin, certificate, room, 'host01', 'publish');
+    const broadcast = new Moq.Broadcast.Producer();
+    const track = broadcast.createTrack('terminal', {ordered: true, latencyMax: 5000});
+    publisher.connection.publish(`leapterm/${room.epoch}`, broadcast);
+    const viewer = await connectParticipant(t, origin, certificate, room, 'viewer01', 'subscribe');
+    const subscription = viewer.connection.consume(`leapterm/${room.epoch}`)
+      .subscribe('terminal', {ordered: true, latencyMax: 5000});
+    await within(subscription.info(), 'viewer subscription did not become ready');
+
+    // Send 10 frames of 100 bytes each (with 1 active viewer, 200 bytes charged per frame = 2000 bytes total).
+    // All 10 frames fit inside the single 4096-byte pre-authorized credit window!
+    const group = track.appendGroup();
+    for (let i = 0; i < 10; i++) {
+      group.writeString(`frame-${String(i).padStart(2, '0')}-${'x'.repeat(91)}`);
+    }
+    group.close();
+    const receivedGroup = await within(subscription.recvGroup(), 'viewer did not receive group');
+    let receivedCount = 0;
+    for (;;) {
+      const f = await receivedGroup.readFrame();
+      if (!f) break;
+      receivedCount++;
+    }
+    receivedGroup.close();
+    assert.equal(receivedCount, 10);
+    assert.equal(usageEvents.length, 1, '10 frames within 4096B credit window should trigger 1 Worker HTTP charge');
+    assert.equal(usageEvents[0].bytes, 4096);
+
+    // Sending another frame requiring 5000 bytes (2500B * 2 copies) exceeds the remaining room maxBytes (6000B)
+    // and must fail closed.
+    const overGroup = track.appendGroup();
+    overGroup.writeString('y'.repeat(2500));
+    overGroup.close();
+    await within(publisher.connection.closed, 'room quota overflow did not close publisher');
+    await within(viewer.connection.closed, 'room quota overflow did not close viewer');
+    const closed = await within(controlRequest(origin, certificate, '/v1/rooms/close', {
+      body: {shareId: room.shareId, epoch: room.epoch},
+    }), 'quota overflow left room unclosed', 2000);
+    assert.equal(closed.status, 200);
+    assert.equal(service.relayCount, 0);
+  });
