@@ -815,11 +815,27 @@ fn check_staging_state(plan: &Plan, info: &Value, id: u64, draft: bool) -> Resul
     Ok(())
 }
 
+fn find_release_with_retry(
+    plan: &Plan,
+    api: &mut impl ReleaseApi,
+    repo: &str,
+) -> Result<Option<Value>> {
+    for attempt in 0..15 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+        }
+        if let Some(release) = release_for_repo(plan, api, repo)? {
+            return Ok(Some(release));
+        }
+    }
+    Ok(None)
+}
+
 fn staging_owner(plan: &Plan, api: &mut impl ReleaseApi, id: u64, draft: bool) -> Result<()> {
     let repo = plan.source_repository();
     let current = api.get_json(&format!("repos/{repo}/releases/{id}"))?;
     check_staging_state(plan, &current, id, draft)?;
-    let listed = release_for_repo(plan, api, repo)?.ok_or("Staging release no longer available")?;
+    let listed = find_release_with_retry(plan, api, repo)?.ok_or("Staging release no longer available")?;
     check_staging_state(plan, &listed, id, draft)
 }
 
@@ -937,7 +953,7 @@ pub fn publish_to_staging(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publ
                 Err(error) => {
                     let mut recover = || -> Result<(u64, bool, BTreeMap<String, u64>)> {
                         check_staging_repository(plan, api)?;
-                        let info = release_for_repo(plan, api, repo)?
+                        let info = find_release_with_retry(plan, api, repo)?
                             .ok_or("Staging creation could not be verified")?;
                         let (id, draft) = check_staging_release(plan, &info)?;
                         check_staging_state(plan, &info, id, true)?;
