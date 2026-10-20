@@ -16,6 +16,7 @@ const shareIdPattern = /^[A-Za-z0-9]{8}$/;
 const epochPattern = /^[A-Za-z0-9_-]{8,128}$/;
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/;
 const roleSet = new Set(['publish', 'subscribe']);
+const utf8Decoder = new TextDecoder();
 
 function validOrigin(value) {
   if (typeof value !== 'string' || value.length > 2048) return null;
@@ -98,7 +99,8 @@ function readJson(request) {
 async function readBoundedResponse(response, maximum) {
   if (!response.body) return null;
   const reader = response.body.getReader();
-  const chunks = [];
+  let firstChunk = null;
+  let chunks = null;
   let total = 0;
   try {
     for (;;) {
@@ -109,11 +111,18 @@ async function readBoundedResponse(response, maximum) {
         await reader.cancel().catch(() => {});
         return null;
       }
-      chunks.push(Buffer.from(part.value));
+      if (firstChunk === null) {
+        firstChunk = part.value;
+      } else {
+        chunks ??= [Buffer.from(firstChunk)];
+        chunks.push(Buffer.from(part.value));
+      }
     }
   } finally {
     reader.releaseLock();
   }
+  if (firstChunk === null) return '';
+  if (chunks === null) return utf8Decoder.decode(firstChunk);
   return Buffer.concat(chunks, total).toString('utf8');
 }
 
@@ -183,10 +192,20 @@ async function closeSession(record, reason) {
   return confirmed;
 }
 
+function activeSubscriberCopies(relay) {
+  let count = 0;
+  for (const token of relay.tokens.values()) {
+    if (token.active && token.role === 'subscribe' && token.sessions.size > 0) count++;
+  }
+  return count;
+}
+
 async function forwardPublisher(record) {
   if (!sessionActive(record)) return;
   const remote = record.remote = record.connection.consume(record.relay.broadcastPath);
   const incoming = record.incoming = remote.subscribe('terminal', {ordered: true, latencyMax: 5000});
+  const maxFrameBytes = record.relay.maxFrameBytes ?? MAX_FRAME_BYTES;
+  const maxUsageEventBytes = record.relay.maxUsageEventBytes ?? MAX_USAGE_EVENT_BYTES;
   try {
     await incoming.info();
     if (!sessionActive(record)) return;
@@ -205,18 +224,18 @@ async function forwardPublisher(record) {
           const frame = await group.readFrame();
           if (!sessionActive(record) || !frame) break;
           const payloadBytes = frame.payload?.byteLength;
-          if (!Number.isSafeInteger(payloadBytes) || payloadBytes < 1 || payloadBytes > MAX_FRAME_BYTES) {
+          if (!Number.isSafeInteger(payloadBytes) || payloadBytes < 1 || payloadBytes > maxFrameBytes) {
             // The room drain joins this task; this task must not await itself.
             void record.relay.closeForUsage('invalid_moq_frame');
             return;
           }
-          const viewerCopies = [...record.relay.tokens.values()].filter(token =>
-            token.active && token.role === 'subscribe' && token.sessions.size > 0).length;
+          const viewerCopies = activeSubscriberCopies(record.relay);
           let uncharged = payloadBytes * (viewerCopies + 1);
           while (uncharged > 0) {
             if (!sessionActive(record)) return;
-            const charge = Math.min(uncharged, MAX_USAGE_EVENT_BYTES);
-            const charged = await record.relay.chargeUsage(record.relay, charge);
+            const charge = Math.min(uncharged, maxUsageEventBytes);
+            const result = record.relay.chargeUsage(record.relay, charge);
+            const charged = typeof result === 'boolean' ? result : await result;
             if (!sessionActive(record)) return;
             if (!charged) {
               void record.relay.closeForUsage('moq_usage_or_quota_unavailable');
@@ -259,6 +278,14 @@ export async function createMoqRelay({
   privateKeyPath = process.env.MOQ_TLS_KEY_FILE,
   maxRelays = Number(process.env.MOQ_MAX_RELAYS ?? 512),
   maxSessions = Number(process.env.MOQ_MAX_SESSIONS ?? 1024),
+  maxFrameBytes = Number(process.env.MOQ_MAX_FRAME_BYTES ?? MAX_FRAME_BYTES),
+  maxUsageEventBytes = Number(process.env.MOQ_MAX_USAGE_EVENT_BYTES ?? MAX_USAGE_EVENT_BYTES),
+  usageCreditWindowBytes = Number(process.env.MOQ_USAGE_CREDIT_WINDOW_BYTES ?? 0),
+  initialStreamFlowControlWindow = Number(process.env.MOQ_INITIAL_STREAM_WINDOW_BYTES ?? 4 * 1024 * 1024),
+  streamFlowControlWindowSizeLimit = Number(process.env.MOQ_STREAM_WINDOW_LIMIT_BYTES ?? 4 * 1024 * 1024),
+  initialSessionFlowControlWindow = Number(process.env.MOQ_INITIAL_SESSION_WINDOW_BYTES ?? 16 * 1024 * 1024),
+  initialBidirectionalStreams = Number(process.env.MOQ_INITIAL_BIDI_STREAMS ?? 256),
+  initialUnidirectionalStreams = Number(process.env.MOQ_INITIAL_UNI_STREAMS ?? 1024),
 } = {}) {
   const origin = validOrigin(publicOrigin);
   const secret = requiredSecret(controlToken, 'MOQ_CONTROL_TOKEN');
@@ -343,23 +370,43 @@ export async function createMoqRelay({
     finally { relay.pendingChecks.delete(pending); }
   }
 
-  async function chargeWorkerUsage(relay, byteCount) {
-    if (!Number.isSafeInteger(byteCount) || byteCount < 1 || byteCount > MAX_USAGE_EVENT_BYTES ||
-        relay.bytesCharged > relay.maxBytes - byteCount) return false;
-    if (usage && usageSecret) {
-      const eventId = randomUUID().replaceAll('-', '');
-      const value = await workerUsageRequest('usage', {share_id: relay.shareId,
-        session_epoch: relay.epoch, event_id: eventId, bytes: byteCount});
-      if (value?.status !== 'charged' || value.event_id !== eventId ||
-          !Object.keys(value).every(key => ['status', 'event_id', 'duplicate'].includes(key))) return false;
-    } else if (managedUsageRequired) {
+  function chargeWorkerUsage(relay, byteCount) {
+    if (!Number.isSafeInteger(byteCount) || byteCount < 1 || byteCount > maxUsageEventBytes) {
       return false;
     }
-    relay.bytesCharged += byteCount;
-    return true;
+    if (!usage || !usageSecret) {
+      if (managedUsageRequired || relay.bytesCharged > relay.maxBytes - byteCount) return false;
+      relay.bytesCharged += byteCount;
+      return true;
+    }
+    if (usageCreditWindowBytes > 0 && relay.creditBalanceBytes >= byteCount) {
+      relay.creditBalanceBytes -= byteCount;
+      return true;
+    }
+    const neededBytes = usageCreditWindowBytes > 0 ? byteCount - relay.creditBalanceBytes : byteCount;
+    const remainingRoomBudget = relay.maxBytes - relay.bytesCharged;
+    if (neededBytes > remainingRoomBudget) return false;
+    const reserveBytes = usageCreditWindowBytes > 0
+      ? Math.min(Math.max(neededBytes, usageCreditWindowBytes), remainingRoomBudget, maxUsageEventBytes)
+      : byteCount;
+    return (async () => {
+      const eventId = randomUUID().replaceAll('-', '');
+      const value = await workerUsageRequest('usage', {share_id: relay.shareId,
+        session_epoch: relay.epoch, event_id: eventId, bytes: reserveBytes});
+      if (value?.status !== 'charged' || value.event_id !== eventId ||
+          !Object.keys(value).every(key => ['status', 'event_id', 'duplicate'].includes(key))) return false;
+      relay.bytesCharged += reserveBytes;
+      if (usageCreditWindowBytes > 0) {
+        relay.creditBalanceBytes += reserveBytes - byteCount;
+      }
+      return true;
+    })();
   }
   const h3 = new Http3Server({port: dataPort, host: dataHost,
-    secret: randomBytes(32).toString('hex'), cert: certificate, privKey: privateKey});
+    secret: randomBytes(32).toString('hex'), cert: certificate, privKey: privateKey,
+    initialStreamFlowControlWindow, streamFlowControlWindowSizeLimit,
+    initialSessionFlowControlWindow, initialBidirectionalStreams,
+    initialUnidirectionalStreams});
   // Select the actual WebTransport application protocol during HTTP/3
   // admission. MoQT's later setup exchange does not negotiate this header.
   h3.setRequestCallback(async ({header}) => {
@@ -440,7 +487,8 @@ export async function createMoqRelay({
           const maxBytes = Number.isSafeInteger(body.maxBytes) && body.maxBytes > 0
             ? Math.min(body.maxBytes, 1_000_000_000_000) : 100_000_000;
           const relay = {relayId, shareId: body.shareId, epoch: body.epoch, maxBytes,
-            bytesCharged: 0, chargeUsage: chargeWorkerUsage,
+            bytesCharged: 0, creditBalanceBytes: 0, maxFrameBytes, maxUsageEventBytes,
+            chargeUsage: chargeWorkerUsage,
             closeForUsage: reason => closeRelay(relay, reason),
             expiresAt: body.expiresAt, closed: false, tokens: new Map(), closedTokens: new Set(),
             sessions: new Set(), pendingChecks: new Set(), publisherToken: null, broadcast, broadcastPath,
