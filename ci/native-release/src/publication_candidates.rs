@@ -1113,34 +1113,54 @@ impl ReleaseApi for GitHub {
         }
         fs::write(config.path(),format!("header = \"Authorization: Bearer {token}\"\nheader = \"Accept: application/octet-stream\"\n")).map_err(|_| "Asset readback config unavailable")?;
         safe.remove("GH_TOKEN");
-        process::run(
-            Path::new("curl"),
-            &[
-                "--disable".into(),
-                "--config".into(),
-                config.path().to_string_lossy().into_owned(),
-                "--silent".into(),
-                "--show-error".into(),
-                "--fail".into(),
-                "--location".into(),
-                "--proto".into(),
-                "=https".into(),
-                "--proto-redir".into(),
-                "=https".into(),
-                "--max-time".into(),
-                "900".into(),
-                "--max-filesize".into(),
-                MAX_ASSET.to_string(),
-                "--output".into(),
-                output.to_string_lossy().into_owned(),
-                url,
-            ],
-            &self.work,
-            &safe,
-            Duration::from_secs(930),
-            None,
-        )?;
-        guards::open_regular(output, MAX_ASSET)?;
-        Ok(())
+        let mut last_error = None;
+        for attempt in 0..5 {
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_secs(2));
+            }
+            let _ = fs::remove_file(output);
+            match process::run(
+                Path::new("curl"),
+                &[
+                    "--disable".into(),
+                    "--config".into(),
+                    config.path().to_string_lossy().into_owned(),
+                    "--silent".into(),
+                    "--show-error".into(),
+                    "--fail".into(),
+                    "--location".into(),
+                    "--proto".into(),
+                    "=https".into(),
+                    "--proto-redir".into(),
+                    "=https".into(),
+                    "--retry".into(),
+                    "5".into(),
+                    "--retry-all-errors".into(),
+                    "--retry-connrefused".into(),
+                    "--retry-delay".into(),
+                    "2".into(),
+                    "--max-time".into(),
+                    "900".into(),
+                    "--max-filesize".into(),
+                    MAX_ASSET.to_string(),
+                    "--output".into(),
+                    output.to_string_lossy().into_owned(),
+                    url.clone(),
+                ],
+                &self.work,
+                &safe,
+                Duration::from_secs(930),
+                None,
+            ) {
+                Ok(_) => {
+                    guards::open_regular(output, MAX_ASSET)?;
+                    return Ok(());
+                }
+                Err(error) => {
+                    last_error = Some(error);
+                }
+            }
+        }
+        Err(last_error.unwrap_or("Asset readback failed"))
     }
 }
