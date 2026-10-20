@@ -835,7 +835,8 @@ fn staging_owner(plan: &Plan, api: &mut impl ReleaseApi, id: u64, draft: bool) -
     let repo = plan.source_repository();
     let current = api.get_json(&format!("repos/{repo}/releases/{id}"))?;
     check_staging_state(plan, &current, id, draft)?;
-    let listed = find_release_with_retry(plan, api, repo)?.ok_or("Staging release no longer available")?;
+    let listed =
+        find_release_with_retry(plan, api, repo)?.ok_or("Staging release no longer available")?;
     check_staging_state(plan, &listed, id, draft)
 }
 
