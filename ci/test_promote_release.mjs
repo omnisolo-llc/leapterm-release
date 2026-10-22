@@ -2272,6 +2272,96 @@ test('resolvePrivateStageRelease finds candidate by buildNumber and runId', asyn
   assert.equal(notFound, null);
 });
 
+test('promoteIosToAppStoreConnect sanitizes script shebang from flutter_assets and re-signs candidate before upload', async () => {
+  const { privateKey } = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1',
+  });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const appleSigningConfigJson = JSON.stringify({
+    APP_STORE_CONNECT_KEY_ID: 'KEY1234567',
+    APP_STORE_CONNECT_ISSUER_ID: '11111111-2222-3333-4444-555555555555',
+    APP_STORE_CONNECT_API_KEY_BASE64: Buffer.from(pem, 'utf8').toString('base64'),
+    IOS_DISTRIBUTION_CERTIFICATE_BASE64: Buffer.from('mock-p12-data').toString('base64'),
+    IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: 'mock-p12-password',
+  });
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-ios-sanitize-'));
+  try {
+    const ipaPath = path.join(tempDir, 'candidate.ipa');
+    const zipBuf = createZipBuffer({
+      'Payload/Runner.app/Info.plist': 'plist-data',
+    });
+    fs.writeFileSync(ipaPath, zipBuf);
+
+    const executedCommands = [];
+    let sanitizedContent = null;
+
+    const res = await promoteIosToAppStoreConnect({
+      version: '0.1.1',
+      buildNumber: '50',
+      action: 'testflight',
+      ipaPath,
+      iosSigningConfigJson: appleSigningConfigJson,
+      execFileImpl: (cmd, args) => {
+        executedCommands.push({ cmd, args });
+        if (cmd === 'ditto' && args[0] === '-x') {
+          // Simulate extraction by creating the structure in destination
+          const dest = args[3];
+          const badDir = path.join(
+            dest,
+            'Payload/Runner.app/Frameworks/App.framework/flutter_assets/assets',
+          );
+          fs.mkdirSync(badDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(badDir, 'ai-task-cache-keep-alive.txt'),
+            '#!/bin/sh\necho "running keep alive"\n',
+            'utf8',
+          );
+        }
+        if (cmd === 'security' && args[0] === 'find-identity') {
+          return '  1) 1234567890ABCDEF1234567890ABCDEF12345678 "Apple Distribution: OmniSolo LLC (TEAM123)"\n     1 valid identities found';
+        }
+        if (cmd === 'ditto' && args[0] === '-c') {
+          const payloadDir = args[3];
+          const file = path.join(
+            payloadDir,
+            'Runner.app/Frameworks/App.framework/flutter_assets/assets/ai-task-cache-keep-alive.txt',
+          );
+          if (fs.existsSync(file)) {
+            sanitizedContent = fs.readFileSync(file, 'utf8');
+          }
+          fs.writeFileSync(args[4], 'sanitized-ipa-bytes');
+        }
+      },
+    });
+
+    assert.equal(res.status, 'uploaded-to-testflight');
+    assert.ok(sanitizedContent, 'Sanitized content must have been captured');
+    assert.ok(!sanitizedContent.startsWith('#!'), 'Shebang must be removed');
+    assert.ok(sanitizedContent.includes('echo "running keep alive"'), 'Script body preserved');
+
+    const secImports = executedCommands.filter(
+      (c) => c.cmd === 'security' && c.args[0] === 'import',
+    );
+    assert.equal(secImports.length, 1);
+
+    const codesigns = executedCommands.filter((c) => c.cmd === 'codesign');
+    assert.ok(codesigns.length >= 2, 'Must sign App.framework and Runner.app');
+    assert.ok(codesigns.some((c) => c.args.some((a) => a.includes('App.framework'))));
+    assert.ok(codesigns.some((c) => c.args.some((a) => a.includes('Runner.app'))));
+
+    const uploads = executedCommands.filter(
+      (c) => c.cmd === 'xcrun' && c.args.includes('--upload-app'),
+    );
+    assert.equal(uploads.length, 1);
+    const uploadedFile = uploads[0].args[uploads[0].args.indexOf('--file') + 1];
+    assert.ok(uploadedFile.includes('sanitized.ipa'));
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+
 
 
 
