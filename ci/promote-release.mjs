@@ -1067,10 +1067,33 @@ export async function verifyAppleStoreAccess({
       `App Store Connect app not found for bundleId ${appBundleId}`,
     );
   }
+  let recentBuilds = [];
+  try {
+    const buildsUrl = `https://api.appstoreconnect.apple.com/v1/builds?filter[app]=${encodeURIComponent(app.id)}&limit=10&sort=-uploadedDate`;
+    const bRes = await fetchImpl(buildsUrl, {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: 'application/json',
+      },
+    });
+    const bData = await bRes.json().catch(() => ({}));
+    if (Array.isArray(bData?.data)) {
+      recentBuilds = bData.data.map((b) => ({
+        id: b.id,
+        version: b.attributes?.version,
+        uploadedDate: b.attributes?.uploadedDate,
+        processingState: b.attributes?.processingState,
+        expired: b.attributes?.expired,
+      }));
+    }
+  } catch {
+    // optional query
+  }
   return {
     provider: 'app-store-connect',
     bundleId: appBundleId,
     ascAppId: app.id,
+    recentBuilds,
     status: 'verified',
   };
 }
