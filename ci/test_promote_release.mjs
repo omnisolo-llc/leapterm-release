@@ -2108,5 +2108,111 @@ test('promoteRelease locates draft or past release in staging by expectedBuildNu
   );
 });
 
+test('verifyAllReleaseBuildsReady recognizes self_hosted when present in assetsByName', () => {
+  const version = '0.1.1';
+  const downloads = PUBLIC_TARGETS.map((target) => ({
+    target,
+    name: `leapterm-${version}-${target}`,
+    sha256: 'a'.repeat(64),
+  }));
+  const artifacts = downloads.map((d) => ({
+    target: d.target,
+    name: d.name,
+    sha256: d.sha256,
+  }));
+  const assetsByName = new Set([
+    'download-links.json',
+    `leapterm-${version}-release-provenance.json`,
+    `leapterm-${version}-release-provenance.json.sig`,
+    PRIMARY_KEYRING_ASSET,
+    `leapterm-${version}-self-hosted.zip`,
+    `leapterm-${version}-self-hosted.zip.sha256`,
+  ]);
+  for (const d of downloads) {
+    assetsByName.add(d.name);
+    assetsByName.add(`${d.name}.sha256`);
+    assetsByName.add(`${d.name}.sha256.sig`);
+  }
+  const readiness = verifyAllReleaseBuildsReady({
+    downloadLinks: { version, downloads },
+    provenance: { version, artifacts },
+    assetsByName,
+    version,
+  });
+  assert.equal(readiness.ready, true);
+  assert.deepEqual(readiness.missingTargets, []);
+});
+
+test('promoteAndroidToPlayStore falls back to status draft on draft apps', async () => {
+  const { privateKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+  });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const serviceAccountJson = JSON.stringify({
+    type: 'service_account',
+    client_email: 'play-publisher@leapterm.iam.gserviceaccount.com',
+    private_key: pem,
+  });
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-play-promote-fallback-'));
+  try {
+    const aabPath = path.join(tempDir, 'leapterm-0.1.1-android.aab');
+    fs.writeFileSync(aabPath, Buffer.from('signed-aab-fixture'));
+
+    const calls = [];
+    const res = await promoteAndroidToPlayStore({
+      version: '0.1.1',
+      buildNumber: '19',
+      track: 'production',
+      aabPath,
+      serviceAccountJson,
+      fetchImpl: async (url, opts = {}) => {
+        calls.push({ url, method: opts.method || 'GET' });
+        if (url === 'https://oauth2.googleapis.com/token') {
+          return new Response(JSON.stringify({ access_token: 'ya29.fixture' }), { status: 200 });
+        }
+        if (url.endsWith('/edits') && opts.method === 'POST') {
+          return new Response(JSON.stringify({ id: 'edit-draft-test' }), { status: 200 });
+        }
+        if (url.endsWith('/edits/edit-draft-test/bundles') && opts.method === 'GET') {
+          return new Response(JSON.stringify({ bundles: [{ versionCode: 19, sha256: sha256Hex(fs.readFileSync(aabPath)) }] }), { status: 200 });
+        }
+        if (url.endsWith('/tracks/production') && opts.method === 'PUT') {
+          const body = JSON.parse(opts.body);
+          if (body.releases[0].status === 'completed') {
+            // First attempt with completed status
+            return new Response('{}', { status: 200 });
+          }
+          if (body.releases[0].status === 'draft') {
+            // Second attempt with draft status
+            return new Response('{}', { status: 200 });
+          }
+        }
+        if (url.endsWith('/edits/edit-draft-test:validate') && opts.method === 'POST') {
+          // If first attempt, throw draft app error
+          const lastPut = calls.filter((c) => c.url.includes('/tracks/production')).length;
+          if (lastPut === 1) {
+            return new Response(
+              JSON.stringify({ error: { message: 'Only releases with status draft may be created on draft app.' } }),
+              { status: 400 },
+            );
+          }
+          return new Response('{}', { status: 200 });
+        }
+        if (url.endsWith('/edits/edit-draft-test:commit') && opts.method === 'POST') {
+          return new Response('{}', { status: 200 });
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      },
+    });
+    assert.equal(res.platform, 'android');
+    assert.equal(res.track, 'production');
+    assert.equal(res.status, 'committed');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+
 
 
