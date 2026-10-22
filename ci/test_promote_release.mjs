@@ -2049,4 +2049,64 @@ test('install.sh is parsed from GitHub API json response and decoded from base64
   assert.equal(decoded, '#!/usr/bin/env bash\necho "installing leap-agent"\n');
 });
 
+test('promoteRelease locates draft or past release in staging by expectedBuildNumber', async (t) => {
+  const previousFetch = globalThis.fetch;
+  const requestedUrls = [];
+  globalThis.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    if (String(url).endsWith('/releases/tags/v0.1.1-b48')) {
+      return new Response(null, { status: 404 });
+    }
+    if (String(url).endsWith('/releases/tags/v0.1.1-48')) {
+      return new Response(null, { status: 404 });
+    }
+    if (String(url).endsWith('/releases/tags/v0.1.1')) {
+      return new Response(null, { status: 404 });
+    }
+    if (String(url).endsWith('/releases?per_page=100')) {
+      return new Response(
+        JSON.stringify([
+          {
+            id: 999,
+            tag_name: 'v0.1.1-b48',
+            name: 'LeapTerm v0.1.1 (Build 48)',
+            draft: true,
+            assets: [
+              {
+                name: 'leapterm-package-signing-key.gpg',
+                url: 'https://api.github.com/repos/example-org/private-source/releases/assets/201',
+              },
+            ],
+          },
+        ]),
+        { status: 200 },
+      );
+    }
+    if (String(url).endsWith('/releases/assets/201')) {
+      return new Response(Buffer.from('mock-gpg-keyring-bytes'), { status: 200 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+
+  await assert.rejects(
+    promoteRelease({
+      version: '0.1.1',
+      expectedBuildNumber: '48',
+      privateToken: 'mock-private-token',
+      stagingRepo: 'example-org/private-source',
+      publishGithubRelease: false,
+      rolloutEnvironment: 'none',
+    }),
+    /missing required asset: download-links\.json/,
+  );
+  assert.ok(
+    requestedUrls.some((u) => u.includes('/releases?per_page=100')),
+    'promoteRelease should query staging releases list to locate past/draft release by build number',
+  );
+});
+
+
 

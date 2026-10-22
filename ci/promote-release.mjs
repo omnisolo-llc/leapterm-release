@@ -2386,13 +2386,83 @@ export async function promoteRelease({
       return response.json();
     };
 
+    const fetchStagingRelease = async (candidateTag, candidateBuildNumber = '') => {
+      const direct = await fetchStagingTagOptional(candidateTag);
+      if (direct) {
+        return direct;
+      }
+      try {
+        const listUrl = `https://api.github.com/repos/${stagingRepo}/releases?per_page=100`;
+        const response = await fetch(listUrl, {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${privateToken}`,
+            'X-GitHub-Api-Version': '2022-11-28',
+            'User-Agent': 'leapterm-release-promoter',
+          },
+          redirect: 'follow',
+        });
+        if (!response.ok) {
+          return null;
+        }
+        const releases = await response.json();
+        if (!Array.isArray(releases)) {
+          return null;
+        }
+        const exactTag = releases.find((r) => r.tag_name === candidateTag);
+        if (exactTag) {
+          return exactTag;
+        }
+        if (candidateBuildNumber) {
+          const buildTags = [
+            `${candidateTag}-b${candidateBuildNumber}`,
+            `${candidateTag}-${candidateBuildNumber}`,
+            `v${normalizedVersion}-b${candidateBuildNumber}`,
+            `v${normalizedVersion}-${candidateBuildNumber}`,
+          ];
+          const byBuildTag = releases.find((r) => buildTags.includes(r.tag_name));
+          if (byBuildTag) {
+            return byBuildTag;
+          }
+          const byName = releases.find(
+            (r) =>
+              r.name &&
+              r.name.includes(normalizedVersion) &&
+              (r.name.includes(`(${candidateBuildNumber})`) ||
+                r.name.includes(`Build ${candidateBuildNumber}`) ||
+                r.name.includes(`b${candidateBuildNumber}`)),
+          );
+          if (byName) {
+            return byName;
+          }
+        }
+      } catch {
+        return null;
+      }
+      return null;
+    };
+
     const provenanceName = `leapterm-${normalizedVersion}-release-provenance.json`;
     let assetsByName;
     let keyringPath;
     let stagingLinks;
     let stagingProvenance;
 
-    const fullStagingRelease = await fetchStagingTagOptional(tag);
+    const candidateTags = [tag];
+    if (expectedBuildNumber) {
+      candidateTags.unshift(
+        `${tag}-b${expectedBuildNumber}`,
+        `${tag}-${expectedBuildNumber}`,
+      );
+    }
+
+    let fullStagingRelease = null;
+    for (const candTag of candidateTags) {
+      fullStagingRelease = await fetchStagingRelease(candTag, expectedBuildNumber);
+      if (fullStagingRelease) {
+        break;
+      }
+    }
     if (fullStagingRelease) {
       assetsByName = new Map(
         (fullStagingRelease.assets || []).map((asset) => [asset.name, asset]),
