@@ -32,6 +32,7 @@ import {
   promoteMacosToAppStoreConnect,
   promoteRelease,
   resolveGpgSigningCredentials,
+  resolvePrivateStageRelease,
   resolveRolloutEnvironment,
   resolveStagingKeyringAssetName,
   scanDirectoryForLeaks,
@@ -2212,6 +2213,65 @@ test('promoteAndroidToPlayStore falls back to status draft on draft apps', async
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('resolvePrivateStageRelease finds candidate by buildNumber and runId', async () => {
+  const version = '0.1.1';
+  const buildNumber = '50';
+  const runId = '39752987222';
+  const attempt = '1';
+  const ipaKey = `releases/v${version}/${buildNumber}/${runId}-${attempt}/option1/private-artifacts/leapterm-${version}-ios-private.ipa`;
+  const ipaObjName = `object-${sha256Hex(Buffer.from(ipaKey, 'utf8'))}.bin`;
+
+  const mockStageReleases = [
+    {
+      id: 101,
+      tag_name: 'ci-stage/application-39730105381-1',
+      assets: [{ name: 'object-dummy.bin' }],
+    },
+    {
+      id: 102,
+      tag_name: `ci-stage/application-${runId}-${attempt}`,
+      assets: [{ name: ipaObjName }],
+    },
+  ];
+
+  const fetchImpl = async (url) => {
+    assert.ok(url.includes('/releases?per_page=100'));
+    return new Response(JSON.stringify(mockStageReleases), { status: 200 });
+  };
+
+  const byRun = await resolvePrivateStageRelease({
+    stagingRepo: 'example-org/private-repo',
+    privateToken: 'dummy-token',
+    version,
+    runId,
+    fetchImpl,
+  });
+  assert.ok(byRun);
+  assert.equal(byRun.runId, runId);
+  assert.equal(byRun.stageRelease.id, 102);
+
+  const byBuild = await resolvePrivateStageRelease({
+    stagingRepo: 'example-org/private-repo',
+    privateToken: 'dummy-token',
+    version,
+    buildNumber,
+    fetchImpl,
+  });
+  assert.ok(byBuild);
+  assert.equal(byBuild.runId, runId);
+  assert.equal(byBuild.stageRelease.id, 102);
+
+  const notFound = await resolvePrivateStageRelease({
+    stagingRepo: 'example-org/private-repo',
+    privateToken: 'dummy-token',
+    version,
+    buildNumber: '999',
+    fetchImpl,
+  });
+  assert.equal(notFound, null);
+});
+
 
 
 

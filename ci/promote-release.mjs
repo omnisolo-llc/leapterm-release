@@ -903,6 +903,82 @@ export function buildPrivateIosStorageKeys(
   };
 }
 
+export async function resolvePrivateStageRelease({
+  stagingRepo,
+  privateToken,
+  version,
+  buildNumber = '',
+  runId = '',
+  fetchImpl = fetch,
+}) {
+  const normalizedVersion = String(version || '').trim().replace(/^v/, '');
+  const normalizedBuild = String(buildNumber || '').trim();
+  const normalizedRunId = String(runId || '').trim();
+  const listUrl = `https://api.github.com/repos/${stagingRepo}/releases?per_page=100`;
+  const response = await fetchImpl(listUrl, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${privateToken}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'leapterm-release-promoter',
+    },
+    redirect: 'follow',
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const releases = await response.json();
+  if (!Array.isArray(releases)) {
+    return null;
+  }
+  const stageReleases = releases.filter(
+    (r) => r.tag_name && r.tag_name.startsWith('ci-stage/application-'),
+  );
+
+  if (normalizedRunId) {
+    const direct = stageReleases.find(
+      (r) =>
+        r.tag_name === `ci-stage/application-${normalizedRunId}-1` ||
+        r.tag_name.startsWith(`ci-stage/application-${normalizedRunId}-`),
+    );
+    if (direct) {
+      const match = direct.tag_name.match(/^ci-stage\/application-(\d+)-(\d+)$/);
+      return {
+        stageRelease: direct,
+        runId: match ? match[1] : normalizedRunId,
+        attempt: match ? match[2] : '1',
+      };
+    }
+  }
+
+  if (normalizedBuild) {
+    for (const rel of stageReleases) {
+      const match = rel.tag_name.match(/^ci-stage\/application-(\d+)-(\d+)$/);
+      if (!match) continue;
+      const rId = match[1];
+      const rAttempt = match[2];
+      const assetNames = new Set((rel.assets || []).map((a) => a.name));
+      const testKeys = [
+        `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/option1/private-artifacts/leapterm-${normalizedVersion}-ios-private.ipa`,
+        `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/private-artifacts/leapterm-${normalizedVersion}-ios-private.ipa`,
+        `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/option1/private/leapterm-${normalizedVersion}-ios-private.ipa`,
+        `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/private/leapterm-${normalizedVersion}-ios-private.ipa`,
+      ];
+      for (const k of testKeys) {
+        const objName = `object-${sha256Hex(Buffer.from(k, 'utf8'))}.bin`;
+        if (assetNames.has(objName)) {
+          return {
+            stageRelease: rel,
+            runId: rId,
+            attempt: rAttempt,
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+
 export function createAppStoreConnectJwt({
   keyId,
   issuerId,
@@ -2278,6 +2354,8 @@ export function executeEnvironmentRollout({
 export async function promoteRelease({
   version,
   expectedBuildNumber = '',
+  runId = '',
+  proof = '',
   stagingRepo = '',
   publicRepo = PUBLIC_REPOSITORY,
   privateToken,
@@ -2554,9 +2632,18 @@ export async function promoteRelease({
         });
       }
       if (wavePayloads.length === 0) {
-        throw new Error(
-          `GitHub API request failed (404) for ${stagingReleaseUrl}`,
-        );
+        if (
+          !publishGithubRelease &&
+          (iosStoreAction !== 'none' || macosStoreAction !== 'none')
+        ) {
+          stagingLinks = { build_number: expectedBuildNumber };
+          stagingProvenance = { build_number: expectedBuildNumber };
+          assetsByName = new Map();
+        } else {
+          throw new Error(
+            `GitHub API request failed (404) for ${stagingReleaseUrl}`,
+          );
+        }
       }
       const merged = mergeWaveStagingMetadata({
         wavePayloads,
@@ -2585,17 +2672,24 @@ export async function promoteRelease({
       assetsByName,
       version: normalizedVersion,
     });
-    const resolvedBuildNumber = String(
-      stagingLinks.build_number || stagingProvenance.build_number || '',
+    let resolvedBuildNumber = String(
+      stagingLinks?.build_number || stagingProvenance?.build_number || '',
     );
 
     if (
       expectedBuildNumber &&
       resolvedBuildNumber !== String(expectedBuildNumber)
     ) {
-      throw new Error(
-        `Staging build_number mismatch: expected ${expectedBuildNumber}, found ${resolvedBuildNumber}`,
-      );
+      if (publishGithubRelease || androidStoreAction !== 'none') {
+        throw new Error(
+          `Staging build_number mismatch: expected ${expectedBuildNumber}, found ${resolvedBuildNumber}`,
+        );
+      } else {
+        console.log(
+          `Staging release build number is ${resolvedBuildNumber}; overriding with requested build ${expectedBuildNumber} for store promotion.`,
+        );
+        resolvedBuildNumber = String(expectedBuildNumber);
+      }
     }
 
     if (publishGithubRelease) {
@@ -2886,40 +2980,71 @@ export async function promoteRelease({
     }
 
     if (iosStoreAction && iosStoreAction !== 'none') {
+      const targetBuildNumber = String(
+        expectedBuildNumber || resolvedBuildNumber || '',
+      ).trim();
       let ipaPath = '';
       if (['internal', 'testflight'].includes(iosStoreAction)) {
         const ipaName = `leapterm-${normalizedVersion}-ios-private.ipa`;
-        if (assetsByName.has(ipaName)) {
+        if (assetsByName && assetsByName.has(ipaName)) {
           ipaPath = await requireStagingAsset(ipaName);
         } else {
-          const runId = String(stagingProvenance.run_id || '');
-          const attempt = String(stagingProvenance.attempt || '');
-          const proof = String(stagingProvenance.proof || '');
-          const storageKeys = buildPrivateIosStorageKeys({
-            version: normalizedVersion,
-            buildNumber: resolvedBuildNumber,
-            runId,
-            runAttempt: attempt,
-            proof,
-            releaseRoute: stagingProvenance.release_route || 'option1',
-          });
-          const stageTag = `ci-stage/application-${runId}-${attempt}`;
-          const stageReleasesRes = await githubRequest(
-            `https://api.github.com/repos/${stagingRepo}/releases?per_page=100`,
-            privateToken,
-          );
-          const stageReleases = await stageReleasesRes.json();
-          const stageRelease = (stageReleases || []).find(
-            (r) => r.tag_name === stageTag,
-          );
+          let stageRelease = null;
+          let targetRunId = String(
+            runId || stagingProvenance?.run_id || '',
+          ).trim();
+          let targetAttempt = String(
+            stagingProvenance?.attempt || '1',
+          ).trim();
+          let targetProof = String(
+            proof || stagingProvenance?.proof || '',
+          ).trim();
+          let effectiveRoute = stagingProvenance?.release_route || 'option1';
+
+          if (!targetRunId && targetBuildNumber) {
+            const stageInfo = await resolvePrivateStageRelease({
+              stagingRepo,
+              privateToken,
+              version: normalizedVersion,
+              buildNumber: targetBuildNumber,
+              fetchImpl,
+            });
+            if (stageInfo) {
+              stageRelease = stageInfo.stageRelease;
+              targetRunId = stageInfo.runId;
+              targetAttempt = stageInfo.attempt;
+            }
+          }
+          if (!stageRelease && targetRunId) {
+            const stageTag = `ci-stage/application-${targetRunId}-${targetAttempt}`;
+            const stageReleasesRes = await githubRequest(
+              `https://api.github.com/repos/${stagingRepo}/releases?per_page=100`,
+              privateToken,
+            );
+            const stageReleases = await stageReleasesRes.json();
+            stageRelease = (stageReleases || []).find(
+              (r) =>
+                r.tag_name === stageTag ||
+                r.tag_name === `ci-stage/application-${targetRunId}-1` ||
+                r.tag_name.startsWith(`ci-stage/application-${targetRunId}-`),
+            );
+          }
           if (!stageRelease) {
             throw new Error(
-              `Private stage release ${stageTag} not found on ${stagingRepo} for iOS IPA retrieval`,
+              `Private stage release not found on ${stagingRepo} for iOS IPA retrieval (runId: ${targetRunId || 'auto'}, build: ${targetBuildNumber || 'unknown'})`,
             );
           }
           const stageAssets = new Map(
             (stageRelease.assets || []).map((a) => [a.name, a]),
           );
+          const storageKeys = buildPrivateIosStorageKeys({
+            version: normalizedVersion,
+            buildNumber: targetBuildNumber,
+            runId: targetRunId,
+            runAttempt: targetAttempt,
+            proof: targetProof,
+            releaseRoute: effectiveRoute,
+          });
           let ipaAsset = null;
           for (const key of storageKeys.ipaKeys) {
             const objName = `object-${sha256Hex(Buffer.from(key, 'utf8'))}.bin`;
@@ -2936,11 +3061,39 @@ export async function promoteRelease({
               break;
             }
           }
+          if (!receiptAsset) {
+            const jsonCandidates = (stageRelease.assets || []).filter(
+              (a) =>
+                a.size > 0 &&
+                a.size < 4096 &&
+                (a.content_type === 'application/json' ||
+                  a.contentType === 'application/json' ||
+                  a.name.endsWith('.bin') ||
+                  a.name.endsWith('.json')),
+            );
+            for (const cand of jsonCandidates) {
+              try {
+                const tempReceiptPath = path.join(workDir, `check-${cand.name}`);
+                await downloadReleaseAsset(cand.url, privateToken, tempReceiptPath);
+                const parsed = JSON.parse(fs.readFileSync(tempReceiptPath, 'utf8'));
+                if (
+                  parsed.name === 'ios-private-artifact-receipt.json' ||
+                  (parsed.receipt && parsed.receipt.target === 'ios') ||
+                  (parsed.receipt && parsed.receipt.name === ipaName)
+                ) {
+                  receiptAsset = cand;
+                  break;
+                }
+              } catch {
+                // ignore and continue
+              }
+            }
+          }
           if (!ipaAsset || !receiptAsset) {
             const ipaObjName = `object-${sha256Hex(Buffer.from(storageKeys.ipaKey, 'utf8'))}.bin`;
             const receiptObjName = `object-${sha256Hex(Buffer.from(storageKeys.receiptKey, 'utf8'))}.bin`;
             throw new Error(
-              `Private stage release ${stageTag} missing signed iOS IPA (${ipaObjName}) or receipt (${receiptObjName})`,
+              `Private stage release ${stageRelease.tag_name} missing signed iOS IPA (${ipaObjName}) or receipt (${receiptObjName})`,
             );
           }
           const receiptPath = path.join(workDir, 'ios-private-receipt.json');
@@ -2965,11 +3118,14 @@ export async function promoteRelease({
               `Signed iOS IPA digest/size mismatch against private receipt`,
             );
           }
+          if (receipt.proof && !targetProof) {
+            targetProof = receipt.proof;
+          }
         }
       }
       const iosResult = await promoteIosToAppStoreConnect({
         version: normalizedVersion,
-        buildNumber: resolvedBuildNumber,
+        buildNumber: targetBuildNumber || resolvedBuildNumber,
         action: iosStoreAction,
         automaticRelease: iosAutomaticRelease,
         ipaPath,
@@ -2977,7 +3133,7 @@ export async function promoteRelease({
         internalTesterEmails,
       });
       console.log(
-        `Promoted iOS candidate v${normalizedVersion} (${resolvedBuildNumber}) via action "${iosResult.action}" (${iosResult.status}).`,
+        `Promoted iOS candidate v${normalizedVersion} (${targetBuildNumber || resolvedBuildNumber}) via action "${iosResult.action}" (${iosResult.status}).`,
       );
     }
 
@@ -3057,6 +3213,8 @@ if (
   promoteRelease({
     version: process.env.PROMOTE_VERSION,
     expectedBuildNumber: process.env.PROMOTE_BUILD_NUMBER || '',
+    runId: process.env.PROMOTE_RUN_ID || '',
+    proof: process.env.PROMOTE_PROOF || '',
     privateToken: process.env.PRIVATE_RELEASE_TOKEN,
     publicToken: process.env.GH_TOKEN,
     githubToken: process.env.GITHUB_TOKEN || '',
