@@ -2373,7 +2373,10 @@ jobs:
         run: node ci/install-sccache.mjs publish
       - name: Prepare empty candidate directory for private storage materialization
         id: public_candidates_download
-        run: mkdir -p release-public-candidates
+        run: |
+          rm -rf release-public-candidates
+          mkdir -p release-public-candidates
+          rm -rf "${RUNNER_TEMP:?}/publication-candidates" "${RUNNER_TEMP:?}/publication"
       - name: Prepare and verify the public publication plan
         id: publication_candidates
         run: bash ci/native-release/run.sh prepare-publication
