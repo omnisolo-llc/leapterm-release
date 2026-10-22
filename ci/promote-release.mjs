@@ -745,23 +745,57 @@ function signDetachedWithGpg(signingConfig, payloadPath, outputSigPath) {
 }
 
 async function githubRequest(url, token, options = {}) {
-  const headers = {
-    Accept: options.accept || 'application/vnd.github+json',
-    Authorization: `Bearer ${token}`,
-    'X-GitHub-Api-Version': '2022-11-28',
-    'User-Agent': 'leapterm-release-promoter',
-    ...(options.headers || {}),
-  };
-  const response = await fetch(url, {
-    method: options.method || 'GET',
-    headers,
-    body: options.body,
-    redirect: 'follow',
-  });
-  if (!response.ok) {
-    throw new Error(`GitHub API request failed (${response.status}) for ${url}`);
+  const maxRetries = options.retries ?? 3;
+  let attempt = 0;
+  while (true) {
+    try {
+      const headers = {
+        Accept: options.accept || 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'leapterm-release-promoter',
+        ...(options.headers || {}),
+      };
+      const response = await fetch(url, {
+        method: options.method || 'GET',
+        headers,
+        body: options.body,
+        redirect: 'follow',
+      });
+      if (!response.ok) {
+        if (
+          attempt < maxRetries &&
+          (response.status === 429 || response.status >= 500)
+        ) {
+          attempt++;
+          const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+          console.warn(
+            `GitHub API request returned ${response.status} for ${url}, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})...`,
+          );
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+        throw new Error(`GitHub API request failed (${response.status}) for ${url}`);
+      }
+      return response;
+    } catch (err) {
+      if (
+        attempt < maxRetries &&
+        !err.message.includes('404') &&
+        !err.message.includes('401') &&
+        !err.message.includes('403')
+      ) {
+        attempt++;
+        const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+        console.warn(
+          `GitHub API request error (${err.message}) for ${url}, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})...`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
   }
-  return response;
 }
 
 async function downloadReleaseAsset(assetUrl, token, destinationPath) {
@@ -3115,17 +3149,24 @@ export async function promoteRelease({
         filesToUpload.push(installShPath);
       } else {
         try {
-          const sourceRepo = process.env.SOURCE_REPOSITORY || 'omnisolo-llc/leapterm';
-          const targetSha = stagingProvenance.source_sha || 'main';
-          const contentRes = await githubRequest(
-            `https://api.github.com/repos/${sourceRepo}/contents/deploy/packaging/install.sh?ref=${encodeURIComponent(targetSha)}`,
-            privateToken,
-          );
-          const contentJson = await contentRes.json();
-          if (contentJson && contentJson.content) {
-            const installShPath = path.join(workDir, 'install.sh');
-            fs.writeFileSync(installShPath, Buffer.from(contentJson.content, 'base64'));
-            filesToUpload.push(installShPath);
+          const sourceRepo =
+            STAGING_REPOSITORY ||
+            String(process.env.SOURCE_REPOSITORY || '').trim();
+          if (sourceRepo) {
+            const targetSha = stagingProvenance.source_sha || 'main';
+            const contentRes = await githubRequest(
+              `https://api.github.com/repos/${sourceRepo}/contents/deploy/packaging/install.sh?ref=${encodeURIComponent(targetSha)}`,
+              privateToken,
+            );
+            const contentJson = await contentRes.json();
+            if (contentJson && contentJson.content) {
+              const installShPath = path.join(workDir, 'install.sh');
+              fs.writeFileSync(
+                installShPath,
+                Buffer.from(contentJson.content, 'base64'),
+              );
+              filesToUpload.push(installShPath);
+            }
           }
         } catch (err) {
           console.warn('Could not fetch install.sh from source repo:', err.message);
