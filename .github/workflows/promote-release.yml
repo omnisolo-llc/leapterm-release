@@ -12,6 +12,16 @@ on:
         required: false
         default: ""
         type: string
+      run_id:
+        description: Optional private pipeline run ID for historical stage candidate resolution
+        required: false
+        default: ""
+        type: string
+      proof:
+        description: Optional proof hash for historical stage candidate resolution
+        required: false
+        default: ""
+        type: string
       publish_github_release:
         description: Promote approved public client/agent binaries and self-hosted bundle to GitHub Releases
         required: false
@@ -136,6 +146,8 @@ jobs:
         env:
           PROMOTE_VERSION: ${{ inputs.version }}
           PROMOTE_BUILD_NUMBER: ${{ inputs.build_number }}
+          PROMOTE_RUN_ID: ${{ inputs.run_id }}
+          PROMOTE_PROOF: ${{ inputs.proof }}
           PROMOTE_GITHUB_RELEASE: ${{ inputs.publish_github_release }}
           PROMOTE_ROLLOUT_ENVIRONMENT: ${{ steps.rollout_environment.outputs.environment }}
           PROMOTE_CONTAINER_REGISTRY: ${{ secrets.PROMOTE_CONTAINER_REGISTRY }}
@@ -217,6 +229,8 @@ jobs:
         env:
           PROMOTE_VERSION: ${{ inputs.version }}
           PROMOTE_BUILD_NUMBER: ${{ inputs.build_number }}
+          PROMOTE_RUN_ID: ${{ inputs.run_id }}
+          PROMOTE_PROOF: ${{ inputs.proof }}
           PROMOTE_GITHUB_RELEASE: "false"
           PROMOTE_ROLLOUT_ENVIRONMENT: none
           PROMOTE_IOS_STORE_ACTION: ${{ inputs.ios_store_action }}
