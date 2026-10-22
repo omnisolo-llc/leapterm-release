@@ -476,7 +476,12 @@ export function verifyAllReleaseBuildsReady({
   const normalizedVersion = String(
     version || downloadLinks?.version || provenance?.version || '',
   ).replace(/^v/, '');
-  const selfHosted = downloadLinks?.self_hosted;
+  const selfHostedName = `leapterm-${normalizedVersion}-self-hosted.zip`;
+  const selfHostedFromAssets =
+    assetsByName && hasAsset(selfHostedName) && hasAsset(`${selfHostedName}.sha256`)
+      ? { name: selfHostedName, sha256: 'present' }
+      : null;
+  const selfHosted = downloadLinks?.self_hosted || selfHostedFromAssets;
   if (!selfHosted || typeof selfHosted !== 'object' || !selfHosted.name || !selfHosted.sha256) {
     missingTargets.push('self_hosted');
   } else if (assetsByName) {
@@ -1784,26 +1789,45 @@ export async function promoteAndroidToPlayStore({
       }
     }
 
-    await playRequest(
-      `edits/${encodeURIComponent(editId)}/tracks/${encodeURIComponent(track)}`,
-      'PUT',
-      {
-        track,
-        releases: [
-          {
-            name: `v${normalizedVersion} (${normalizedBuild})`,
-            versionCodes: [String(versionCode)],
-            status: 'completed',
-          },
-        ],
-      },
-    );
+    const putTrackRelease = async (releaseStatus) => {
+      await playRequest(
+        `edits/${encodeURIComponent(editId)}/tracks/${encodeURIComponent(track)}`,
+        'PUT',
+        {
+          track,
+          releases: [
+            {
+              name: `v${normalizedVersion} (${normalizedBuild})`,
+              versionCodes: [String(versionCode)],
+              status: releaseStatus,
+            },
+          ],
+        },
+      );
+      await playRequest(
+        `edits/${encodeURIComponent(editId)}:validate`,
+        'POST',
+        {},
+      );
+    };
 
-    await playRequest(
-      `edits/${encodeURIComponent(editId)}:validate`,
-      'POST',
-      {},
-    );
+    try {
+      await putTrackRelease('completed');
+    } catch (validateErr) {
+      if (
+        String(validateErr.message || '').includes(
+          'Only releases with status draft may be created on draft app',
+        )
+      ) {
+        console.warn(
+          `Google Play app is in draft status; creating ${track} release as status draft.`,
+        );
+        await putTrackRelease('draft');
+      } else {
+        throw validateErr;
+      }
+    }
+
     await playRequest(`edits/${encodeURIComponent(editId)}:commit`, 'POST', {});
   } catch (err) {
     await playRequest(`edits/${encodeURIComponent(editId)}`, 'DELETE').catch(
