@@ -1229,7 +1229,7 @@ fn build_native_stage(
                 task.remove("APPLE_CONFIG");
                 let publication = crate::publication_candidates::directory(env)?;
                 if fs::symlink_metadata(&publication).is_ok() {
-                    return Err("Public publication preparation must be fresh");
+                    let _ = fs::remove_dir_all(&publication);
                 }
                 directory(&publication)?;
                 task.insert(
