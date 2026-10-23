@@ -687,19 +687,29 @@ export function resolveGpgSigningCredentials(signingConfig) {
 }
 
 function verifyGpgSignature(keyringPath, signaturePath, payloadPath) {
-  execFileSync(
-    'gpg',
-    [
-      '--batch',
-      '--no-default-keyring',
-      '--keyring',
-      keyringPath,
-      '--verify',
-      signaturePath,
-      payloadPath,
-    ],
-    { stdio: 'pipe' },
-  );
+  const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-verify-gpg-'));
+  fs.chmodSync(gpgHome, 0o700);
+  try {
+    execFileSync(
+      'gpg',
+      ['--batch', '--homedir', gpgHome, '--import', keyringPath],
+      { stdio: 'pipe' },
+    );
+    execFileSync(
+      'gpg',
+      [
+        '--batch',
+        '--homedir',
+        gpgHome,
+        '--verify',
+        signaturePath,
+        payloadPath,
+      ],
+      { stdio: 'pipe' },
+    );
+  } finally {
+    fs.rmSync(gpgHome, { recursive: true, force: true });
+  }
 }
 
 function signDetachedWithGpg(signingConfig, payloadPath, outputSigPath) {
