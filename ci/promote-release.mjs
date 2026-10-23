@@ -1323,25 +1323,84 @@ export async function syncAppleInternalTesters({
       ? existingRes.data[0]
       : null;
     if (existingTester?.id) {
-      await ascRequest(
-        `/v1/betaGroups/${encodeURIComponent(internalGroup.id)}/relationships/betaTesters`,
-        'POST',
-        {
-          data: [{ type: 'betaTesters', id: existingTester.id }],
-        },
-      );
+      try {
+        await ascRequest(
+          `/v1/betaGroups/${encodeURIComponent(internalGroup.id)}/relationships/betaTesters`,
+          'POST',
+          {
+            data: [{ type: 'betaTesters', id: existingTester.id }],
+          },
+        );
+      } catch (err) {
+        console.warn(
+          `Could not assign existing tester ${email} to internal group: ${err.message}`,
+        );
+      }
     } else {
-      await ascRequest('/v1/betaTesters', 'POST', {
-        data: {
-          type: 'betaTesters',
-          attributes: { email },
-          relationships: {
-            betaGroups: {
-              data: [{ type: 'betaGroups', id: internalGroup.id }],
+      try {
+        await ascRequest('/v1/betaTesters', 'POST', {
+          data: {
+            type: 'betaTesters',
+            attributes: { email },
+            relationships: {
+              betaGroups: {
+                data: [{ type: 'betaGroups', id: internalGroup.id }],
+              },
             },
           },
-        },
-      });
+        });
+      } catch (err) {
+        console.warn(
+          `Could not assign ${email} to internal TestFlight group: ${err.message}. Attempting external beta group fallback...`,
+        );
+        let externalGroup = groups.find(
+          (g) => g?.attributes?.isInternalGroup === false,
+        );
+        if (!externalGroup?.id) {
+          try {
+            const createdExternal = await ascRequest('/v1/betaGroups', 'POST', {
+              data: {
+                type: 'betaGroups',
+                attributes: {
+                  name: 'External Testers',
+                  isInternalGroup: false,
+                  hasAccessToAllBuilds: true,
+                },
+                relationships: {
+                  app: { data: { type: 'apps', id: app.id } },
+                },
+              },
+            });
+            externalGroup = createdExternal?.data;
+          } catch (createErr) {
+            console.warn(
+              `Could not create external beta group: ${createErr.message}`,
+            );
+          }
+        }
+        if (externalGroup?.id) {
+          try {
+            await ascRequest('/v1/betaTesters', 'POST', {
+              data: {
+                type: 'betaTesters',
+                attributes: { email },
+                relationships: {
+                  betaGroups: {
+                    data: [{ type: 'betaGroups', id: externalGroup.id }],
+                  },
+                },
+              },
+            });
+            console.log(
+              `Assigned ${email} to external TestFlight group "${externalGroup.attributes?.name || 'External Testers'}".`,
+            );
+          } catch (extErr) {
+            console.warn(
+              `Could not assign ${email} to external beta group: ${extErr.message}`,
+            );
+          }
+        }
+      }
     }
   }
 
