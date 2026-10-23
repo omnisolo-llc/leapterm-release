@@ -50,8 +50,8 @@ export const FORBIDDEN_ASSET_PATTERNS = Object.freeze([
   /-updates-linux-x64\.zip$/,
   /-updates-windows-x64\.zip$/,
   /-updates-macos-arm64\.zip$/,
-  /-android(-release)?\.aab$/,
-  /-ios(-private)?\.ipa$/,
+  /-android(-release|-alpha|-internal)?\.aab$/,
+  /-ios(-private|-alpha|-internal)?\.ipa$/,
   /^leapterm-sbom\./,
 ]);
 
@@ -842,6 +842,7 @@ export function buildPrivateIosStorageKeys(
   runAttemptArg,
   proofArg,
   releaseRouteArg,
+  channelArg,
 ) {
   const opts =
     versionOrOptions && typeof versionOrOptions === 'object'
@@ -853,6 +854,7 @@ export function buildPrivateIosStorageKeys(
           runAttempt: runAttemptArg,
           proof: proofArg,
           releaseRoute: releaseRouteArg,
+          channel: channelArg,
         };
   const normalizedVersion = String(opts.version || '')
     .trim()
@@ -868,47 +870,58 @@ export function buildPrivateIosStorageKeys(
   const effectiveRoute = String(
     opts.releaseRoute || opts.release_route || 'option1',
   ).trim();
-  const ipaName = `leapterm-${normalizedVersion}-ios-private.ipa`;
+  const normalizedChannel =
+    String(opts.channel || opts.track || 'internal')
+      .trim()
+      .toLowerCase() === 'alpha'
+      ? 'alpha'
+      : 'internal';
+  const artifactVariant = normalizedChannel === 'alpha' ? 'alpha' : 'private';
+  const storeEnvironment =
+    normalizedChannel === 'alpha' ? 'production' : 'test_store';
+  const ipaName = `leapterm-${normalizedVersion}-ios-${artifactVariant}.ipa`;
+  const shortReceiptName = `ios-${artifactVariant}-artifact.json`;
+  const stageReceiptName = `ios-${artifactVariant}-artifact-receipt.json`;
   const basePrefix = `releases/v${normalizedVersion}/${normalizedBuild}/${normalizedRunId}-${normalizedAttempt}`;
   const option1Prefix = `${basePrefix}/option1`;
 
   const option1DirectCandidate = {
     prefix: option1Prefix,
     ipaKey: `${option1Prefix}/private/${ipaName}`,
-    receiptKey: `${option1Prefix}/receipts/ios-private-artifact.json`,
+    receiptKey: `${option1Prefix}/receipts/${shortReceiptName}`,
   };
   const option1StageCandidate = {
     prefix: option1Prefix,
     ipaKey: `${option1Prefix}/private-artifacts/${ipaName}`,
     receiptKey: normalizedProof
-      ? `${option1Prefix}/github-receipts/${normalizedProof}/ios-private-artifact-receipt.json`
-      : `${option1Prefix}/receipts/ios-private-artifact.json`,
+      ? `${option1Prefix}/github-receipts/${normalizedProof}/${stageReceiptName}`
+      : `${option1Prefix}/receipts/${shortReceiptName}`,
   };
   const option1StageShortReceiptCandidate = normalizedProof
     ? {
         prefix: option1Prefix,
         ipaKey: `${option1Prefix}/private-artifacts/${ipaName}`,
-        receiptKey: `${option1Prefix}/github-receipts/${normalizedProof}/ios-private-artifact.json`,
+        receiptKey: `${option1Prefix}/github-receipts/${normalizedProof}/${shortReceiptName}`,
       }
     : null;
   const legacyStageCandidate = {
     prefix: basePrefix,
     ipaKey: `${basePrefix}/private-artifacts/${ipaName}`,
     receiptKey: normalizedProof
-      ? `${basePrefix}/github-receipts/${normalizedProof}/ios-private-artifact-receipt.json`
-      : `${basePrefix}/receipts/ios-private-artifact.json`,
+      ? `${basePrefix}/github-receipts/${normalizedProof}/${stageReceiptName}`
+      : `${basePrefix}/receipts/${shortReceiptName}`,
   };
   const legacyStageShortReceiptCandidate = normalizedProof
     ? {
         prefix: basePrefix,
         ipaKey: `${basePrefix}/private-artifacts/${ipaName}`,
-        receiptKey: `${basePrefix}/github-receipts/${normalizedProof}/ios-private-artifact.json`,
+        receiptKey: `${basePrefix}/github-receipts/${normalizedProof}/${shortReceiptName}`,
       }
     : null;
   const legacyDirectCandidate = {
     prefix: basePrefix,
     ipaKey: `${basePrefix}/private/${ipaName}`,
-    receiptKey: `${basePrefix}/receipts/ios-private-artifact.json`,
+    receiptKey: `${basePrefix}/receipts/${shortReceiptName}`,
   };
 
   const candidates = (
@@ -936,7 +949,10 @@ export function buildPrivateIosStorageKeys(
   const receiptKeys = [...new Set(candidates.map((c) => c.receiptKey))];
 
   return {
+    channel: normalizedChannel,
+    storeEnvironment,
     ipaName,
+    receiptAssetName: stageReceiptName,
     basePrefix,
     prefix: primary.prefix,
     ipaKey: primary.ipaKey,
@@ -1007,6 +1023,10 @@ export async function resolvePrivateStageRelease({
         `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/private-artifacts/leapterm-${normalizedVersion}-ios-private.ipa`,
         `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/option1/private/leapterm-${normalizedVersion}-ios-private.ipa`,
         `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/private/leapterm-${normalizedVersion}-ios-private.ipa`,
+        `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/option1/private-artifacts/leapterm-${normalizedVersion}-ios-alpha.ipa`,
+        `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/private-artifacts/leapterm-${normalizedVersion}-ios-alpha.ipa`,
+        `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/option1/private/leapterm-${normalizedVersion}-ios-alpha.ipa`,
+        `releases/v${normalizedVersion}/${normalizedBuild}/${rId}-${rAttempt}/private/leapterm-${normalizedVersion}-ios-alpha.ipa`,
       ];
       for (const k of testKeys) {
         const objName = `object-${sha256Hex(Buffer.from(k, 'utf8'))}.bin`;
@@ -1473,7 +1493,7 @@ export async function promoteAppleToAppStoreConnect({
     return data;
   };
 
-  if (action === 'internal' || action === 'testflight') {
+  const uploadAppleCandidatePackage = () => {
     if (!packagePath || !fs.existsSync(packagePath)) {
       throw new Error(
         `TestFlight candidate upload for ${platform} requires verified packagePath`,
@@ -1885,6 +1905,10 @@ export async function promoteAppleToAppStoreConnect({
       }
       fs.rmSync(keyDir, { recursive: true, force: true });
     }
+  };
+
+  if (action === 'internal' || action === 'testflight') {
+    uploadAppleCandidatePackage();
     const testerSync = await syncAppleInternalTesters({
       ascRequest,
       appBundleId,
@@ -1894,6 +1918,7 @@ export async function promoteAppleToAppStoreConnect({
       platform,
       action,
       track: 'internal',
+      revenuecat_store: 'test_store',
       version: normalizedVersion,
       build_number: normalizedBuild,
       ...(testerSync.group_id
@@ -1907,6 +1932,12 @@ export async function promoteAppleToAppStoreConnect({
           ? 'uploaded-to-testflight-internal'
           : 'uploaded-to-testflight',
     };
+  }
+
+  let uploadedAlphaPackage = false;
+  if (action === 'alpha' && packagePath && fs.existsSync(packagePath)) {
+    uploadAppleCandidatePackage();
+    uploadedAlphaPackage = true;
   }
 
   const appsRes = await ascRequest(
@@ -1985,6 +2016,8 @@ export async function promoteAppleToAppStoreConnect({
       platform,
       action,
       track: action,
+      revenuecat_store: 'production',
+      ...(uploadedAlphaPackage ? { uploaded_candidate: true } : {}),
       version: normalizedVersion,
       build_number: normalizedBuild,
       asc_app_id: app.id,
@@ -3373,8 +3406,16 @@ export async function promoteRelease({
         expectedBuildNumber || resolvedBuildNumber || '',
       ).trim();
       let ipaPath = '';
-      if (['internal', 'testflight'].includes(iosStoreAction)) {
-        const ipaName = `leapterm-${normalizedVersion}-ios-private.ipa`;
+      if (['internal', 'testflight', 'alpha'].includes(iosStoreAction)) {
+        const iosChannel = iosStoreAction === 'alpha' ? 'alpha' : 'internal';
+        const ipaName =
+          iosChannel === 'alpha'
+            ? `leapterm-${normalizedVersion}-ios-alpha.ipa`
+            : `leapterm-${normalizedVersion}-ios-private.ipa`;
+        const expectedReceiptAssetName =
+          iosChannel === 'alpha'
+            ? 'ios-alpha-artifact-receipt.json'
+            : 'ios-private-artifact-receipt.json';
         if (assetsByName && assetsByName.has(ipaName)) {
           ipaPath = await requireStagingAsset(ipaName);
         } else {
@@ -3433,6 +3474,7 @@ export async function promoteRelease({
             runAttempt: targetAttempt,
             proof: targetProof,
             releaseRoute: effectiveRoute,
+            channel: iosChannel,
           });
           let ipaAsset = null;
           for (const key of storageKeys.ipaKeys) {
@@ -3466,9 +3508,11 @@ export async function promoteRelease({
                 await downloadReleaseAsset(cand.url, privateToken, tempReceiptPath);
                 const parsed = JSON.parse(fs.readFileSync(tempReceiptPath, 'utf8'));
                 if (
-                  parsed.name === 'ios-private-artifact-receipt.json' ||
-                  (parsed.receipt && parsed.receipt.target === 'ios') ||
-                  (parsed.receipt && parsed.receipt.name === ipaName)
+                  parsed.name === expectedReceiptAssetName ||
+                  (parsed.receipt && parsed.receipt.name === ipaName) ||
+                  (iosChannel === 'internal' &&
+                    parsed.receipt &&
+                    parsed.receipt.target === 'ios')
                 ) {
                   receiptAsset = cand;
                   break;
@@ -3485,7 +3529,10 @@ export async function promoteRelease({
               `Private stage release ${stageRelease.tag_name} missing signed iOS IPA (${ipaObjName}) or receipt (${receiptObjName})`,
             );
           }
-          const receiptPath = path.join(workDir, 'ios-private-receipt.json');
+          const receiptPath = path.join(
+            workDir,
+            `ios-${iosChannel}-receipt.json`,
+          );
           await downloadReleaseAsset(
             receiptAsset.url,
             privateToken,

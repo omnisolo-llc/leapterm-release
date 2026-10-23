@@ -1697,6 +1697,36 @@ test('buildPrivateIosStorageKeys supports option1 private/receipts keys and lega
       'releases/v0.1.1/18/100-1/option1/receipts/ios-private-artifact.json',
     ),
   );
+  assert.equal(option1Keys.channel, 'internal');
+  assert.equal(option1Keys.storeEnvironment, 'test_store');
+
+  const alphaKeys = buildPrivateIosStorageKeys({
+    version: 'v0.1.1',
+    buildNumber: '18',
+    runId: '100',
+    runAttempt: '1',
+    proof: 'abc123proof',
+    releaseRoute: 'option1',
+    channel: 'alpha',
+  });
+  assert.equal(alphaKeys.channel, 'alpha');
+  assert.equal(alphaKeys.storeEnvironment, 'production');
+  assert.equal(alphaKeys.ipaName, 'leapterm-0.1.1-ios-alpha.ipa');
+  assert.equal(alphaKeys.receiptAssetName, 'ios-alpha-artifact-receipt.json');
+  assert.equal(
+    alphaKeys.ipaKey,
+    'releases/v0.1.1/18/100-1/option1/private/leapterm-0.1.1-ios-alpha.ipa',
+  );
+  assert.ok(
+    alphaKeys.ipaKeys.includes(
+      'releases/v0.1.1/18/100-1/option1/private-artifacts/leapterm-0.1.1-ios-alpha.ipa',
+    ),
+  );
+  assert.ok(
+    alphaKeys.receiptKeys.includes(
+      'releases/v0.1.1/18/100-1/option1/github-receipts/abc123proof/ios-alpha-artifact-receipt.json',
+    ),
+  );
 });
 
 test('mergeAppleSigningConfig overlays fresh APPLE_CONFIG credentials without clobbering existing certificates', () => {
@@ -2356,6 +2386,97 @@ test('promoteIosToAppStoreConnect sanitizes script shebang from flutter_assets a
     assert.equal(uploads.length, 1);
     const uploadedFile = uploads[0].args[uploads[0].args.indexOf('--file') + 1];
     assert.ok(uploadedFile.includes('sanitized.ipa'));
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('promoteIosToAppStoreConnect uploads distinct alpha IPA build with production store configuration and assigns to alpha beta group', async () => {
+  const { privateKey } = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1',
+  });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const appleSigningConfigJson = JSON.stringify({
+    APP_STORE_CONNECT_KEY_ID: 'KEY1234567',
+    APP_STORE_CONNECT_ISSUER_ID: '11111111-2222-3333-4444-555555555555',
+    APP_STORE_CONNECT_API_KEY_BASE64: Buffer.from(pem, 'utf8').toString('base64'),
+  });
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-ios-alpha-'));
+  try {
+    const alphaIpaPath = path.join(tempDir, 'leapterm-0.1.1-ios-alpha.ipa');
+    fs.writeFileSync(alphaIpaPath, 'signed-alpha-ipa-fixture');
+
+    const uploadedFiles = [];
+    const res = await promoteIosToAppStoreConnect({
+      version: '0.1.1',
+      buildNumber: '51',
+      action: 'alpha',
+      ipaPath: alphaIpaPath,
+      iosSigningConfigJson: appleSigningConfigJson,
+      execFileImpl: (cmd, args) => {
+        if (cmd === 'xcrun' && args.includes('--upload-app')) {
+          uploadedFiles.push(args[args.indexOf('--file') + 1]);
+        }
+      },
+      fetchImpl: async (url, opts = {}) => {
+        if (url.includes('/v1/apps?')) {
+          return new Response(
+            JSON.stringify({ data: [{ id: 'app-1', type: 'apps' }] }),
+            { status: 200 },
+          );
+        }
+        if (url.includes('/v1/builds?')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'build-ios-51',
+                  type: 'builds',
+                  attributes: { processingState: 'VALID', expired: false },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes('/betaGroups?')) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'external-alpha',
+                  type: 'betaGroups',
+                  attributes: { name: 'alpha', isInternalGroup: false },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes('/v1/betaAppReviewSubmissions?')) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        if (url.endsWith('/v1/betaAppReviewSubmissions') && opts.method === 'POST') {
+          return new Response(
+            JSON.stringify({ data: { id: 'review-51', type: 'betaAppReviewSubmissions' } }),
+            { status: 201 },
+          );
+        }
+        if (url.endsWith('/v1/betaGroups/external-alpha/relationships/builds') && opts.method === 'POST') {
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`Unexpected ASC URL: ${url}`);
+      },
+    });
+
+    assert.equal(uploadedFiles.length, 1);
+    assert.equal(uploadedFiles[0], alphaIpaPath);
+    assert.equal(res.action, 'alpha');
+    assert.equal(res.track, 'alpha');
+    assert.equal(res.revenuecat_store, 'production');
+    assert.equal(res.uploaded_candidate, true);
+    assert.equal(res.status, 'promoted-to-testflight-alpha');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
