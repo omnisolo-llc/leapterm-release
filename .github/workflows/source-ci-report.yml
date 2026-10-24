@@ -1,0 +1,67 @@
+name: Public source CI reporting
+
+on:
+  workflow_run:
+    workflows: ['Public source CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Exact public source CI run ID
+        required: true
+        type: string
+      run_attempt:
+        description: Exact public source CI attempt
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-source-ci-report-${{ github.event.workflow_run.id || inputs.run_id }}-${{ github.event.workflow_run.run_attempt || inputs.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  policy:
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_REPORT_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Enforce standard runners before independent reporting
+        run: >-
+          bash ci/native-release/run.sh audit-runners
+          --workflows .github/workflows/source-ci-report.yml
+          --policy ci/standard-runner-policy.json
+
+  report:
+    needs: policy
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && vars.SOURCE_CI_REPORT_ENABLED == 'true'
+    environment: source-ci-reporter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # workflow_run subjects provide no code or retained command authority.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Independently verify exact run, approval, private bytes, and source
+        env:
+          SOURCE_CI_REPORT_ENABLED: ${{ vars.SOURCE_CI_REPORT_ENABLED }}
+          SOURCE_CI_REPORT_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          SOURCE_CI_REPORT_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.run_attempt }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_METADATA_READ_TOKEN: ${{ secrets.SOURCE_METADATA_READ_TOKEN }}
+          SOURCE_CI_APPROVAL_READ_TOKEN: ${{ secrets.SOURCE_CI_APPROVAL_READ_TOKEN }}
+          SOURCE_CI_HANDOFF_READ_TOKEN: ${{ secrets.SOURCE_CI_HANDOFF_READ_TOKEN }}
+          SOURCE_CI_STATUS_TOKEN: ${{ secrets.SOURCE_CI_STATUS_TOKEN }}
+        run: bash ci/native-release/run.sh report-source-ci

@@ -1,0 +1,119 @@
+#!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
+
+export const VALID_TRACKS = Object.freeze([
+  'all',
+  'fast',
+  'slow',
+  'linux',
+  'windows',
+  'macos',
+  'android',
+  'web',
+  'ios',
+]);
+
+export function parseTag(rawTag) {
+  if (!rawTag || typeof rawTag !== 'string') {
+    throw new Error('Tag must be a non-empty string');
+  }
+  const tag = rawTag.trim().replace(/^refs\/tags\//, '');
+  if (!tag) {
+    throw new Error('Invalid empty tag');
+  }
+
+  // Extract semantic version digits (e.g. 0.1.1, 1.2.3)
+  const versionMatch = tag.match(/(\d+\.\d+\.\d+)/);
+  if (!versionMatch) {
+    throw new Error(`Tag "${tag}" does not contain a valid semver version (e.g. 0.1.1)`);
+  }
+  const version = versionMatch[1];
+
+  // Extract optional build number from tag (e.g. -b27, -build27, or trailing -27 or _b27)
+  const remaining = tag.replace(version, '');
+  const buildMatch = remaining.match(/(?:b|build)[-_.]?(\d+)|(?:^|[-_.])(\d{1,4})(?:$|[-_.])/i);
+  const buildNumber = buildMatch ? (buildMatch[1] || buildMatch[2]) : null;
+
+  // Detect track from tag
+  const lower = tag.toLowerCase();
+  let track = 'all';
+  for (const candidate of ['windows', 'macos', 'android', 'linux', 'ios', 'web', 'fast', 'slow']) {
+    if (lower.includes(candidate)) {
+      track = candidate;
+      break;
+    }
+  }
+
+  const isMultiTrack = ['all', 'fast', 'slow'].includes(track);
+  const autoPromote = isMultiTrack && lower.includes('promote');
+  const buildOnly = !isMultiTrack || (!lower.includes('prod') && !lower.includes('publish') && !lower.includes('full') && !autoPromote);
+
+  return {
+    version,
+    buildNumber,
+    track,
+    buildOnly,
+    autoPromote,
+    originalTag: tag,
+  };
+}
+
+export function buildDispatchArguments({
+  parsed,
+  buildNumber = parsed?.buildNumber || process.env.GITHUB_RUN_NUMBER || '1',
+  repo = process.env.GITHUB_REPOSITORY || 'omnisolo-llc/leapterm-release',
+  ref = 'main',
+}) {
+  const finalBuildNumber = parsed?.buildNumber || buildNumber;
+  const args = [
+    'workflow',
+    'run',
+    'release.yml',
+    '-R',
+    repo,
+    '--ref',
+    ref,
+    '-f',
+    'release_route=option1',
+    '-f',
+    `build_only=${parsed.buildOnly}`,
+    '-f',
+    `verify_target=${parsed.track}`,
+    '-f',
+    `version=${parsed.version}`,
+    '-f',
+    `build_number=${finalBuildNumber}`,
+    '-f',
+    `auto_promote=${parsed.autoPromote}`,
+  ];
+  if (!parsed.buildOnly) {
+    args.push('-f', 'ios_action=upload');
+  }
+  return args;
+}
+
+export async function dispatchTagFlow({
+  tag = process.env.GITHUB_REF_NAME || process.env.GITHUB_REF || '',
+  buildNumber = process.env.GITHUB_RUN_NUMBER || '1',
+  repo = process.env.GITHUB_REPOSITORY || 'omnisolo-llc/leapterm-release',
+  token = process.env.PRIVATE_RELEASE_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '',
+  execFileImpl = execFileSync,
+} = {}) {
+  const parsed = parseTag(tag);
+  console.log(`[Tag Flow] Tag "${parsed.originalTag}" resolved: version=${parsed.version}, buildNumber=${parsed.buildNumber ?? buildNumber}, track=${parsed.track}, buildOnly=${parsed.buildOnly}, autoPromote=${parsed.autoPromote}`);
+  const args = buildDispatchArguments({ parsed, buildNumber, repo });
+  console.log(`[Tag Flow] Executing: gh ${args.join(' ')}`);
+  const env = {
+    ...process.env,
+    GH_TOKEN: token,
+  };
+  execFileImpl('gh', args, { env, stdio: 'inherit' });
+  return parsed;
+}
+
+if (process.argv[1] && process.argv[1].endsWith('tag-flow-dispatch.mjs')) {
+  dispatchTagFlow().catch((err) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
+}
