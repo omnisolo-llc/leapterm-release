@@ -3145,7 +3145,7 @@ export async function promoteRelease({
           selfHostedSigPath,
         );
         sha256Entries.push({ name: selfHostedName, sha256: selfHostedSha });
-      } else if (readiness.ready) {
+      } else if (readiness.ready && stagingProvenance?.include_selfhost === true) {
         throw new Error(
           `Staging release ${tag} is missing required asset: ${selfHostedName}`,
         );
