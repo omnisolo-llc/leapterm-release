@@ -190,16 +190,28 @@ jobs:
           SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
           SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH || 'main' }}
         run: |
+          set -euo pipefail
           if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
             echo "==> Deploying website and documentation to Cloudflare Pages (leapterm-website, leapterm-docs)..."
             DOCS_TMP_DIR="$(mktemp -d)"
             trap 'rm -rf "$DOCS_TMP_DIR"' EXIT
-            git clone --depth=1 -b "$SOURCE_BRANCH" "https://x-access-token:${PRIVATE_RELEASE_TOKEN}@github.com/${SOURCE_REPOSITORY}.git" "$DOCS_TMP_DIR/source"
-            cd "$DOCS_TMP_DIR/source/leapterm-website"
-            npm ci
+            git init -q "$DOCS_TMP_DIR/source"
+            git -C "$DOCS_TMP_DIR/source" remote add origin "https://github.com/${SOURCE_REPOSITORY}.git"
+            git -C "$DOCS_TMP_DIR/source" -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PRIVATE_RELEASE_TOKEN" | base64 -w 0)" fetch --depth=1 -q origin "$SOURCE_BRANCH"
+            git -C "$DOCS_TMP_DIR/source" checkout -q FETCH_HEAD
+            if [ -d "$DOCS_TMP_DIR/source/website" ]; then
+              cd "$DOCS_TMP_DIR/source/website"
+            elif [ -d "$DOCS_TMP_DIR/source/leapterm-website" ]; then
+              cd "$DOCS_TMP_DIR/source/leapterm-website"
+            else
+              echo "Error: website directory not found in source checkout" >&2
+              exit 1
+            fi
+            npm ci --no-audit --no-fund
             npm run build
-            npx wrangler pages deploy dist --project-name=leapterm-website --branch=main --commit-dirty=true
+            node -e "import('node:fs').then(fs=>fs.appendFileSync('dist/_redirects','/docs https://docs.leapterm.com/ 308\n/docs/* https://docs.leapterm.com/:splat 308\n'))"
             npx wrangler pages deploy dist/docs --project-name=leapterm-docs --branch=main --commit-dirty=true
+            npx wrangler pages deploy dist --project-name=leapterm-website --branch=main --commit-dirty=true
             echo "✓ Website and docs deployment to Cloudflare Pages completed"
           else
             echo "Cloudflare credentials not available, skipping Pages deployment."
