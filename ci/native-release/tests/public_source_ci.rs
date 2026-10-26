@@ -889,3 +889,67 @@ fn owned_http_discovery_reads_all_pages_and_rate_limits_before_dispatch() {
             .all(|r| r.method == "GET")
     );
 }
+#[test]
+fn owned_http_ordinary_release_subtree_requires_exact_public_builder_commit_tree() {
+    let fixture = Fixture::start();
+    let dir = tempfile::tempdir().unwrap();
+    trusted_metadata(&fixture, &approval_value());
+    let head = "a".repeat(40);
+    let builder_sha = "b".repeat(40);
+    let root_tree = "2".repeat(40);
+    let builder_tree = "1".repeat(40);
+    let child = json!({
+        "name": "README.md",
+        "path": "leapterm-release/README.md",
+        "type": "file",
+        "sha": "3".repeat(40),
+    });
+    let tree_entry = json!({
+        "path": "leapterm-release",
+        "mode": "040000",
+        "type": "tree",
+        "sha": builder_tree,
+    });
+    fixture.response(
+        "GET",
+        &format!("/repos/example-org/private-source/contents/leapterm-release?ref={head}"),
+        json!([child]),
+    );
+    fixture.response(
+        "GET",
+        &format!("/repos/example-org/private-source/git/commits/{head}"),
+        json!({"sha":head,"tree":{"sha":root_tree}}),
+    );
+    fixture.response(
+        "GET",
+        &format!("/repos/example-org/private-source/git/trees/{root_tree}"),
+        json!({"sha":root_tree,"truncated":false,"tree":[tree_entry.clone()]}),
+    );
+    fixture.response(
+        "GET",
+        &format!("/repos/omnisolo-llc/leapterm-release/git/commits/{builder_sha}"),
+        json!({"sha":builder_sha,"tree":{"sha":builder_tree}}),
+    );
+    let mut source = fixture.api(dir.path(), Role::SourceRead);
+    let observed = fresh_source(&mut source, &request("rust"), &approval()).unwrap();
+    assert_eq!(observed["source_builder_sha"], builder_sha);
+
+    fixture.response(
+        "GET",
+        &format!("/repos/omnisolo-llc/leapterm-release/git/commits/{builder_sha}"),
+        json!({"sha":builder_sha,"tree":{"sha":"9".repeat(40)}}),
+    );
+    assert!(fresh_source(&mut source, &request("rust"), &approval()).is_err());
+
+    fixture.response(
+        "GET",
+        &format!("/repos/omnisolo-llc/leapterm-release/git/commits/{builder_sha}"),
+        json!({"sha":builder_sha,"tree":{"sha":builder_tree}}),
+    );
+    fixture.response(
+        "GET",
+        &format!("/repos/example-org/private-source/git/trees/{root_tree}"),
+        json!({"sha":root_tree,"truncated":true,"tree":[tree_entry]}),
+    );
+    assert!(fresh_source(&mut source, &request("rust"), &approval()).is_err());
+}
