@@ -13,10 +13,12 @@ import {
   PRIMARY_KEYRING_ASSET,
   PUBLIC_TARGETS,
   FORBIDDEN_PRIVATE_TARGETS,
+  STORE_LISTINGS,
   assertNoPrivateLeakInPublicMetadata,
   assertStoreTrackIsolation,
   buildEnvironmentRolloutPlan,
   buildPrivateIosStorageKeys,
+  buildPublicReleaseBody,
   buildPublicSha256Sums,
   canonicalJson,
   createAppStoreConnectJwt,
@@ -38,6 +40,7 @@ import {
   scanDirectoryForLeaks,
   scanSelfHostedZipForLeaks,
   sha256Hex,
+  validateStoreListings,
   verifyAllReleaseBuildsReady,
   verifyAppleStoreAccess,
   verifyGooglePlayStoreAccess,
@@ -437,7 +440,11 @@ test('promoteIosToAppStoreConnect and promoteMacosToAppStoreConnect support test
       automaticRelease: false,
       macosSigningConfigJson: appleSigningConfigJson,
       fetchImpl: async (url, opts = {}) => {
-        apiCalls.push({ url, method: opts.method || 'GET' });
+        apiCalls.push({
+          url,
+          method: opts.method || 'GET',
+          body: opts.body ? JSON.parse(opts.body) : null,
+        });
         if (url.includes('/v1/apps?')) {
           return new Response(
             JSON.stringify({ data: [{ id: 'app-1', type: 'apps' }] }),
@@ -470,6 +477,39 @@ test('promoteIosToAppStoreConnect and promoteMacosToAppStoreConnect support test
             { status: 201 },
           );
         }
+        if (
+          url.endsWith(
+            '/v1/appStoreVersions/ver-mac-011/appStoreVersionLocalizations',
+          ) &&
+          (!opts.method || opts.method === 'GET')
+        ) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'loc-mac-en-us',
+                  type: 'appStoreVersionLocalizations',
+                  attributes: { locale: 'en-US' },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (
+          url.endsWith('/v1/appStoreVersionLocalizations/loc-mac-en-us') &&
+          opts.method === 'PATCH'
+        ) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                id: 'loc-mac-en-us',
+                type: 'appStoreVersionLocalizations',
+              },
+            }),
+            { status: 200 },
+          );
+        }
         if (url.endsWith('/v1/appStoreVersionSubmissions')) {
           return new Response(
             JSON.stringify({
@@ -485,7 +525,7 @@ test('promoteIosToAppStoreConnect and promoteMacosToAppStoreConnect support test
     assert.equal(storeRes.status, 'submitted-for-review');
     assert.equal(storeRes.asc_build_id, 'build-mac-18');
     assert.equal(storeRes.release_type, 'MANUAL');
-    assert.equal(apiCalls.length, 5);
+    assert.equal(apiCalls.length, 7);
 
     const iosInternalRes = await promoteIosToAppStoreConnect({
       version: '0.1.1',
@@ -656,6 +696,14 @@ test('promoteAndroidToPlayStore and verifyGooglePlayStoreAccess work with servic
             { status: 200 },
           );
         }
+        if (
+          url.endsWith('/edits/edit-99/listings/en-US') &&
+          opts.method === 'PUT'
+        ) {
+          return new Response(JSON.stringify({ language: 'en-US' }), {
+            status: 200,
+          });
+        }
         if (url.endsWith('/edits/edit-99/tracks/internal')) {
           return new Response(JSON.stringify({ track: 'internal' }), {
             status: 200,
@@ -674,7 +722,7 @@ test('promoteAndroidToPlayStore and verifyGooglePlayStoreAccess work with servic
     });
     assert.equal(res.status, 'committed');
     assert.equal(res.track, 'internal');
-    assert.equal(calls.length, 7);
+    assert.equal(calls.length, 8);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -2209,6 +2257,9 @@ test('promoteAndroidToPlayStore falls back to status draft on draft apps', async
         if (url.endsWith('/edits/edit-draft-test/bundles') && opts.method === 'GET') {
           return new Response(JSON.stringify({ bundles: [{ versionCode: 19, sha256: sha256Hex(fs.readFileSync(aabPath)) }] }), { status: 200 });
         }
+        if (url.endsWith('/edits/edit-draft-test/listings/en-US') && opts.method === 'PUT') {
+          return new Response(JSON.stringify({ language: 'en-US' }), { status: 200 });
+        }
         if (url.endsWith('/tracks/production') && opts.method === 'PUT') {
           const body = JSON.parse(opts.body);
           if (body.releases[0].status === 'completed') {
@@ -2483,8 +2534,291 @@ test('promoteIosToAppStoreConnect uploads distinct alpha IPA build with producti
   }
 });
 
+test('STORE_LISTINGS and buildPublicReleaseBody satisfy all store character limits and leak-scanner checks', () => {
+  validateStoreListings(STORE_LISTINGS);
 
+  for (const platform of ['ios', 'macos']) {
+    const listing = STORE_LISTINGS[platform];
+    assert.equal(listing.locale, 'en-US');
+    assert.ok(listing.name.length > 0 && listing.name.length <= 30);
+    assert.ok(listing.subtitle.length > 0 && listing.subtitle.length <= 30);
+    assert.ok(
+      listing.promotionalText.length > 0 &&
+        listing.promotionalText.length <= 170,
+    );
+    assert.ok(listing.keywords.length > 0 && listing.keywords.length <= 100);
+    assert.ok(
+      listing.description.length > 100 && listing.description.length <= 4000,
+    );
+    assert.ok(listing.whatsNew.length > 20 && listing.whatsNew.length <= 4000);
+  }
 
+  const android = STORE_LISTINGS.android;
+  assert.equal(android.language, 'en-US');
+  assert.ok(android.title.length > 0 && android.title.length <= 30);
+  assert.ok(
+    android.shortDescription.length > 0 &&
+      android.shortDescription.length <= 80,
+  );
+  assert.ok(
+    android.fullDescription.length > 100 &&
+      android.fullDescription.length <= 4000,
+  );
+  assert.ok(
+    android.releaseNotes.length > 20 && android.releaseNotes.length <= 500,
+  );
 
+  assert.ok(STORE_LISTINGS.windows.title.length > 0);
+  assert.ok(STORE_LISTINGS.windows.fullDescription.length > 100);
+  assert.ok(STORE_LISTINGS.linux.summary.length > 20);
 
+  const releaseBody = buildPublicReleaseBody({
+    version: '0.1.1',
+    tag: 'v0.1.1',
+  });
+  assert.match(releaseBody, /# LeapTerm v0\.1\.1/);
+  assert.match(releaseBody, /iOS & iPadOS/);
+  assert.match(releaseBody, /macOS/);
+  assert.match(releaseBody, /Windows/);
+  assert.match(releaseBody, /Android/);
+  assert.match(releaseBody, /Linux/);
+  assertNoPrivateLeakInPublicMetadata('github-release-body', releaseBody);
+  assert.throws(
+    () =>
+      validateStoreListings({
+        ...STORE_LISTINGS,
+        android: {
+          ...STORE_LISTINGS.android,
+          title: 'x'.repeat(31),
+        },
+      }),
+    /exceeds 30 characters/,
+  );
+  assert.throws(
+    () =>
+      validateStoreListings({
+        ...STORE_LISTINGS,
+        ios: {
+          ...STORE_LISTINGS.ios,
+          description: 'Leaked omnisolo-llc/private-source repository',
+        },
+      }),
+    /leaked private repository reference/,
+  );
+});
+
+test('promoteIosToAppStoreConnect and promoteAndroidToPlayStore sync platform store listings and release notes', async () => {
+  const { privateKey: ecKey } = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1',
+  });
+  const ecPem = ecKey.export({ type: 'pkcs8', format: 'pem' });
+  const appleSigningConfigJson = JSON.stringify({
+    APP_STORE_CONNECT_KEY_ID: 'KEY1234567',
+    APP_STORE_CONNECT_ISSUER_ID: '11111111-2222-3333-4444-555555555555',
+    APP_STORE_CONNECT_API_KEY_BASE64: Buffer.from(ecPem, 'utf8').toString(
+      'base64',
+    ),
+  });
+
+  let createdLocPayload = null;
+  const iosRes = await promoteIosToAppStoreConnect({
+    version: '0.1.1',
+    buildNumber: '52',
+    action: 'app-store',
+    automaticRelease: true,
+    iosSigningConfigJson: appleSigningConfigJson,
+    fetchImpl: async (url, opts = {}) => {
+      if (url.includes('/v1/apps?')) {
+        return new Response(
+          JSON.stringify({ data: [{ id: 'app-1', type: 'apps' }] }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/v1/builds?')) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'build-ios-52',
+                type: 'builds',
+                attributes: { processingState: 'VALID', expired: false },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/appStoreVersions?')) {
+        return new Response(
+          JSON.stringify({
+            data: [{ id: 'ver-ios-011', type: 'appStoreVersions' }],
+          }),
+          { status: 200 },
+        );
+      }
+      if (
+        url.endsWith('/v1/appStoreVersions/ver-ios-011') &&
+        opts.method === 'PATCH'
+      ) {
+        return new Response(
+          JSON.stringify({
+            data: { id: 'ver-ios-011', type: 'appStoreVersions' },
+          }),
+          { status: 200 },
+        );
+      }
+      if (
+        url.endsWith('/v1/appStoreVersions/ver-ios-011/relationships/build') &&
+        opts.method === 'PATCH'
+      ) {
+        return new Response(null, { status: 204 });
+      }
+      if (
+        url.endsWith(
+          '/v1/appStoreVersions/ver-ios-011/appStoreVersionLocalizations',
+        ) &&
+        (!opts.method || opts.method === 'GET')
+      ) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (
+        url.endsWith('/v1/appStoreVersionLocalizations') &&
+        opts.method === 'POST'
+      ) {
+        createdLocPayload = JSON.parse(opts.body);
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: 'loc-ios-en-us',
+              type: 'appStoreVersionLocalizations',
+            },
+          }),
+          { status: 201 },
+        );
+      }
+      if (url.endsWith('/v1/appStoreVersionSubmissions')) {
+        return new Response(
+          JSON.stringify({
+            data: { id: 'sub-ios-52', type: 'appStoreVersionSubmissions' },
+          }),
+          { status: 201 },
+        );
+      }
+      throw new Error(`Unexpected iOS ASC URL: ${url}`);
+    },
+  });
+
+  assert.equal(iosRes.status, 'submitted-for-review');
+  assert.equal(iosRes.asc_localization_id, 'loc-ios-en-us');
+  assert.ok(createdLocPayload);
+  assert.equal(createdLocPayload.data.attributes.locale, 'en-US');
+  assert.equal(
+    createdLocPayload.data.attributes.description,
+    STORE_LISTINGS.ios.description,
+  );
+  assert.equal(
+    createdLocPayload.data.attributes.keywords,
+    STORE_LISTINGS.ios.keywords,
+  );
+  assert.equal(
+    createdLocPayload.data.attributes.promotionalText,
+    STORE_LISTINGS.ios.promotionalText,
+  );
+  assert.equal(
+    createdLocPayload.data.attributes.whatsNew,
+    STORE_LISTINGS.ios.whatsNew,
+  );
+
+  const { privateKey: rsaKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+  });
+  const rsaPem = rsaKey.export({ type: 'pkcs8', format: 'pem' });
+  const serviceAccountJson = JSON.stringify({
+    type: 'service_account',
+    client_email: 'play-publisher@leapterm.iam.gserviceaccount.com',
+    private_key: rsaPem,
+  });
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-play-listing-'));
+  try {
+    const aabPath = path.join(tempDir, 'leapterm-0.1.1-android.aab');
+    const aabBytes = Buffer.from('signed-aab-fixture');
+    fs.writeFileSync(aabPath, aabBytes);
+
+    let playListingPayload = null;
+    let playTrackPayload = null;
+    const playRes = await promoteAndroidToPlayStore({
+      version: '0.1.1',
+      buildNumber: '52',
+      track: 'production',
+      aabPath,
+      serviceAccountJson,
+      fetchImpl: async (url, opts = {}) => {
+        if (url === 'https://oauth2.googleapis.com/token') {
+          return new Response(
+            JSON.stringify({ access_token: 'ya29.fixture' }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith('/edits') && opts.method === 'POST') {
+          return new Response(JSON.stringify({ id: 'edit-52' }), {
+            status: 200,
+          });
+        }
+        if (url.endsWith('/edits/edit-52/bundles') && opts.method === 'GET') {
+          return new Response(
+            JSON.stringify({
+              bundles: [{ versionCode: 52, sha256: sha256Hex(aabBytes) }],
+            }),
+            { status: 200 },
+          );
+        }
+        if (
+          url.endsWith('/edits/edit-52/listings/en-US') &&
+          opts.method === 'PUT'
+        ) {
+          playListingPayload = JSON.parse(opts.body);
+          return new Response(JSON.stringify({ language: 'en-US' }), {
+            status: 200,
+          });
+        }
+        if (
+          url.endsWith('/edits/edit-52/tracks/production') &&
+          opts.method === 'PUT'
+        ) {
+          playTrackPayload = JSON.parse(opts.body);
+          return new Response(JSON.stringify({ track: 'production' }), {
+            status: 200,
+          });
+        }
+        if (
+          url.endsWith('/edits/edit-52:validate') ||
+          url.endsWith('/edits/edit-52:commit')
+        ) {
+          return new Response(JSON.stringify({ id: 'edit-52' }), {
+            status: 200,
+          });
+        }
+        throw new Error(`Unexpected Play URL: ${url}`);
+      },
+    });
+
+    assert.equal(playRes.status, 'committed');
+    assert.equal(playRes.listing_synced, 'en-US');
+    assert.deepEqual(playListingPayload, {
+      language: 'en-US',
+      title: STORE_LISTINGS.android.title,
+      shortDescription: STORE_LISTINGS.android.shortDescription,
+      fullDescription: STORE_LISTINGS.android.fullDescription,
+    });
+    assert.deepEqual(playTrackPayload.releases[0].releaseNotes, [
+      {
+        language: 'en-US',
+        text: STORE_LISTINGS.android.releaseNotes,
+      },
+    ]);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
 

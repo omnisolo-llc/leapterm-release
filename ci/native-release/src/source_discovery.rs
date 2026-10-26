@@ -306,7 +306,72 @@ fn fresh_binding(
         return Err("Source-CI source head or base changed");
     }
     let gitlink = source.get_json(&format!("{root}/contents/leapterm-release?ref={head}"))?;
-    if !["submodule", "file"].contains(&text(&gitlink, "type")?)
+    if let Some(entries) = gitlink.as_array() {
+        if entries.is_empty() || entries.len() > 1024 {
+            return Err("Source-CI builder gitlink changed");
+        }
+        for entry in entries {
+            let entry_path = text(entry, "path")?;
+            let entry_type = text(entry, "type")?;
+            let entry_sha = text(entry, "sha")?;
+            if !entry_path.starts_with("leapterm-release/")
+                || !["file", "dir"].contains(&entry_type)
+                || !crate::input::valid_sha(entry_sha)
+            {
+                return Err("Source-CI builder gitlink changed");
+            }
+        }
+        let source_commit = source.get_json(&format!("{root}/git/commits/{head}"))?;
+        if text(&source_commit, "sha")? != head {
+            return Err("Source-CI builder gitlink changed");
+        }
+        let root_tree_sha = text(&source_commit["tree"], "sha")?;
+        if !crate::input::valid_sha(root_tree_sha) {
+            return Err("Source-CI builder gitlink changed");
+        }
+        let root_tree = source.get_json(&format!("{root}/git/trees/{root_tree_sha}"))?;
+        if text(&root_tree, "sha")? != root_tree_sha || root_tree["truncated"] != false {
+            return Err("Source-CI builder gitlink changed");
+        }
+        let tree_entries = root_tree["tree"]
+            .as_array()
+            .ok_or("Source-CI builder gitlink changed")?;
+        let release_entries: Vec<_> = tree_entries
+            .iter()
+            .filter(|e| e["path"] == "leapterm-release")
+            .collect();
+        if release_entries.len() != 1
+            || release_entries[0]["mode"] != "040000"
+            || release_entries[0]["type"] != "tree"
+        {
+            return Err("Source-CI builder gitlink changed");
+        }
+        let source_subtree_sha = text(release_entries[0], "sha")?;
+        if !crate::input::valid_sha(source_subtree_sha) {
+            return Err("Source-CI builder gitlink changed");
+        }
+        let env = crate::clean_environment(&std::env::vars().collect());
+        let builder_tree_sha = match crate::source::builder_tree_for_commit(builder_sha, None, &env)
+        {
+            Ok(tree_sha) => tree_sha,
+            Err(_) => {
+                let builder_commit = source.get_json(&format!(
+                    "repos/{BUILDER_REPOSITORY}/git/commits/{builder_sha}"
+                ))?;
+                if text(&builder_commit, "sha")? != builder_sha {
+                    return Err("Source-CI builder gitlink changed");
+                }
+                let tree_sha = text(&builder_commit["tree"], "sha")?;
+                if !crate::input::valid_sha(tree_sha) {
+                    return Err("Source-CI builder gitlink changed");
+                }
+                tree_sha.to_owned()
+            }
+        };
+        if source_subtree_sha != builder_tree_sha {
+            return Err("Source-CI builder gitlink changed");
+        }
+    } else if !["submodule", "file"].contains(&text(&gitlink, "type")?)
         || gitlink["submodule_git_url"] != crate::source::PUBLIC_URL
         || gitlink["sha"] != builder_sha
         || gitlink["path"] != "leapterm-release"

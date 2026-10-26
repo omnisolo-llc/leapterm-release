@@ -1,0 +1,102 @@
+{
+  "ios": {
+    "locale": "en-US",
+    "name": "LeapTerm: SSH, SFTP & AI Shell",
+    "subtitle": "Modern Terminal & Cloud Mesh",
+    "promotionalText": "Your infrastructure in your pocket. Blazing-fast SSH, dual-pane SFTP, voice-to-shell AI commands, live server telemetry, and Face ID hardware-backed keys.",
+    "keywords": "ssh,terminal,sftp,devops,shell,putty,termius,tmux,linux,server,sysadmin,ai,agent,cloud,vpn,console",
+    "supportUrl": "https://leapterm.com/",
+    "privacyPolicyUrl": "https://leapterm.com/privacy/",
+    "description": [
+      "Manage your servers, containers, and cloud workloads from anywhere—without fighting a tiny keyboard.",
+      "LeapTerm reimagines the mobile SSH terminal and SFTP workstation for the cloud and autonomous AI era. Built for engineers, SREs, and system administrators who need real desktop power on iPhone and iPad, LeapTerm pairs a blazing-fast terminal emulator with voice-driven command synthesis, agentless server telemetry, and hardware-backed cryptographic security.",
+      "WHY ENGINEERS SWITCH TO LEAPTERM ON iOS & iPadOS",
+      "• Speak Natural Language, Run Exact Shell Commands\nDon't type complex pipes and flags on glass. Tap the microphone and say \"check which process is using port 8080\" or \"show disk usage sorted by size\"—LeapTerm's Typeless voice-to-command engine translates your intent into a ready-to-review shell command before execution.",
+      "• Touch-First Terminal Built for Speed\nFull 24-bit TrueColor rendering, smooth scrollback, multi-tab workspaces, split panes on iPad, and a dedicated floating developer keyboard row (Ctrl, Alt, Esc, Tab, arrows, and tmux shortcuts) that stays out of your way.",
+      "• Dual-Pane SFTP, Visual Diff & Hex Inspector\nBrowse remote file trees, stream large uploads and downloads in the background, inspect binary files in hex, and compare remote config changes side-by-side with a built-in visual diff viewer.",
+      "• Agentless Live Server Telemetry\nMonitor CPU, memory, disk I/O, and network throughput in real time over your existing SSH connection—no root daemon or third-party monitoring agent required.",
+      "• Zero-Config Relay for Hard-to-Reach Hosts\nConnect directly over standard SSH or reach home labs, private VPCs, and NAT-restricted nodes through a managed or self-hosted Leap Relay without opening inbound firewall ports.",
+      "• Supervised Autonomous AI Tasks\nDispatch and monitor long-running coding or operations tasks on enrolled remote machines. Review command risk ratings and approve sensitive actions right from your phone with cryptographic task signing.",
+      "• Face ID & Secure Enclave Protection\nProtect your SSH keys, host profiles, and encrypted vault with Face ID / Touch ID and hardware-backed key custody. End-to-end client-side encryption ensures your credentials stay yours.",
+      "Core SSH, SFTP, and local vault workflows are available free with zero ads. Optional cloud relay, team vaults, and managed AI quotas are available via flexible plans.",
+      "Privacy Policy: https://leapterm.com/privacy/\nSupport: support@leapterm.com"
+    ],
+    "whatsNew": [
+      "• Full-bleed Liquid Glass app icon and refined adaptive navigation across iPhone and iPad.",
+      "• Voice-to-Shell dictation with live waveform metering and one-tap command synthesis.",
+      "• Hardware-backed Face ID / Touch ID verification when enabling vault and SSH key protection.",
+      "• Safe-area layout refinements for modern notched and Dynamic Island displays."
+    ]
+  },
+  "macos": {
+    "locale": "en-US",
+    "name": "LeapTerm: SSH & Cloud Terminal",
+    "subtitle": "Terminal, SFTP & AI Workspace",
+    "promotionalText": "Everything you love about iTerm, Termius, and MobaXterm—rebuilt for modern cloud infrastructure, zero-config relays, SFTP visual diffs, and supervised AI agents.",
+    "keywords": "ssh,terminal,sftp,iterm,termius,devops,shell,tmux,sre,linux,server,client,ai,agent,tunnel,console",
+    "supportUrl": "https://leapterm.com/",
+    "privacyPolicyUrl": "https://leapterm.com/privacy/",
+    "description": [
+      "The modern terminal workstation for cloud infrastructure, edge fleets, and autonomous AI workflows.",
+      "LeapTerm combines the raw speed of a native macOS terminal with an integrated SFTP file workstation, live server telemetry, zero-config outbound relays, and supervised AI command assistance—all in one cohesive, distraction-free Titanium interface.",
+      "BUILT FOR INFRASTRUCTURE & POWER USERS",
+      "• High-Fidelity Terminal Workstation\nCrisp monospace typography, 24-bit TrueColor, multi-tab and split-pane workspaces, instant Command Palette (Cmd+K) quick-jump, and seamless session continuity across your devices.",
+      "• Integrated Dual-Pane SFTP & Side-by-Side Diff\nStop switching between terminal windows and standalone FTP apps. Drag and drop files between local and remote hosts, inspect directory trees alongside your active shell, view binary files in hex, and diff remote configuration files before deploying.",
+      "• Agentless Live Host Telemetry\nSee real-time CPU, RAM, disk, and network metrics alongside your terminal session over standard SSH—with zero background bloat installed on your servers.",
+      "• Predictive Shell & AI Command Copilot\nGet context-aware command history completions, natural-language-to-shell translation, and voice dictation. Every AI-proposed command is risk-graded and presented for your review before a single byte hits your server.",
+      "• Supervised Remote AI Agents\nOrchestrate and audit autonomous engineering tasks across your fleet. Approve high-risk operations with Touch ID hardware-backed cryptographic signatures.",
+      "• Reach Any Host—Direct or via Relay\nConnect directly via SSH, jump hosts, and port forwarding, or traverse strict NATs and firewalls effortlessly using a managed or self-hosted Leap Relay.",
+      "• Client-Encrypted Vault & Touch ID Security\nLock your SSH keys, certificates, and connection profiles behind Touch ID and Apple Secure Enclave custody, with optional zero-knowledge encrypted sync across Mac, iOS, Windows, and Linux.",
+      "Core SSH, local shell, and SFTP workflows are free forever with no ads.",
+      "Privacy Policy: https://leapterm.com/privacy/\nSupport: support@leapterm.com"
+    ],
+    "whatsNew": [
+      "• Refined Liquid Glass macOS app icon and multi-pane Titanium workspace polish.",
+      "• Voice-to-Shell dictation with live waveform metering and AI command synthesis.",
+      "• Touch ID hardware-backed verification when enabling vault and SSH key protection.",
+      "• Faster SFTP visual diff inspection and live host telemetry streaming."
+    ]
+  },
+  "android": {
+    "language": "en-US",
+    "title": "LeapTerm: SSH, SFTP & AI Shell",
+    "shortDescription": "Fast SSH terminal, dual-pane SFTP, live server stats & voice-to-shell AI client.",
+    "fullDescription": [
+      "Manage your Linux servers, cloud instances, and home labs from your Android phone or tablet with desktop-grade speed and security. LeapTerm is a modern SSH terminal, SFTP file manager, and infrastructure workstation built for developers, DevOps engineers, and system administrators.",
+      "Speak Natural Language, Run Exact Shell Commands:\nSkip typing complex flags and pipes on a mobile keyboard. Speak naturally into LeapTerm's microphone and let Typeless voice-to-shell AI synthesize the exact command for you to review and approve before execution.",
+      "High-Fidelity Mobile Terminal & Touch Toolbar:\nWork with 24-bit TrueColor rendering, customizable fonts and themes, multi-session tabs, split views on tablets and foldables, and an ergonomic touch toolbar for modifiers (Ctrl, Alt, Esc, Tab, arrows) and CLI agents.",
+      "Dual-Pane SFTP, Visual Diff & Background Transfers:\nBrowse remote file trees, compare configuration changes with a side-by-side visual diff viewer, inspect binaries in hex, and run large SFTP uploads and downloads reliably with foreground transfer notifications.",
+      "Agentless Telemetry, Relay Routing & Biometric Vaults:\nInspect live CPU, memory, disk, and network metrics over your authorized SSH session without installing root daemons. Connect directly over SSH or reach private hosts through a compatible managed or self-hosted relay. Protect your SSH keys, passphrases, and connection profiles with Android Biometrics and hardware-backed keystore encryption.",
+      "Core SSH and SFTP workflows are available without a paid subscription. Optional managed services, cloud relay routing, and AI quotas depend on your plan, device, and service availability. Subscription prices and available offers are shown at checkout. You can manage or cancel Google Play subscriptions in your Google Play account.",
+      "LeapTerm does not include third-party advertising. For support, contact support@leapterm.com. Privacy policy: https://leapterm.com/privacy/"
+    ],
+    "releaseNotes": [
+      "• Full-bleed Liquid Glass adaptive icon and refined responsive layout across phones, tablets, and foldables.",
+      "• Voice-to-Shell AI dictation with live waveform metering.",
+      "• Android Biometric verification when enabling vault and SSH key protection.",
+      "• Improved SFTP visual diff viewer and background transfer reliability."
+    ]
+  },
+  "windows": {
+    "title": "LeapTerm — SSH Terminal, SFTP & Cloud Workstation",
+    "shortDescription": "Everything you love about MobaXterm, PuTTY, and Termius—reimagined with dual-pane SFTP, live server telemetry, encrypted vaults, and AI shell assistance.",
+    "fullDescription": [
+      "Replace your patchwork of PuTTY windows, WinSCP transfers, and tunnel scripts with a single modern workstation.",
+      "LeapTerm for Windows brings together a high-performance SSH and local terminal emulator, a dual-pane SFTP file manager, real-time server telemetry, and supervised AI command assistance in a sleek, native 64-bit desktop application.",
+      "• All-in-One Terminal & SFTP Workstation: Manage multi-tab SSH sessions, PowerShell/WSL local shells, port forwarding, and drag-and-drop SFTP transfers in one unified window.",
+      "• Visual Diff & Hex Viewer Built In: Inspect remote logs, compare config files side-by-side, and examine binary files without downloading them to temporary folders.",
+      "• Agentless Live Telemetry: Watch live CPU, memory, disk, and network utilization on any authorized Linux/Unix server over standard SSH.",
+      "• Predictive Shell & AI Copilot: Convert plain-English prompts or voice input into accurate shell commands—with explicit risk grading and human-in-the-loop approval before execution.",
+      "• Zero-Config Relay & Port Forwarding: Reach servers behind corporate NATs or home firewalls via a managed or self-hosted Leap Relay, or set up local/remote/dynamic port forwards in seconds.",
+      "• Windows Hello & Encrypted Vault: Safeguard your SSH keys and credentials with Windows Hello biometric unlock and client-side encrypted vault sync."
+    ]
+  },
+  "linux": {
+    "summary": "Modern cross-platform SSH terminal, dual-pane SFTP workstation, live telemetry, and supervised AI shell.",
+    "highlights": [
+      "Native 64-bit Linux desktop client with 24-bit TrueColor terminal workspaces, dual-pane SFTP, visual diff, and hex inspection.",
+      "Agentless server telemetry over standard SSH plus optional zero-config outbound relay connectivity.",
+      "Voice-to-Shell dictation and supervised remote AI task execution with cryptographic approval signing."
+    ]
+  }
+}

@@ -575,9 +575,9 @@ fn modules(
         }
         match (path.as_str(), name.as_str()) {
             ("leapterm-release", "leapterm-release") if url == PUBLIC_URL => {}
-            ("framework", "vibe-space") if url == FRAMEWORK_URL => {}
+            ("framework" | "core/framework", "vibe-space") if url == FRAMEWORK_URL => {}
             ("leapterm-website", "leapterm-website") if website_slug(url).is_some() => {}
-            ("leapterm-release" | "framework" | "leapterm-website", _) => {
+            ("leapterm-release" | "framework" | "core/framework" | "leapterm-website", _) => {
                 return Err("Submodule identity differs from allowlist");
             }
             _ => return Err("Unapproved submodule destination"),
@@ -590,6 +590,43 @@ fn modules(
         return Err("Unapproved submodule metadata");
     }
     Ok(result)
+}
+pub fn builder_tree_for_commit(
+    builder: &str,
+    extra_repo: Option<&Path>,
+    env: &Environment,
+) -> Result<String> {
+    if !valid_sha(builder) {
+        return Err("Invalid builder commit");
+    }
+    let builder_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .map_err(|_| "Builder root missing")?;
+    let mut candidates = vec![builder_root];
+    if let Some(repo) = extra_repo
+        && let Ok(canon) = repo.canonicalize()
+        && !candidates.contains(&canon)
+    {
+        candidates.push(canon);
+    }
+    let tree_spec = format!("{builder}^{{tree}}");
+    for repo in candidates {
+        if let Ok(kind) = git(&repo, &strings(&["cat-file", "-t", builder]), env)
+            && text(kind)?.trim() == "commit"
+            && let Ok(resolved_tree) =
+                git(&repo, &strings(&["rev-parse", "--verify", &tree_spec]), env)
+        {
+            let tree_sha = text(resolved_tree)?.trim().to_owned();
+            if valid_sha(&tree_sha)
+                && let Ok(tree_kind) = git(&repo, &strings(&["cat-file", "-t", &tree_sha]), env)
+                && text(tree_kind)?.trim() == "tree"
+            {
+                return Ok(tree_sha);
+            }
+        }
+    }
+    Err("Builder commit tree unavailable in trusted checkout")
 }
 pub fn materialize(
     root: &Path,
@@ -613,12 +650,48 @@ pub fn materialize_scoped(
     let entries = tree(root, env)?;
     let module_map = modules(root, &entries, env)?;
     let links: Vec<_> = entries.iter().filter(|e| e.mode == "160000").collect();
-    if builder.is_some_and(|builder| {
-        !links
-            .iter()
-            .any(|e| e.path == "leapterm-release" && e.oid == builder)
-    }) {
-        return Err("Source builder pin differs from executing builder");
+    if let Some(builder) = builder {
+        if !valid_sha(builder) {
+            return Err("Source builder pin differs from executing builder");
+        }
+        if let Some(link) = links.iter().find(|e| e.path == "leapterm-release") {
+            if link.oid != builder {
+                return Err("Source builder pin differs from executing builder");
+            }
+        } else {
+            if !entries
+                .iter()
+                .any(|e| e.path.starts_with("leapterm-release/"))
+            {
+                return Err("Source builder pin differs from executing builder");
+            }
+            let subtree_kind = text(
+                git(
+                    root,
+                    &strings(&["cat-file", "-t", "HEAD:leapterm-release"]),
+                    env,
+                )
+                .map_err(|_| "Source builder pin differs from executing builder")?,
+            )?;
+            if subtree_kind.trim() != "tree" {
+                return Err("Source builder pin differs from executing builder");
+            }
+            let source_subtree = text(
+                git(
+                    root,
+                    &strings(&["rev-parse", "--verify", "HEAD:leapterm-release"]),
+                    env,
+                )
+                .map_err(|_| "Source builder pin differs from executing builder")?,
+            )?
+            .trim()
+            .to_owned();
+            let builder_tree = builder_tree_for_commit(builder, Some(root), env)
+                .map_err(|_| "Source builder pin differs from executing builder")?;
+            if source_subtree != builder_tree {
+                return Err("Source builder pin differs from executing builder");
+            }
+        }
     }
     for link in links {
         let (module_name, url_string) = module_map

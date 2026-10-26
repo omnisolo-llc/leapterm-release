@@ -549,3 +549,134 @@ fn committed_mode_changes_and_root_aliases_keep_integrity_checks() {
     fs::set_permissions(file, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(verify_source(root.path(), &sha).is_err());
 }
+#[test]
+fn ordinary_release_subtree_and_core_framework_materialize() {
+    let (root, _) = repo();
+    let (seed, builder_sha) = repo();
+    git(
+        root.path(),
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "fetch",
+            "-q",
+            seed.path().to_str().unwrap(),
+            &builder_sha,
+        ],
+    );
+    fs::create_dir_all(root.path().join("leapterm-release")).unwrap();
+    fs::write(
+        root.path().join("leapterm-release/payload.txt"),
+        "reviewed bytes\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.path().join("core")).unwrap();
+    git(
+        root.path(),
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            "--name",
+            "vibe-space",
+            seed.path().to_str().unwrap(),
+            "core/framework",
+        ],
+    );
+    git(
+        root.path(),
+        &[
+            "config",
+            "--file",
+            ".gitmodules",
+            "submodule.vibe-space.url",
+            leap_release_launcher::source::FRAMEWORK_URL,
+        ],
+    );
+    git(
+        root.path(),
+        &[
+            "add",
+            ".gitmodules",
+            "leapterm-release/payload.txt",
+            "core/framework",
+        ],
+    );
+    git(
+        root.path(),
+        &[
+            "commit",
+            "-qm",
+            "ordinary release subtree and relocated framework",
+        ],
+    );
+    let sha = git(root.path(), &["rev-parse", "HEAD"]);
+    git(
+        &root.path().join("core/framework"),
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            leap_release_launcher::source::FRAMEWORK_URL,
+        ],
+    );
+    git(
+        root.path(),
+        &["submodule", "deinit", "-f", "--", "core/framework"],
+    );
+    let env = leap_release_launcher::clean_environment(&std::env::vars().collect());
+    assert!(
+        leap_release_launcher::source::materialize(
+            root.path(),
+            &sha,
+            &"f".repeat(40),
+            "local-fixture-read-token",
+            &env,
+        )
+        .is_err()
+    );
+    assert!(
+        leap_release_launcher::source::materialize(
+            root.path(),
+            &sha,
+            &sha,
+            "local-fixture-read-token",
+            &env,
+        )
+        .is_err()
+    );
+    assert!(!root.path().join("core/framework/payload.txt").exists());
+    leap_release_launcher::source::materialize(
+        root.path(),
+        &sha,
+        &builder_sha,
+        "local-fixture-read-token",
+        &env,
+    )
+    .unwrap();
+    verify_source(root.path(), &sha).unwrap();
+    assert_eq!(
+        git(&root.path().join("core/framework"), &["rev-parse", "HEAD"]),
+        builder_sha
+    );
+    fs::write(
+        root.path().join("leapterm-release/payload.txt"),
+        "drifted release subtree\n",
+    )
+    .unwrap();
+    git(root.path(), &["add", "leapterm-release/payload.txt"]);
+    git(root.path(), &["commit", "-qm", "drifted release subtree"]);
+    let drifted_sha = git(root.path(), &["rev-parse", "HEAD"]);
+    assert!(
+        leap_release_launcher::source::materialize(
+            root.path(),
+            &drifted_sha,
+            &builder_sha,
+            "local-fixture-read-token",
+            &env,
+        )
+        .is_err()
+    );
+}

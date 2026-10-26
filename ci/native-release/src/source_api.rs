@@ -51,6 +51,15 @@ impl Role {
                         || endpoint.starts_with(&format!("{private}/compare/"))
                         || endpoint
                             .starts_with(&format!("{private}/contents/leapterm-release?ref="))
+                        || endpoint
+                            .strip_prefix(&format!("{private}/git/commits/"))
+                            .is_some_and(crate::input::valid_sha)
+                        || endpoint
+                            .strip_prefix(&format!("{private}/git/trees/"))
+                            .is_some_and(crate::input::valid_sha)
+                        || endpoint
+                            .strip_prefix(&format!("{public}/git/commits/"))
+                            .is_some_and(crate::input::valid_sha)
                         || endpoint.starts_with(&format!(
                             "{private}/contents/scripts/release/public-ci-migration.json?ref="
                         ))

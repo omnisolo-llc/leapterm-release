@@ -78,6 +78,191 @@ export const SELF_HOSTED_LEAK_PATTERNS = Object.freeze([
   { label: 'Cloudflare API token variable', regex: /CLOUDFLARE_API_TOKEN/ },
 ]);
 
+function normalizeMultilineField(value, separator = '\n\n') {
+  if (Array.isArray(value)) {
+    return value
+      .map((line) => String(line || '').trim())
+      .filter(Boolean)
+      .join(separator);
+  }
+  return String(value || '').trim();
+}
+
+function loadStoreListings() {
+  const listingsPath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    'store-listings.json',
+  );
+  const raw = JSON.parse(fs.readFileSync(listingsPath, 'utf8'));
+  return Object.freeze({
+    ios: Object.freeze({
+      ...raw.ios,
+      description: normalizeMultilineField(raw.ios?.description, '\n\n'),
+      whatsNew: normalizeMultilineField(raw.ios?.whatsNew, '\n'),
+    }),
+    macos: Object.freeze({
+      ...raw.macos,
+      description: normalizeMultilineField(raw.macos?.description, '\n\n'),
+      whatsNew: normalizeMultilineField(raw.macos?.whatsNew, '\n'),
+    }),
+    android: Object.freeze({
+      ...raw.android,
+      fullDescription: normalizeMultilineField(
+        raw.android?.fullDescription,
+        '\n\n',
+      ),
+      releaseNotes: normalizeMultilineField(raw.android?.releaseNotes, '\n'),
+    }),
+    windows: Object.freeze({
+      ...raw.windows,
+      fullDescription: normalizeMultilineField(
+        raw.windows?.fullDescription,
+        '\n\n',
+      ),
+    }),
+    linux: Object.freeze({
+      ...raw.linux,
+      highlights: Object.freeze(
+        Array.isArray(raw.linux?.highlights) ? [...raw.linux.highlights] : [],
+      ),
+    }),
+  });
+}
+
+export const STORE_LISTINGS = loadStoreListings();
+
+export function validateStoreListings(listings = STORE_LISTINGS) {
+  if (!listings || typeof listings !== 'object') {
+    throw new Error('Store listings configuration is required');
+  }
+  for (const platform of ['ios', 'macos']) {
+    const item = listings[platform];
+    if (!item || typeof item !== 'object') {
+      throw new Error(`Missing Apple store listing for ${platform}`);
+    }
+    if (!item.locale || typeof item.locale !== 'string') {
+      throw new Error(`Apple ${platform} store listing requires locale`);
+    }
+    const limits = [
+      ['name', item.name, 30],
+      ['subtitle', item.subtitle, 30],
+      ['promotionalText', item.promotionalText, 170],
+      ['keywords', item.keywords, 100],
+      ['description', item.description, 4000],
+      ['whatsNew', item.whatsNew, 4000],
+    ];
+    for (const [field, val, max] of limits) {
+      const text = String(val || '').trim();
+      if (!text) {
+        throw new Error(`Apple ${platform} store listing missing ${field}`);
+      }
+      if (text.length > max) {
+        throw new Error(
+          `Apple ${platform} store listing ${field} exceeds ${max} characters (${text.length})`,
+        );
+      }
+      assertNoPrivateLeakInPublicMetadata(
+        `store-listings.${platform}.${field}`,
+        text,
+      );
+    }
+  }
+
+  const android = listings.android;
+  if (!android || typeof android !== 'object') {
+    throw new Error('Missing Google Play store listing for android');
+  }
+  if (!android.language || typeof android.language !== 'string') {
+    throw new Error('Google Play store listing requires language');
+  }
+  const androidLimits = [
+    ['title', android.title, 30],
+    ['shortDescription', android.shortDescription, 80],
+    ['fullDescription', android.fullDescription, 4000],
+    ['releaseNotes', android.releaseNotes, 500],
+  ];
+  for (const [field, val, max] of androidLimits) {
+    const text = String(val || '').trim();
+    if (!text) {
+      throw new Error(`Google Play store listing missing ${field}`);
+    }
+    if (text.length > max) {
+      throw new Error(
+        `Google Play store listing ${field} exceeds ${max} characters (${text.length})`,
+      );
+    }
+    assertNoPrivateLeakInPublicMetadata(
+      `store-listings.android.${field}`,
+      text,
+    );
+  }
+
+  const windows = listings.windows;
+  if (
+    !windows ||
+    !String(windows.title || '').trim() ||
+    !String(windows.shortDescription || '').trim() ||
+    !String(windows.fullDescription || '').trim()
+  ) {
+    throw new Error(
+      'Windows store listing requires title, shortDescription, and fullDescription',
+    );
+  }
+  assertNoPrivateLeakInPublicMetadata(
+    'store-listings.windows',
+    `${windows.title}\n${windows.shortDescription}\n${windows.fullDescription}`,
+  );
+
+  const linux = listings.linux;
+  if (!linux || !String(linux.summary || '').trim()) {
+    throw new Error('Linux store listing requires summary');
+  }
+  assertNoPrivateLeakInPublicMetadata(
+    'store-listings.linux',
+    `${linux.summary}\n${(linux.highlights || []).join('\n')}`,
+  );
+  return true;
+}
+
+export function buildPublicReleaseBody({
+  version,
+  tag,
+  listings = STORE_LISTINGS,
+} = {}) {
+  validateStoreListings(listings);
+  const normalizedVersion = String(version || tag || '')
+    .trim()
+    .replace(/^v/, '');
+  const resolvedTag = tag || `v${normalizedVersion}`;
+  const body = [
+    `# LeapTerm ${resolvedTag}`,
+    '',
+    listings.linux.summary,
+    '',
+    "## What's New",
+    listings.macos.whatsNew,
+    '',
+    '## Platform Highlights',
+    '',
+    `### macOS (${listings.macos.name})`,
+    listings.macos.promotionalText,
+    '',
+    `### Windows (${listings.windows.title})`,
+    listings.windows.shortDescription,
+    '',
+    '### Linux & Self-Hosted Relay',
+    ...(listings.linux.highlights || []).map((item) => `• ${item}`),
+    '',
+    `### iOS & iPadOS (${listings.ios.name})`,
+    listings.ios.promotionalText,
+    '',
+    `### Android (${listings.android.title})`,
+    listings.android.shortDescription,
+  ].join('\n');
+  assertNoPrivateLeakInPublicMetadata('github-release-body', body);
+  return body;
+}
+
 export function sha256Hex(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
@@ -2070,6 +2255,63 @@ export async function promoteAppleToAppStoreConnect({
     );
   }
 
+  validateStoreListings(STORE_LISTINGS);
+  const appleListing = STORE_LISTINGS[platform];
+  let ascLocalizationId = null;
+  if (appleListing) {
+    const locRes = await ascRequest(
+      `/v1/appStoreVersions/${encodeURIComponent(appStoreVersion.id)}/appStoreVersionLocalizations`,
+    );
+    const existingLocs = Array.isArray(locRes?.data) ? locRes.data : [];
+    const targetLoc =
+      existingLocs.find(
+        (loc) => loc?.attributes?.locale === appleListing.locale,
+      ) || existingLocs[0];
+    const locAttributes = {
+      description: appleListing.description,
+      keywords: appleListing.keywords,
+      promotionalText: appleListing.promotionalText,
+      whatsNew: appleListing.whatsNew,
+      ...(appleListing.supportUrl
+        ? { supportUrl: appleListing.supportUrl }
+        : {}),
+    };
+    if (targetLoc?.id) {
+      const updatedLoc = await ascRequest(
+        `/v1/appStoreVersionLocalizations/${encodeURIComponent(targetLoc.id)}`,
+        'PATCH',
+        {
+          data: {
+            type: 'appStoreVersionLocalizations',
+            id: targetLoc.id,
+            attributes: locAttributes,
+          },
+        },
+      );
+      ascLocalizationId = updatedLoc?.data?.id || targetLoc.id;
+    } else {
+      const createdLoc = await ascRequest(
+        '/v1/appStoreVersionLocalizations',
+        'POST',
+        {
+          data: {
+            type: 'appStoreVersionLocalizations',
+            attributes: {
+              locale: appleListing.locale,
+              ...locAttributes,
+            },
+            relationships: {
+              appStoreVersion: {
+                data: { type: 'appStoreVersions', id: appStoreVersion.id },
+              },
+            },
+          },
+        },
+      );
+      ascLocalizationId = createdLoc?.data?.id || null;
+    }
+  }
+
   await ascRequest('/v1/appStoreVersionSubmissions', 'POST', {
     data: {
       type: 'appStoreVersionSubmissions',
@@ -2090,6 +2332,7 @@ export async function promoteAppleToAppStoreConnect({
     asc_app_id: app.id,
     asc_build_id: build.id,
     asc_version_id: appStoreVersion.id,
+    ...(ascLocalizationId ? { asc_localization_id: ascLocalizationId } : {}),
     release_type: releaseType,
     status: 'submitted-for-review',
   };
@@ -2276,6 +2519,19 @@ export async function promoteAndroidToPlayStore({
       }
     }
 
+    validateStoreListings(STORE_LISTINGS);
+    const androidListing = STORE_LISTINGS.android;
+    await playRequest(
+      `edits/${encodeURIComponent(editId)}/listings/${encodeURIComponent(androidListing.language)}`,
+      'PUT',
+      {
+        language: androidListing.language,
+        title: androidListing.title,
+        shortDescription: androidListing.shortDescription,
+        fullDescription: androidListing.fullDescription,
+      },
+    );
+
     const putTrackRelease = async (releaseStatus) => {
       await playRequest(
         `edits/${encodeURIComponent(editId)}/tracks/${encodeURIComponent(track)}`,
@@ -2287,6 +2543,12 @@ export async function promoteAndroidToPlayStore({
               name: `v${normalizedVersion} (${normalizedBuild})`,
               versionCodes: [String(versionCode)],
               status: releaseStatus,
+              releaseNotes: [
+                {
+                  language: androidListing.language,
+                  text: androidListing.releaseNotes,
+                },
+              ],
             },
           ],
         },
@@ -2328,6 +2590,7 @@ export async function promoteAndroidToPlayStore({
     track,
     version: normalizedVersion,
     build_number: normalizedBuild,
+    listing_synced: STORE_LISTINGS.android.language,
     status: 'committed',
   };
 }
@@ -3280,6 +3543,10 @@ export async function promoteRelease({
 
       const isCompletePublicRelease =
         readiness.ready && !normalizedVersion.includes('-');
+      const releaseBody = buildPublicReleaseBody({
+        version: normalizedVersion,
+        tag,
+      });
 
       let publicRelease;
       const existingRes = await fetch(
@@ -3303,7 +3570,7 @@ export async function promoteRelease({
             body: JSON.stringify({
               tag_name: tag,
               name: `LeapTerm ${tag}`,
-              body: `LeapTerm ${tag} public release.`,
+              body: releaseBody,
               draft: true,
               prerelease: !isCompletePublicRelease,
               make_latest: isCompletePublicRelease ? 'true' : 'false',
@@ -3358,7 +3625,7 @@ export async function promoteRelease({
             prerelease: !isCompletePublicRelease,
             make_latest: isCompletePublicRelease ? 'true' : 'false',
             name: `LeapTerm ${tag}`,
-            body: `LeapTerm ${tag} public release.`,
+            body: releaseBody,
           }),
         },
       );
