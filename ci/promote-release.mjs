@@ -3025,6 +3025,692 @@ export function executeEnvironmentRollout({
   }
 }
 
+function wasmHasCustomSections(rawBytes) {
+  if (rawBytes.length < 8) return false;
+  if (
+    rawBytes[0] !== 0x00 ||
+    rawBytes[1] !== 0x61 ||
+    rawBytes[2] !== 0x73 ||
+    rawBytes[3] !== 0x6d ||
+    rawBytes[4] !== 0x01 ||
+    rawBytes[5] !== 0x00 ||
+    rawBytes[6] !== 0x00 ||
+    rawBytes[7] !== 0x00
+  ) {
+    return false;
+  }
+  let pos = 8;
+  while (pos < rawBytes.length) {
+    const id = rawBytes[pos++];
+    let payloadLen = 0;
+    let shift = 0;
+    while (pos < rawBytes.length) {
+      const b = rawBytes[pos++];
+      payloadLen += (b & 0x7f) * 2 ** shift;
+      shift += 7;
+      if ((b & 0x80) === 0) break;
+    }
+    if (id === 0) return true;
+    pos += payloadLen;
+  }
+  return false;
+}
+
+const CDN_SECRET_OR_PRIVATE_PATTERNS = [
+  /\/\/[#@]\s*sourceMappingURL\s*=/i,
+  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,
+  /\bAIza[0-9A-Za-z_-]{35}\b/,
+  /\b(?:gh[pousr]_[A-Za-z0-9]{30,4096}|github_pat_[A-Za-z0-9_]{30,4096})\b/,
+  /\bglpat-[A-Za-z0-9_-]{20,4096}\b/,
+  /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,4096}\b/,
+  /\b(?:sk-[A-Za-z0-9_-]{32,4096}|rcsk_[A-Za-z0-9_-]{16,4096})\b/,
+  /\beyJ[A-Za-z0-9_-]{16,4096}\.[A-Za-z0-9_-]{16,4096}\.[A-Za-z0-9_-]{16,4096}\b/,
+  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[ \t]*(?:\r?\n|\\n|\\r\\n)(?:[ \t]*(?:(?:Proc-Type|DEK-Info):[^\r\n\\]{1,256})?(?:\r?\n|\\n|\\r\\n)){0,4}[ \t]*[A-Za-z0-9+/]{16}/,
+  /\b(?:tools\/release-artifacts\/|core\/crates\/|app\/lib\/|app\/hook\/|CLOUDFLARE_API_TOKEN|DIAGNOSTICS_PRIVATE_KEY)\b/,
+  /# proto-file: leapterm\/api\/v1\/system_config\.proto/,
+  /\b(?:192\.168\.8\.35|prod-web-01|prod-db-01|subject-demo|tenant-demo|fake-session)\b/,
+];
+
+function scanStagedCdnAsset(relPath, rawBytes) {
+  if (relPath.endsWith('.wasm') && wasmHasCustomSections(rawBytes)) {
+    throw new Error(`Unstripped Wasm custom section (id=0) in CDN asset: ${relPath}`);
+  }
+  const text = rawBytes.toString('utf8');
+  if (relPath === 'main.dart.mjs') {
+    if (/(?:^|\n)[ \t]*\/\//.test(text)) {
+      throw new Error('Unstripped comments in CDN main.dart.mjs runtime');
+    }
+    if (
+      /\b(?:CompiledApp|InstantiatedApp|jsWrappedDartFunctionSymbol|JSWrappedDartFunction)\b/.test(
+        text,
+      )
+    ) {
+      throw new Error('Unobfuscated internal symbols in CDN main.dart.mjs runtime');
+    }
+  }
+  const sanitized = text.replace(
+    /["']?LEAP_REVENUECAT_PUBLIC_SDK_KEY["']?\s*[:=]\s*["'](?:appl|goog|rcb)_[A-Za-z0-9]{1,2048}["']/gi,
+    '',
+  );
+  for (const pattern of CDN_SECRET_OR_PRIVATE_PATTERNS) {
+    if (pattern.test(sanitized)) {
+      throw new Error(
+        `Private, secret, or source-map material detected in CDN asset (${relPath}): matched ${pattern}`,
+      );
+    }
+  }
+}
+
+export function stageCompiledWebCdnAssets({
+  bundleDir,
+  distDir,
+  version = '0.0.0',
+  buildNumber = '0',
+}) {
+  const resolvedBundle = path.resolve(String(bundleDir || ''));
+  const resolvedDist = path.resolve(String(distDir || ''));
+  if (!fs.existsSync(resolvedBundle) || !fs.statSync(resolvedBundle).isDirectory()) {
+    throw new Error(`Web bundle directory does not exist: ${resolvedBundle}`);
+  }
+  if (fs.existsSync(path.join(resolvedBundle, 'main.dart.js'))) {
+    throw new Error('Legacy dart2js artifact main.dart.js is forbidden in Wasm web CDN bundle');
+  }
+  for (const requiredFile of ['main.dart.wasm', 'main.dart.mjs', 'flutter_bootstrap.js']) {
+    const candidate = path.join(resolvedBundle, requiredFile);
+    if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) {
+      throw new Error(`Web CDN bundle is missing required Wasm artifact: ${requiredFile}`);
+    }
+  }
+  const wasmBytes = fs.readFileSync(path.join(resolvedBundle, 'main.dart.wasm'));
+  const mjsBytes = fs.readFileSync(path.join(resolvedBundle, 'main.dart.mjs'));
+  const skwasmJsPath = path.join(resolvedBundle, 'canvaskit', 'skwasm.js');
+  const wasmSha256 = sha256Hex(wasmBytes);
+  const mjsSha256 = sha256Hex(mjsBytes);
+  const skwasmJsSha256 = fs.existsSync(skwasmJsPath)
+    ? sha256Hex(fs.readFileSync(skwasmJsPath))
+    : '';
+  const buildId = wasmSha256.slice(0, 16);
+  const cdnRoot = path.join(resolvedDist, '_cdn', 'web');
+  const targetDir = path.join(cdnRoot, buildId);
+  // Remove the entire _cdn/web directory so all older buildId directories are purged from the deployment
+  fs.rmSync(cdnRoot, { recursive: true, force: true });
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  const allowedFiles = [
+    'main.dart.wasm',
+    'main.dart.mjs',
+    'favicon.png',
+    'favicon.svg',
+    'logo.svg',
+  ];
+  const allowedDirs = ['canvaskit', 'assets', 'icons'];
+  const forbiddenFileNames = new Set([
+    'main.dart.js',
+    'provenance.json',
+    'bundled-font-inventory.json',
+    'config.json',
+    'version.json',
+    'manifest.json',
+    'flutter_bootstrap.js',
+    'flutter.js',
+    'index.html',
+  ]);
+  const forbiddenSuffixes = [
+    '.gz',
+    '.br',
+    '.map',
+    '.symbols',
+    '.deps',
+    '.bak',
+    '.pem',
+    '.key',
+    '.p12',
+    '.p8',
+    '.jks',
+    '.keystore',
+    '.pdb',
+    '.dart',
+    '.ts',
+    '.tsx',
+    '.rs',
+  ];
+  const maxFileBytes = 25 * 1024 * 1024;
+  let filesCount = 0;
+  let totalBytes = 0;
+  const files = {};
+
+  const copyDir = (src, dest, relPrefix) => {
+    fs.mkdirSync(dest, { recursive: true });
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      if (entry.name === 'main.dart.js' || entry.name.startsWith('main.dart.js.')) {
+        throw new Error('Forbidden legacy dart2js artifact in web CDN bundle');
+      }
+      if (
+        forbiddenFileNames.has(entry.name) ||
+        forbiddenSuffixes.some((ext) => entry.name.endsWith(ext))
+      ) {
+        continue;
+      }
+      const srcPath = path.join(src, entry.name);
+      const destPath = path.join(dest, entry.name);
+      const relPath = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+      const st = fs.lstatSync(srcPath);
+      if (st.isSymbolicLink()) {
+        throw new Error(`Symlinks are forbidden in web CDN bundle: ${srcPath}`);
+      }
+      if (st.isDirectory()) {
+        copyDir(srcPath, destPath, relPath);
+      } else if (st.isFile()) {
+        if (st.size > maxFileBytes) {
+          throw new Error(`Web CDN asset exceeds Cloudflare Pages 25 MiB limit: ${srcPath}`);
+        }
+        const rawBytes = fs.readFileSync(srcPath);
+        scanStagedCdnAsset(relPath, rawBytes);
+        fs.writeFileSync(destPath, rawBytes);
+        filesCount += 1;
+        totalBytes += rawBytes.length;
+        files[relPath] = {
+          sha256: sha256Hex(rawBytes),
+          bytes: rawBytes.length,
+        };
+      }
+    }
+  };
+
+  for (const name of allowedFiles) {
+    const srcPath = path.join(resolvedBundle, name);
+    if (!fs.existsSync(srcPath)) continue;
+    const st = fs.lstatSync(srcPath);
+    if (st.isSymbolicLink() || !st.isFile()) {
+      throw new Error(`Invalid top-level web CDN file: ${srcPath}`);
+    }
+    if (st.size > maxFileBytes) {
+      throw new Error(`Web CDN asset exceeds Cloudflare Pages 25 MiB limit: ${srcPath}`);
+    }
+    const rawBytes = fs.readFileSync(srcPath);
+    scanStagedCdnAsset(name, rawBytes);
+    fs.writeFileSync(path.join(targetDir, name), rawBytes);
+    filesCount += 1;
+    totalBytes += rawBytes.length;
+    files[name] = {
+      sha256: sha256Hex(rawBytes),
+      bytes: rawBytes.length,
+    };
+  }
+  for (const dirName of allowedDirs) {
+    const srcDir = path.join(resolvedBundle, dirName);
+    if (!fs.existsSync(srcDir)) continue;
+    const st = fs.lstatSync(srcDir);
+    if (st.isSymbolicLink() || !st.isDirectory()) {
+      throw new Error(`Invalid top-level web CDN directory: ${srcDir}`);
+    }
+    copyDir(srcDir, path.join(targetDir, dirName), dirName);
+  }
+
+  const manifest = {
+    schema_version: 1,
+    build_id: buildId,
+    version: String(version || '0.0.0'),
+    build_number: String(buildNumber || '0'),
+    wasm_sha256: wasmSha256,
+    mjs_sha256: mjsSha256,
+    skwasm_js_sha256: skwasmJsSha256,
+    cdn_url: `https://cdn.leapterm.com/web/${buildId}/`,
+    cdn_path: `/_cdn/web/${buildId}/`,
+    files_count: filesCount,
+    total_bytes: totalBytes,
+    files,
+  };
+  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+  fs.writeFileSync(path.join(targetDir, 'cdn-manifest.json'), serialized, 'utf8');
+  fs.writeFileSync(path.join(cdnRoot, 'latest.json'), serialized, 'utf8');
+
+  const headersPath = path.join(resolvedDist, '_headers');
+  const existingHeaders = fs.existsSync(headersPath) ? fs.readFileSync(headersPath, 'utf8') : '';
+  const strippedHeaders = existingHeaders
+    .replace(/\n*# BEGIN LEAPTERM_WEB_CDN_HEADERS[\s\S]*?# END LEAPTERM_WEB_CDN_HEADERS\n*/g, '\n')
+    .trimEnd();
+  const cdnHeadersBlock = [
+    '# BEGIN LEAPTERM_WEB_CDN_HEADERS',
+    '/_cdn/web/*',
+    '  Access-Control-Allow-Origin: *',
+    '  Access-Control-Allow-Methods: GET, HEAD, OPTIONS',
+    '  Access-Control-Expose-Headers: Content-Length, Content-Type, ETag',
+    '  Cross-Origin-Resource-Policy: cross-origin',
+    '  Timing-Allow-Origin: *',
+    '  Cache-Control: no-store, no-cache, must-revalidate, max-age=0',
+    '  X-Content-Type-Options: nosniff',
+    '  X-Robots-Tag: noindex, noarchive, nosnippet',
+    "  Content-Security-Policy: default-src 'none'; sandbox",
+    '',
+    `/_cdn/web/${buildId}/*`,
+    '  Cache-Control: public, max-age=3600, s-maxage=3600, must-revalidate',
+    '',
+    `/_cdn/web/${buildId}/cdn-manifest.json`,
+    '  Cache-Control: public, max-age=60, s-maxage=60, must-revalidate',
+    '',
+    '/_cdn/web/latest.json',
+    '  Access-Control-Allow-Origin: *',
+    '  Cross-Origin-Resource-Policy: cross-origin',
+    '  Cache-Control: public, max-age=60, s-maxage=60, must-revalidate',
+    '  X-Content-Type-Options: nosniff',
+    '  X-Robots-Tag: noindex, noarchive, nosnippet',
+    '# END LEAPTERM_WEB_CDN_HEADERS',
+  ].join('\n');
+  fs.writeFileSync(
+    headersPath,
+    `${strippedHeaders ? `${strippedHeaders}\n\n` : ''}${cdnHeadersBlock}\n`,
+    'utf8',
+  );
+
+  const redirectsPath = path.join(resolvedDist, '_redirects');
+  const existingRedirects = fs.existsSync(redirectsPath)
+    ? fs.readFileSync(redirectsPath, 'utf8')
+    : '';
+  const redirectLines = existingRedirects
+    .split(/\r?\n/)
+    .filter((line) => line.trim() && !line.trim().startsWith('/_cdn/web/'));
+  redirectLines.push(`/_cdn/web/latest/* /_cdn/web/${buildId}/:splat 200`);
+  fs.writeFileSync(redirectsPath, `${redirectLines.join('\n')}\n`, 'utf8');
+
+  const routesJson = {
+    version: 1,
+    include: ['/healthz', '/web/*', '/_cdn/web/*'],
+    exclude: [],
+  };
+  fs.writeFileSync(
+    path.join(resolvedDist, '_routes.json'),
+    `${JSON.stringify(routesJson, null, 2)}\n`,
+    'utf8',
+  );
+  const workerScript = `const ACTIVE_BUILD_ID = ${JSON.stringify(buildId)};
+const ACTIVE_VERSION = ${JSON.stringify(String(version || '0.0.0'))};
+const ACTIVE_BUILD_NUMBER = ${JSON.stringify(String(buildNumber || '0'))};
+const ACTIVE_FILES_COUNT = ${filesCount};
+const ACTIVE_TOTAL_BYTES = ${totalBytes};
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+  "Access-Control-Expose-Headers": "Content-Length, Content-Type, ETag, X-LeapTerm-CDN-Build",
+  "Cross-Origin-Resource-Policy": "cross-origin",
+  "Timing-Allow-Origin": "*",
+  "X-Content-Type-Options": "nosniff",
+  "X-Robots-Tag": "noindex, noarchive, nosnippet",
+  "X-LeapTerm-CDN-Build": ACTIVE_BUILD_ID,
+  "Content-Security-Policy": "default-src 'none'; sandbox",
+};
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+    if (url.pathname === "/healthz" || url.pathname === "/web/healthz" || url.pathname === "/_cdn/healthz") {
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          service: "leapterm-cdn",
+          domain: "cdn.leapterm.com",
+          active_build_id: ACTIVE_BUILD_ID,
+          active_cdn_url: "https://cdn.leapterm.com/web/" + ACTIVE_BUILD_ID + "/",
+          version: ACTIVE_VERSION,
+          build_number: ACTIVE_BUILD_NUMBER,
+          files_count: ACTIVE_FILES_COUNT,
+          total_bytes: ACTIVE_TOTAL_BYTES,
+          cache_policy: {
+            versioned_assets: "public, max-age=3600, s-maxage=3600, must-revalidate",
+            manifests: "public, max-age=60, s-maxage=60, must-revalidate",
+            expired_versions: "HTTP 410 Gone (no-store + Clear-Site-Data: cache)",
+          },
+        }) + "\\n",
+        {
+          status: 200,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        },
+      );
+    }
+    const isWebPrefix = url.pathname.startsWith("/web/");
+    const isLegacyPrefix = url.pathname.startsWith("/_cdn/web/");
+    if (!isWebPrefix && !isLegacyPrefix) {
+      return env.ASSETS.fetch(request);
+    }
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new Response("Method Not Allowed\\n", { status: 405, headers: CORS_HEADERS });
+    }
+    const suffix = url.pathname.slice(isWebPrefix ? "/web/".length : "/_cdn/web/".length);
+    let targetPath = "/_cdn/web/" + suffix;
+    let isShortLivedManifest = false;
+    if (suffix === "latest.json") {
+      isShortLivedManifest = true;
+    } else if (suffix.startsWith("latest/")) {
+      targetPath = "/_cdn/web/" + ACTIVE_BUILD_ID + "/" + suffix.slice("latest/".length);
+      if (targetPath.endsWith("/cdn-manifest.json")) isShortLivedManifest = true;
+    } else if (suffix.startsWith(ACTIVE_BUILD_ID + "/")) {
+      if (suffix === ACTIVE_BUILD_ID + "/cdn-manifest.json") isShortLivedManifest = true;
+    } else {
+      return new Response(
+        JSON.stringify({
+          error: "cdn_version_expired",
+          message: "This CDN asset version has expired and been removed.",
+          active_build_id: ACTIVE_BUILD_ID,
+          active_cdn_url: "https://cdn.leapterm.com/web/" + ACTIVE_BUILD_ID + "/",
+        }) + "\\n",
+        {
+          status: 410,
+          headers: {
+            ...CORS_HEADERS,
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Clear-Site-Data": "\\"cache\\"",
+          },
+        },
+      );
+    }
+    const assetUrl = new URL(request.url);
+    assetUrl.pathname = targetPath;
+    const assetResp = await env.ASSETS.fetch(new Request(assetUrl.toString(), request));
+    const headers = new Headers(assetResp.headers);
+    for (const [k, v] of Object.entries(CORS_HEADERS)) {
+      headers.set(k, v);
+    }
+    if (!assetResp.ok) {
+      headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+      headers.set("Expires", "0");
+    } else if (isShortLivedManifest) {
+      headers.set("Cache-Control", "public, max-age=60, s-maxage=60, must-revalidate");
+    } else {
+      headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600, must-revalidate");
+    }
+    return new Response(assetResp.body, {
+      status: assetResp.status,
+      statusText: assetResp.statusText,
+      headers,
+    });
+  },
+};
+`;
+  fs.writeFileSync(path.join(resolvedDist, '_worker.js'), workerScript, 'utf8');
+
+  return {
+    buildId,
+    wasmSha256,
+    mjsSha256,
+    targetDir,
+    filesCount,
+    totalBytes,
+    manifest,
+  };
+}
+
+export async function pruneSupersededPagesDeployments({
+  projectName = 'leapterm-cdn',
+  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
+  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
+  bestEffort = true,
+  fetchImpl = fetch,
+} = {}) {
+  const trimmedAccount = String(accountId || '').trim();
+  const trimmedToken = String(apiToken || '').trim();
+  if (!trimmedAccount || !trimmedToken) {
+    return { projectName, prunedCount: 0, skipped: true };
+  }
+  const baseUrl = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(trimmedAccount)}/pages/projects/${encodeURIComponent(projectName)}/deployments`;
+  const headers = {
+    Authorization: `Bearer ${trimmedToken}`,
+    Accept: 'application/json',
+  };
+  try {
+    const listRes = await fetchImpl(baseUrl, { headers });
+    if (!listRes.ok) {
+      if (bestEffort) return { projectName, prunedCount: 0, skipped: true };
+      throw new Error(`Cloudflare Pages list deployments failed (${listRes.status}) for ${projectName}`);
+    }
+    const payload = await listRes.json();
+    const deployments = Array.isArray(payload?.result) ? payload.result : [];
+    if (deployments.length <= 1) {
+      return { projectName, prunedCount: 0, skipped: false, keptId: deployments[0]?.id || null };
+    }
+    const superseded = deployments.slice(1);
+    let prunedCount = 0;
+    const deletedIds = [];
+    for (const dep of superseded) {
+      if (!dep?.id) continue;
+      const delRes = await fetchImpl(
+        `${baseUrl}/${encodeURIComponent(dep.id)}?force=true`,
+        { method: 'DELETE', headers },
+      );
+      if (delRes.ok || delRes.status === 404) {
+        prunedCount += 1;
+        deletedIds.push(dep.id);
+      }
+    }
+    return {
+      projectName,
+      prunedCount,
+      keptId: deployments[0]?.id || null,
+      deletedIds,
+      skipped: false,
+    };
+  } catch (err) {
+    if (bestEffort) {
+      return { projectName, prunedCount: 0, skipped: true, reason: err.message };
+    }
+    throw err;
+  }
+}
+
+export async function deployCompiledWebCdnAssets({
+  bundleDir = '',
+  archivePath = '',
+  distDir = '',
+  projectName = 'leapterm-cdn',
+  version = '0.0.0',
+  buildNumber = '0',
+  cleanLocal = true,
+  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
+  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
+  execFileImpl = execFileSync,
+  fetchImpl = fetch,
+} = {}) {
+  let tempExtractDir = '';
+  const resolvedDist = distDir
+    ? path.resolve(distDir)
+    : fs.mkdtempSync(path.join(os.tmpdir(), 'leap-cdn-dist-'));
+  try {
+    let sourceBundleDir = bundleDir;
+    if (archivePath) {
+      const resolvedArchive = path.resolve(archivePath);
+      if (!fs.existsSync(resolvedArchive)) {
+        throw new Error(`Web CDN archive not found: ${resolvedArchive}`);
+      }
+      tempExtractDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-web-cdn-extract-'));
+      execFileImpl('tar', ['-xzf', resolvedArchive, '-C', tempExtractDir], {
+        stdio: 'pipe',
+      });
+      sourceBundleDir = tempExtractDir;
+    }
+    const staged = stageCompiledWebCdnAssets({
+      bundleDir: sourceBundleDir,
+      distDir: resolvedDist,
+      version,
+      buildNumber,
+    });
+    execFileImpl(
+      'npx',
+      [
+        '--yes',
+        'wrangler',
+        'pages',
+        'deploy',
+        resolvedDist,
+        `--project-name=${projectName}`,
+        '--branch=main',
+        '--commit-dirty=true',
+      ],
+      {
+        cwd: os.tmpdir(),
+        env: { ...process.env, WRANGLER_SEND_METRICS: 'false' },
+        stdio: 'inherit',
+      },
+    );
+    const pruneResult = await pruneSupersededPagesDeployments({
+      projectName,
+      accountId,
+      apiToken,
+      bestEffort: true,
+      fetchImpl,
+    });
+    return {
+      ...staged,
+      projectName,
+      cdnUrl: `https://cdn.leapterm.com/web/${staged.buildId}/`,
+      prunedDeploymentsCount: pruneResult.prunedCount,
+    };
+  } finally {
+    if (tempExtractDir) {
+      fs.rmSync(tempExtractDir, { recursive: true, force: true });
+    }
+    if (cleanLocal && resolvedDist) {
+      fs.rmSync(resolvedDist, { recursive: true, force: true });
+    }
+  }
+}
+
+export async function pruneGithubReleases({
+  repo,
+  token,
+  keepReleases = 3,
+  currentTag = '',
+  isStagingRepo = false,
+  dryRun = false,
+  bestEffort = true,
+  fetchImpl = fetch,
+} = {}) {
+  const trimmedRepo = String(repo || '').trim();
+  const trimmedToken = String(token || '').trim();
+  if (!trimmedRepo || !trimmedToken) {
+    return { repo: trimmedRepo, kept: [], deleted: [], skipped: true };
+  }
+  const safeKeep = Number.isSafeInteger(keepReleases) && keepReleases >= 1 ? keepReleases : 3;
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    Authorization: `Bearer ${trimmedToken}`,
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'leapterm-release-promoter',
+  };
+  try {
+    const listRes = await fetchImpl(
+      `https://api.github.com/repos/${trimmedRepo}/releases?per_page=100`,
+      { headers },
+    );
+    if (!listRes.ok) {
+      if (bestEffort) return { repo: trimmedRepo, kept: [], deleted: [], skipped: true };
+      throw new Error(`Failed listing releases on ${trimmedRepo} (${listRes.status})`);
+    }
+    const releases = await listRes.json();
+    if (!Array.isArray(releases) || releases.length === 0) {
+      return { repo: trimmedRepo, kept: [], deleted: [], skipped: false };
+    }
+    const sorted = [...releases].sort((a, b) => {
+      const ta = Date.parse(a.published_at || a.created_at || 0) || 0;
+      const tb = Date.parse(b.published_at || b.created_at || 0) || 0;
+      return tb - ta;
+    });
+
+    const keptIds = new Set();
+    const normalizeFamily = (tag) => {
+      const m = String(tag || '').match(/^(v\d+\.\d+\.\d+)(?:-(?:fast|slow|b\d+|\d+))?$/);
+      return m ? m[1] : null;
+    };
+    const currentFamily = normalizeFamily(currentTag);
+
+    if (isStagingRepo) {
+      const keptFamilies = new Set();
+      if (currentFamily) keptFamilies.add(currentFamily);
+      let keptStageRuns = 0;
+      for (const rel of sorted) {
+        const tag = String(rel.tag_name || '');
+        if (tag && tag === currentTag) {
+          keptIds.add(rel.id);
+          continue;
+        }
+        const fam = normalizeFamily(tag);
+        if (fam) {
+          if (keptFamilies.has(fam) || keptFamilies.size < safeKeep) {
+            keptFamilies.add(fam);
+            keptIds.add(rel.id);
+          }
+          continue;
+        }
+        if (tag.startsWith('ci-stage/application-')) {
+          if (keptStageRuns < safeKeep * 2) {
+            keptStageRuns += 1;
+            keptIds.add(rel.id);
+          }
+          continue;
+        }
+      }
+    } else {
+      let keptStableCount = 0;
+      for (const rel of sorted) {
+        const tag = String(rel.tag_name || '');
+        if (currentTag && tag === currentTag) {
+          keptIds.add(rel.id);
+          if (!rel.draft && !rel.prerelease && /^v\d+\.\d+\.\d+$/.test(tag)) {
+            keptStableCount += 1;
+          }
+          continue;
+        }
+        if (!rel.draft && !rel.prerelease && /^v\d+\.\d+\.\d+$/.test(tag)) {
+          if (keptStableCount < safeKeep) {
+            keptStableCount += 1;
+            keptIds.add(rel.id);
+          }
+        }
+      }
+    }
+
+    const kept = [];
+    const deleted = [];
+    for (const rel of sorted) {
+      if (keptIds.has(rel.id)) {
+        kept.push(rel.tag_name || String(rel.id));
+        continue;
+      }
+      if (!dryRun) {
+        const delRel = await fetchImpl(
+          `https://api.github.com/repos/${trimmedRepo}/releases/${rel.id}`,
+          { method: 'DELETE', headers },
+        );
+        if (delRel.ok || delRel.status === 204 || delRel.status === 404) {
+          deleted.push(rel.tag_name || String(rel.id));
+          if (rel.tag_name && !rel.draft) {
+            await fetchImpl(
+              `https://api.github.com/repos/${trimmedRepo}/git/refs/tags/${encodeURIComponent(rel.tag_name)}`,
+              { method: 'DELETE', headers },
+            ).catch(() => {});
+          }
+        }
+      } else {
+        deleted.push(rel.tag_name || String(rel.id));
+      }
+    }
+    return { repo: trimmedRepo, kept, deleted, skipped: false };
+  } catch (err) {
+    if (bestEffort) {
+      return { repo: trimmedRepo, kept: [], deleted: [], skipped: true, reason: err.message };
+    }
+    throw err;
+  }
+}
+
 export async function promoteRelease({
   version,
   expectedBuildNumber = '',
@@ -3633,6 +4319,38 @@ export async function promoteRelease({
       console.log(
         `Promoted LeapTerm ${tag} (${filesToUpload.length} verified public assets, complete=${readiness.ready}) to ${publicRepo}.`,
       );
+
+      if (String(process.env.PROMOTE_PRUNE_RELEASES ?? 'true') !== 'false') {
+        const keepReleasesCount = Number(process.env.PROMOTE_KEEP_RELEASES || 3);
+        const publicPrune = await pruneGithubReleases({
+          repo: publicRepo,
+          token: publicToken,
+          keepReleases: keepReleasesCount,
+          currentTag: tag,
+          isStagingRepo: false,
+          bestEffort: true,
+        });
+        if (publicPrune.deleted.length > 0) {
+          console.log(
+            `Pruned ${publicPrune.deleted.length} superseded public GitHub release(s) on ${publicRepo}: ${publicPrune.deleted.join(', ')}`,
+          );
+        }
+        if (isCompletePublicRelease && stagingRepo) {
+          const stagingPrune = await pruneGithubReleases({
+            repo: stagingRepo,
+            token: privateToken,
+            keepReleases: keepReleasesCount,
+            currentTag: tag,
+            isStagingRepo: true,
+            bestEffort: true,
+          });
+          if (stagingPrune.deleted.length > 0) {
+            console.log(
+              `Pruned ${stagingPrune.deleted.length} superseded staging release(s) on ${stagingRepo}: ${stagingPrune.deleted.join(', ')}`,
+            );
+          }
+        }
+      }
     }
 
     if (androidStoreAction && androidStoreAction !== 'none') {
@@ -3909,41 +4627,105 @@ if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  promoteRelease({
-    version: process.env.PROMOTE_VERSION,
-    expectedBuildNumber: process.env.PROMOTE_BUILD_NUMBER || '',
-    runId: process.env.PROMOTE_RUN_ID || '',
-    proof: process.env.PROMOTE_PROOF || '',
-    privateToken: process.env.PRIVATE_RELEASE_TOKEN,
-    publicToken: process.env.GH_TOKEN,
-    githubToken: process.env.GITHUB_TOKEN || '',
-    dockerHubUsername: process.env.DOCKER_HUB_USERNAME || '',
-    dockerHubPatReadWrite: process.env.DOCKER_HUB_PAT_READ_WRITE || '',
-    dockerHubPatReadOnly: process.env.DOCKER_HUB_PAT_READ_ONLY || '',
-    signingConfigJson: process.env.PACKAGE_SIGNING_CONFIG,
-    publishGithubRelease:
-      String(process.env.PROMOTE_GITHUB_RELEASE ?? 'false') === 'true',
-    iosStoreAction: process.env.PROMOTE_IOS_STORE_ACTION || 'none',
-    iosAutomaticRelease:
-      String(process.env.PROMOTE_IOS_AUTOMATIC_RELEASE ?? 'false') === 'true',
-    iosSigningConfigJson: process.env.IOS_SIGNING_CONFIG || '',
-    macosStoreAction: process.env.PROMOTE_MACOS_STORE_ACTION || 'none',
-    macosAutomaticRelease:
-      String(process.env.PROMOTE_MACOS_AUTOMATIC_RELEASE ?? 'false') === 'true',
-    macosSigningConfigJson: process.env.MACOS_SIGNING_CONFIG || '',
-    appleConfigJson: process.env.APPLE_CONFIG || '',
-    internalTesterEmails: process.env.INTERNAL_TESTER_EMAILS || '',
-    androidStoreAction: process.env.PROMOTE_ANDROID_STORE_ACTION || 'none',
-    googlePlayServiceAccountJson:
-      process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || '',
-    rolloutEnvironment: process.env.PROMOTE_ROLLOUT_ENVIRONMENT || 'auto',
-    containerRegistry:
-      process.env.PROMOTE_CONTAINER_REGISTRY || PRIMARY_CONTAINER_REGISTRY,
-    sourceRoot: process.env.PROMOTE_SOURCE_ROOT || '',
-    verifyStoreCredentialsOnly:
-      String(process.env.VERIFY_STORE_CREDENTIALS_ONLY ?? 'false') === 'true',
-  }).catch((err) => {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  });
+  const cliArgs = process.argv.slice(2);
+  const getArgVal = (flag, fallback = '') => {
+    const idx = cliArgs.indexOf(flag);
+    if (idx !== -1 && idx + 1 < cliArgs.length) return cliArgs[idx + 1];
+    const eq = cliArgs.find((a) => a.startsWith(`${flag}=`));
+    return eq ? eq.slice(flag.length + 1) : fallback;
+  };
+  if (cliArgs.includes('--deploy-web-cdn')) {
+    deployCompiledWebCdnAssets({
+      archivePath: getArgVal('--archive'),
+      bundleDir: getArgVal('--bundle'),
+      distDir: getArgVal('--dist'),
+      projectName: getArgVal('--project-name', 'leapterm-cdn'),
+      version: getArgVal('--version', process.env.PROMOTE_VERSION || '0.0.0'),
+      buildNumber: getArgVal('--build-number', process.env.PROMOTE_BUILD_NUMBER || '0'),
+      cleanLocal: !cliArgs.includes('--no-clean-local'),
+    })
+      .then((res) => {
+        console.log(
+          `✓ Deployed compiled web CDN bundle to ${res.cdnUrl} (${res.projectName}, pruned ${res.prunedDeploymentsCount} superseded deployment(s))`,
+        );
+      })
+      .catch((err) => {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      });
+  } else if (cliArgs.includes('--prune-pages')) {
+    const projectName = getArgVal('--project-name', 'leapterm-cdn');
+    pruneSupersededPagesDeployments({ projectName, bestEffort: true })
+      .then((res) => {
+        console.log(
+          `✓ Pruned ${res.prunedCount} superseded Cloudflare Pages deployment(s) for ${res.projectName}`,
+        );
+      })
+      .catch((err) => {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      });
+  } else if (cliArgs.includes('--prune-github-releases')) {
+    const repo = getArgVal('--repo', PUBLIC_REPOSITORY);
+    const keepReleases = Number(getArgVal('--keep-releases', '3'));
+    const isStagingRepo = cliArgs.includes('--staging-repo');
+    const token = isStagingRepo
+      ? process.env.PRIVATE_RELEASE_TOKEN || process.env.GH_TOKEN || ''
+      : process.env.GH_TOKEN || process.env.GITHUB_TOKEN || process.env.PRIVATE_RELEASE_TOKEN || '';
+    pruneGithubReleases({
+      repo,
+      token,
+      keepReleases,
+      currentTag: getArgVal('--current-tag', ''),
+      isStagingRepo,
+      bestEffort: true,
+    })
+      .then((res) => {
+        console.log(
+          `✓ GitHub release pruning on ${res.repo}: kept=${res.kept.length}, deleted=${res.deleted.length}`,
+        );
+      })
+      .catch((err) => {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      });
+  } else {
+    promoteRelease({
+      version: process.env.PROMOTE_VERSION,
+      expectedBuildNumber: process.env.PROMOTE_BUILD_NUMBER || '',
+      runId: process.env.PROMOTE_RUN_ID || '',
+      proof: process.env.PROMOTE_PROOF || '',
+      privateToken: process.env.PRIVATE_RELEASE_TOKEN,
+      publicToken: process.env.GH_TOKEN,
+      githubToken: process.env.GITHUB_TOKEN || '',
+      dockerHubUsername: process.env.DOCKER_HUB_USERNAME || '',
+      dockerHubPatReadWrite: process.env.DOCKER_HUB_PAT_READ_WRITE || '',
+      dockerHubPatReadOnly: process.env.DOCKER_HUB_PAT_READ_ONLY || '',
+      signingConfigJson: process.env.PACKAGE_SIGNING_CONFIG,
+      publishGithubRelease:
+        String(process.env.PROMOTE_GITHUB_RELEASE ?? 'false') === 'true',
+      iosStoreAction: process.env.PROMOTE_IOS_STORE_ACTION || 'none',
+      iosAutomaticRelease:
+        String(process.env.PROMOTE_IOS_AUTOMATIC_RELEASE ?? 'false') === 'true',
+      iosSigningConfigJson: process.env.IOS_SIGNING_CONFIG || '',
+      macosStoreAction: process.env.PROMOTE_MACOS_STORE_ACTION || 'none',
+      macosAutomaticRelease:
+        String(process.env.PROMOTE_MACOS_AUTOMATIC_RELEASE ?? 'false') === 'true',
+      macosSigningConfigJson: process.env.MACOS_SIGNING_CONFIG || '',
+      appleConfigJson: process.env.APPLE_CONFIG || '',
+      internalTesterEmails: process.env.INTERNAL_TESTER_EMAILS || '',
+      androidStoreAction: process.env.PROMOTE_ANDROID_STORE_ACTION || 'none',
+      googlePlayServiceAccountJson:
+        process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || '',
+      rolloutEnvironment: process.env.PROMOTE_ROLLOUT_ENVIRONMENT || 'auto',
+      containerRegistry:
+        process.env.PROMOTE_CONTAINER_REGISTRY || PRIMARY_CONTAINER_REGISTRY,
+      sourceRoot: process.env.PROMOTE_SOURCE_ROOT || '',
+      verifyStoreCredentialsOnly:
+        String(process.env.VERIFY_STORE_CREDENTIALS_ONLY ?? 'false') === 'true',
+    }).catch((err) => {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    });
+  }
 }

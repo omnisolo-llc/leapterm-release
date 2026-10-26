@@ -23,6 +23,7 @@ import {
   canonicalJson,
   createAppStoreConnectJwt,
   createZipBuffer,
+  deployCompiledWebCdnAssets,
   executeEnvironmentRollout,
   filterPublicDownloadLinks,
   filterPublicProvenance,
@@ -33,6 +34,8 @@ import {
   promoteIosToAppStoreConnect,
   promoteMacosToAppStoreConnect,
   promoteRelease,
+  pruneGithubReleases,
+  pruneSupersededPagesDeployments,
   resolveGpgSigningCredentials,
   resolvePrivateStageRelease,
   resolveRolloutEnvironment,
@@ -40,6 +43,7 @@ import {
   scanDirectoryForLeaks,
   scanSelfHostedZipForLeaks,
   sha256Hex,
+  stageCompiledWebCdnAssets,
   validateStoreListings,
   verifyAllReleaseBuildsReady,
   verifyAppleStoreAccess,
@@ -2821,4 +2825,289 @@ test('promoteIosToAppStoreConnect and promoteAndroidToPlayStore sync platform st
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('stageCompiledWebCdnAssets stages Wasm-only bundle into Cloudflare Pages dist/_cdn/web/<buildId>, expires old versions, and rejects dart2js, custom sections, comments, and private files', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-web-cdn-test-'));
+  try {
+    const bundleDir = path.join(tempDir, 'web-bundle');
+    const distDir = path.join(tempDir, 'website-dist');
+    fs.mkdirSync(path.join(bundleDir, 'canvaskit'), { recursive: true });
+    fs.mkdirSync(path.join(bundleDir, 'assets', 'fonts'), { recursive: true });
+    fs.mkdirSync(path.join(bundleDir, 'browser-ssh-signer'), { recursive: true });
+    // Pre-seed an older CDN buildId directory to verify it is purged when publishing a new version
+    const staleBuildDir = path.join(distDir, '_cdn', 'web', '0000111122223333');
+    fs.mkdirSync(staleBuildDir, { recursive: true });
+    fs.writeFileSync(path.join(staleBuildDir, 'main.dart.wasm'), Buffer.from('stale'));
+
+    const wasmBytes = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x60, 0x00, 0x00]);
+    const mjsBytes = Buffer.from('export const compileStreaming = () => {};\n');
+    const skwasmJsBytes = Buffer.from('export default async function(){}\n');
+    fs.writeFileSync(path.join(bundleDir, 'main.dart.wasm'), wasmBytes);
+    fs.writeFileSync(path.join(bundleDir, 'main.dart.wasm.gz'), Buffer.from('gzip-sidecar'));
+    fs.writeFileSync(path.join(bundleDir, 'main.dart.mjs'), mjsBytes);
+    fs.writeFileSync(path.join(bundleDir, 'flutter_bootstrap.js'), 'console.log("wasm");\n');
+    fs.writeFileSync(path.join(bundleDir, 'flutter.js'), 'console.log("flutter");\n');
+    fs.writeFileSync(path.join(bundleDir, 'version.json'), '{"version":"0.1.1"}');
+    fs.writeFileSync(path.join(bundleDir, 'manifest.json'), '{"name":"LeapTerm"}');
+    fs.writeFileSync(path.join(bundleDir, 'canvaskit', 'skwasm.js'), skwasmJsBytes);
+    fs.writeFileSync(path.join(bundleDir, 'canvaskit', 'skwasm.wasm'), wasmBytes);
+    fs.writeFileSync(path.join(bundleDir, 'assets', 'fonts', 'MaterialIcons.otf'), Buffer.from('font'));
+    fs.writeFileSync(path.join(bundleDir, 'assets', 'fonts', 'provenance.json'), '{"source":"internal"}');
+    fs.writeFileSync(path.join(bundleDir, 'assets', 'fonts', 'bundled-font-inventory.json'), '{"design":"design/themes/themes.json"}');
+    fs.writeFileSync(path.join(bundleDir, 'browser-ssh-signer', 'manifest.json'), '{"sources":{"tools/release-artifacts/src/runner.rs":"abc"}}');
+    fs.writeFileSync(path.join(bundleDir, 'config.json'), '{"edge_url":"https://cloud.leapterm.com"}');
+    fs.writeFileSync(path.join(bundleDir, 'index.html'), '<!doctype html>');
+
+    const result = stageCompiledWebCdnAssets({
+      bundleDir,
+      distDir,
+      version: '0.1.1',
+      buildNumber: '52',
+    });
+
+    const expectedSha = sha256Hex(wasmBytes);
+    assert.equal(result.wasmSha256, expectedSha);
+    assert.equal(result.buildId, expectedSha.slice(0, 16));
+    assert.equal(result.manifest.skwasm_js_sha256, sha256Hex(skwasmJsBytes));
+    assert.equal(result.manifest.files['main.dart.wasm'].sha256, expectedSha);
+    assert.ok(!fs.existsSync(staleBuildDir), 'Expected older _cdn/web/<oldBuildId> directory to be removed');
+    assert.ok(fs.existsSync(path.join(result.targetDir, 'main.dart.wasm')));
+    assert.ok(fs.existsSync(path.join(result.targetDir, 'main.dart.mjs')));
+    assert.ok(fs.existsSync(path.join(result.targetDir, 'canvaskit', 'skwasm.wasm')));
+    assert.ok(fs.existsSync(path.join(result.targetDir, 'assets', 'fonts', 'MaterialIcons.otf')));
+    assert.ok(fs.existsSync(path.join(result.targetDir, 'cdn-manifest.json')));
+    assert.ok(!fs.existsSync(path.join(result.targetDir, 'main.dart.wasm.gz')));
+    assert.ok(!fs.existsSync(path.join(result.targetDir, 'config.json')));
+    assert.ok(!fs.existsSync(path.join(result.targetDir, 'index.html')));
+    assert.ok(!fs.existsSync(path.join(result.targetDir, 'flutter_bootstrap.js')));
+    assert.ok(!fs.existsSync(path.join(result.targetDir, 'flutter.js')));
+    assert.ok(!fs.existsSync(path.join(result.targetDir, 'version.json')));
+    assert.ok(!fs.existsSync(path.join(result.targetDir, 'manifest.json')));
+    assert.ok(!fs.existsSync(path.join(result.targetDir, 'browser-ssh-signer')));
+    assert.ok(!fs.existsSync(path.join(result.targetDir, 'assets', 'fonts', 'provenance.json')));
+    assert.ok(!fs.existsSync(path.join(result.targetDir, 'assets', 'fonts', 'bundled-font-inventory.json')));
+
+    const headers = fs.readFileSync(path.join(distDir, '_headers'), 'utf8');
+    assert.match(headers, /\/_cdn\/web\/\*/);
+    assert.match(headers, /Access-Control-Allow-Origin: \*/);
+    assert.match(headers, /Cache-Control: no-store, no-cache, must-revalidate, max-age=0/);
+    assert.match(headers, /Cache-Control: public, max-age=3600, s-maxage=3600, must-revalidate/);
+    assert.match(headers, /X-Robots-Tag: noindex, noarchive, nosnippet/);
+    assert.match(headers, /Content-Security-Policy: default-src 'none'; sandbox/);
+
+    const redirects = fs.readFileSync(path.join(distDir, '_redirects'), 'utf8');
+    assert.match(redirects, new RegExp(`/_cdn/web/latest/\\* /_cdn/web/${result.buildId}/:splat 200`));
+
+    // Verify _routes.json and _worker.js expire older CDN versions with HTTP 410 Gone
+    assert.ok(fs.existsSync(path.join(distDir, '_routes.json')));
+    assert.ok(fs.existsSync(path.join(distDir, '_worker.js')));
+    const workerModule = await import(`file://${path.join(distDir, '_worker.js')}`);
+    const mockEnv = {
+      ASSETS: {
+        fetch: async (req) => new Response('active-asset', { status: 200, headers: { 'Content-Type': 'application/wasm' } }),
+      },
+    };
+    const expiredRes = await workerModule.default.fetch(
+      new Request('https://cdn.leapterm.com/web/0000111122223333/main.dart.wasm'),
+      mockEnv,
+    );
+    assert.equal(expiredRes.status, 410);
+    assert.match(expiredRes.headers.get('cache-control') || '', /no-store/);
+    const expiredBody = await expiredRes.json();
+    assert.equal(expiredBody.error, 'cdn_version_expired');
+    assert.equal(expiredBody.active_build_id, result.buildId);
+    assert.equal(expiredBody.active_cdn_url, `https://cdn.leapterm.com/web/${result.buildId}/`);
+
+    const healthRes = await workerModule.default.fetch(
+      new Request('https://cdn.leapterm.com/healthz'),
+      mockEnv,
+    );
+    assert.equal(healthRes.status, 200);
+    const healthBody = await healthRes.json();
+    assert.equal(healthBody.status, 'ok');
+    assert.equal(healthBody.service, 'leapterm-cdn');
+    assert.equal(healthBody.domain, 'cdn.leapterm.com');
+    assert.equal(healthBody.active_build_id, result.buildId);
+
+    const activeRes = await workerModule.default.fetch(
+      new Request(`https://cdn.leapterm.com/web/${result.buildId}/main.dart.wasm`),
+      mockEnv,
+    );
+    assert.equal(activeRes.status, 200);
+    assert.match(activeRes.headers.get('cache-control') || '', /max-age=3600/);
+
+    // Verify that unstripped Wasm custom section (id=0) is rejected
+    const wasmWithCustomSection = Buffer.from([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+      0x00, 0x05, 0x04, 0x6e, 0x61, 0x6d, 0x65,
+    ]);
+    fs.writeFileSync(path.join(bundleDir, 'main.dart.wasm'), wasmWithCustomSection);
+    assert.throws(
+      () => stageCompiledWebCdnAssets({ bundleDir, distDir }),
+      /Unstripped Wasm custom section/,
+    );
+    fs.writeFileSync(path.join(bundleDir, 'main.dart.wasm'), wasmBytes);
+
+    // Verify that unobfuscated main.dart.mjs symbols/comments are rejected
+    fs.writeFileSync(path.join(bundleDir, 'main.dart.mjs'), 'class CompiledApp {}\n');
+    assert.throws(
+      () => stageCompiledWebCdnAssets({ bundleDir, distDir }),
+      /Unobfuscated internal symbols in CDN main\.dart\.mjs/,
+    );
+    fs.writeFileSync(path.join(bundleDir, 'main.dart.mjs'), mjsBytes);
+
+    // Verify that presence of legacy main.dart.js is rejected
+    fs.writeFileSync(path.join(bundleDir, 'main.dart.js'), 'legacy dart2js');
+    assert.throws(
+      () => stageCompiledWebCdnAssets({ bundleDir, distDir }),
+      /Legacy dart2js artifact main\.dart\.js is forbidden/,
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('pruneSupersededPagesDeployments and deployCompiledWebCdnAssets deploy to leapterm-cdn, prune older deployments, and clean local dist', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-cdn-deploy-test-'));
+  const bundleDir = path.join(tempDir, 'web');
+  const distDir = path.join(tempDir, 'cdn-dist');
+  try {
+    fs.mkdirSync(path.join(bundleDir, 'canvaskit'), { recursive: true });
+    fs.mkdirSync(path.join(bundleDir, 'assets'), { recursive: true });
+    fs.writeFileSync(
+      path.join(bundleDir, 'main.dart.wasm'),
+      Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x60, 0x00, 0x00]),
+    );
+    fs.writeFileSync(path.join(bundleDir, 'main.dart.mjs'), 'export async function compileStreaming(b){return b;}\n');
+    fs.writeFileSync(path.join(bundleDir, 'flutter_bootstrap.js'), 'console.log("bootstrap");');
+    fs.writeFileSync(path.join(bundleDir, 'canvaskit', 'skwasm.js'), 'console.log("skwasm");');
+    fs.writeFileSync(path.join(bundleDir, 'canvaskit', 'skwasm.wasm'), Buffer.from('\0asm\x01\x00\x00\x00skwasm'));
+
+    const deletedDeployments = [];
+    const execCalls = [];
+    const mockFetch = async (url, init = {}) => {
+      const urlStr = String(url);
+      if (!init.method || init.method === 'GET') {
+        assert.match(urlStr, /\/pages\/projects\/leapterm-cdn\/deployments$/);
+        return new Response(
+          JSON.stringify({
+            success: true,
+            result: [
+              { id: 'dep-active-newest' },
+              { id: 'dep-old-1' },
+              { id: 'dep-old-2' },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (init.method === 'DELETE') {
+        deletedDeployments.push(urlStr);
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${urlStr}`);
+    };
+
+    const deployRes = await deployCompiledWebCdnAssets({
+      bundleDir,
+      distDir,
+      projectName: 'leapterm-cdn',
+      version: '0.1.0',
+      buildNumber: '12',
+      cleanLocal: true,
+      accountId: 'acc-123',
+      apiToken: 'tok-123',
+      execFileImpl: (cmd, args) => {
+        execCalls.push({ cmd, args });
+        return '';
+      },
+      fetchImpl: mockFetch,
+    });
+
+    assert.equal(deployRes.projectName, 'leapterm-cdn');
+    assert.equal(deployRes.cdnUrl, `https://cdn.leapterm.com/web/${deployRes.buildId}/`);
+    assert.equal(deployRes.prunedDeploymentsCount, 2);
+    assert.equal(deletedDeployments.length, 2);
+    assert.match(deletedDeployments[0], /dep-old-1\?force=true$/);
+    assert.match(deletedDeployments[1], /dep-old-2\?force=true$/);
+    assert.equal(execCalls.length, 1);
+    assert.ok(execCalls[0].args.includes('--project-name=leapterm-cdn'));
+    assert.ok(!fs.existsSync(distDir), 'cleanLocal should remove distDir after deploy');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('pruneGithubReleases retains newest stable releases and currentTag while pruning old releases, wave tags, and stage runs', async () => {
+  const deletedUrls = [];
+  const publicReleases = [
+    { id: 10, tag_name: 'v0.1.4', draft: false, prerelease: false, published_at: '2026-10-26T10:00:00Z' },
+    { id: 9, tag_name: 'v0.1.4-fast', draft: false, prerelease: true, published_at: '2026-10-26T09:30:00Z' },
+    { id: 8, tag_name: 'v0.1.3', draft: false, prerelease: false, published_at: '2026-10-25T10:00:00Z' },
+    { id: 7, tag_name: 'v0.1.2', draft: false, prerelease: false, published_at: '2026-10-24T10:00:00Z' },
+    { id: 6, tag_name: 'v0.1.1', draft: false, prerelease: false, published_at: '2026-10-20T10:00:00Z' },
+    { id: 5, tag_name: 'v0.1.0-draft', draft: true, prerelease: false, created_at: '2026-10-19T10:00:00Z' },
+  ];
+  const publicRes = await pruneGithubReleases({
+    repo: 'omnisolo-llc/leapterm-release',
+    token: 'mock-pub-token',
+    keepReleases: 3,
+    currentTag: 'v0.1.4',
+    isStagingRepo: false,
+    fetchImpl: async (url, init = {}) => {
+      const u = String(url);
+      if (!init.method || init.method === 'GET') {
+        return new Response(JSON.stringify(publicReleases), { status: 200 });
+      }
+      deletedUrls.push(u);
+      return new Response(null, { status: 204 });
+    },
+  });
+  assert.deepEqual(publicRes.kept, ['v0.1.4', 'v0.1.3', 'v0.1.2']);
+  assert.deepEqual(publicRes.deleted, ['v0.1.4-fast', 'v0.1.1', 'v0.1.0-draft']);
+
+  const stagingReleases = [
+    { id: 20, tag_name: 'v0.1.4-fast', draft: false, prerelease: true, published_at: '2026-10-26T10:00:00Z' },
+    { id: 19, tag_name: 'v0.1.4-slow', draft: false, prerelease: true, published_at: '2026-10-26T09:50:00Z' },
+    { id: 18, tag_name: 'ci-stage/application-102-1', draft: false, prerelease: true, published_at: '2026-10-26T09:40:00Z' },
+    { id: 17, tag_name: 'v0.1.3', draft: false, prerelease: false, published_at: '2026-10-25T10:00:00Z' },
+    { id: 16, tag_name: 'ci-stage/application-101-1', draft: false, prerelease: true, published_at: '2026-10-25T09:40:00Z' },
+    { id: 15, tag_name: 'v0.1.2-fast', draft: false, prerelease: true, published_at: '2026-10-20T10:00:00Z' },
+    { id: 14, tag_name: 'ci-stage/application-99-1', draft: false, prerelease: true, published_at: '2026-10-19T09:40:00Z' },
+  ];
+  const stagingRes = await pruneGithubReleases({
+    repo: 'omnisolo-llc/leapterm',
+    token: 'mock-priv-token',
+    keepReleases: 1,
+    currentTag: 'v0.1.4',
+    isStagingRepo: true,
+    fetchImpl: async (url, init = {}) => {
+      if (!init.method || init.method === 'GET') {
+        return new Response(JSON.stringify(stagingReleases), { status: 200 });
+      }
+      return new Response(null, { status: 204 });
+    },
+  });
+  assert.deepEqual(stagingRes.kept, [
+    'v0.1.4-fast',
+    'v0.1.4-slow',
+    'ci-stage/application-102-1',
+    'ci-stage/application-101-1',
+  ]);
+  assert.deepEqual(stagingRes.deleted, [
+    'v0.1.3',
+    'v0.1.2-fast',
+    'ci-stage/application-99-1',
+  ]);
+
+  const promoteYml = fs.readFileSync(
+    path.resolve(import.meta.dirname, '..', '.github/workflows/promote-release.yml'),
+    'utf8',
+  );
+  assert.match(promoteYml, /--project-name leapterm-cdn/);
+  assert.match(promoteYml, /for PAGES_PROJ in leapterm-cdn leapterm-website leapterm-docs/);
+  assert.match(promoteYml, /--prune-github-releases/);
+});
+
+
 

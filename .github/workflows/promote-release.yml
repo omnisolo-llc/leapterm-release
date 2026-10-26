@@ -181,18 +181,21 @@ jobs:
           INTERNAL_TESTER_EMAILS: ${{ secrets.INTERNAL_TESTER_EMAILS }}
         run: node ci/promote-release.mjs
 
-      - name: Deploy Website & Docs to Cloudflare Pages
+      - name: Deploy Website, Docs & Compiled Web CDN to Cloudflare Pages
         if: ${{ !inputs.verify_store_credentials_only && (inputs.deploy_docs || inputs.publish_github_release || steps.rollout_environment.outputs.environment != 'none') }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+          PROMOTE_VERSION: ${{ inputs.version }}
+          PROMOTE_BUILD_NUMBER: ${{ inputs.build_number }}
           SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
           SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH || 'main' }}
         run: |
           set -euo pipefail
           if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "==> Deploying website and documentation to Cloudflare Pages (leapterm-website, leapterm-docs)..."
+            echo "==> Deploying website, documentation, and compiled Wasm CDN to Cloudflare Pages (leapterm-website, leapterm-docs)..."
             DOCS_TMP_DIR="$(mktemp -d)"
             trap 'rm -rf "$DOCS_TMP_DIR"' EXIT
             git init -q "$DOCS_TMP_DIR/source"
@@ -210,11 +213,83 @@ jobs:
             npm ci --no-audit --no-fund
             npm run build
             node -e "import('node:fs').then(fs=>fs.appendFileSync('dist/_redirects','/docs https://docs.leapterm.com/ 308\n/docs/* https://docs.leapterm.com/:splat 308\n'))"
+            if [ -n "${PROMOTE_VERSION:-}" ]; then
+              NORMALIZED_VER="${PROMOTE_VERSION#v}"
+              WEB_ARCHIVE_NAME="leapterm-${NORMALIZED_VER}-flutter-web.tar.gz"
+              DOWNLOADED_WEB_ARCHIVE="false"
+              for CANDIDATE_TAG in "v${NORMALIZED_VER}" "v${NORMALIZED_VER}-fast"; do
+                if gh release download "$CANDIDATE_TAG" --repo "$SOURCE_REPOSITORY" --pattern "$WEB_ARCHIVE_NAME" --pattern "${WEB_ARCHIVE_NAME}.sha256" --dir "$DOCS_TMP_DIR" --clobber 2>/dev/null; then
+                  DOWNLOADED_WEB_ARCHIVE="true"
+                  break
+                fi
+              done
+              if [ "$DOWNLOADED_WEB_ARCHIVE" != "true" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+                if gh release download "v${NORMALIZED_VER}" --repo "$GITHUB_REPOSITORY" --pattern "$WEB_ARCHIVE_NAME" --pattern "${WEB_ARCHIVE_NAME}.sha256" --dir "$DOCS_TMP_DIR" --clobber 2>/dev/null; then
+                  DOWNLOADED_WEB_ARCHIVE="true"
+                fi
+              fi
+              if [ "$DOWNLOADED_WEB_ARCHIVE" = "true" ] && [ -f "$DOCS_TMP_DIR/$WEB_ARCHIVE_NAME" ]; then
+                if [ -f "$DOCS_TMP_DIR/${WEB_ARCHIVE_NAME}.sha256" ]; then
+                  EXPECTED_WEB_SHA="$(awk '{print $1}' "$DOCS_TMP_DIR/${WEB_ARCHIVE_NAME}.sha256")"
+                  ACTUAL_WEB_SHA="$(sha256sum "$DOCS_TMP_DIR/$WEB_ARCHIVE_NAME" | awk '{print $1}')"
+                  if [ "$EXPECTED_WEB_SHA" != "$ACTUAL_WEB_SHA" ]; then
+                    echo "Error: SHA-256 mismatch for $WEB_ARCHIVE_NAME (expected $EXPECTED_WEB_SHA, got $ACTUAL_WEB_SHA)" >&2
+                    exit 1
+                  fi
+                fi
+                echo "==> Staging and deploying compiled Flutter Wasm bundle ($WEB_ARCHIVE_NAME) to unified Cloudflare Pages CDN (leapterm-cdn -> https://cdn.leapterm.com)..."
+                if [ -f "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" ]; then
+                  node "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" \
+                    --archive "$DOCS_TMP_DIR/$WEB_ARCHIVE_NAME" \
+                    --dist "$DOCS_TMP_DIR/cdn-dist" \
+                    --version "$NORMALIZED_VER" \
+                    --build-number "${PROMOTE_BUILD_NUMBER:-0}" \
+                    --deploy \
+                    --project-name leapterm-cdn \
+                    --clean-local
+                  node "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" --status --project-name leapterm-cdn || true
+                else
+                  node "$GITHUB_WORKSPACE/ci/promote-release.mjs" \
+                    --deploy-web-cdn \
+                    --archive "$DOCS_TMP_DIR/$WEB_ARCHIVE_NAME" \
+                    --dist "$DOCS_TMP_DIR/cdn-dist" \
+                    --version "$NORMALIZED_VER" \
+                    --build-number "${PROMOTE_BUILD_NUMBER:-0}" \
+                    --project-name leapterm-cdn
+                fi
+              fi
+            fi
             npx wrangler pages deploy dist/docs --project-name=leapterm-docs --branch=main --commit-dirty=true
             npx wrangler pages deploy dist --project-name=leapterm-website --branch=main --commit-dirty=true
-            echo "✓ Website and docs deployment to Cloudflare Pages completed"
+            for PAGES_PROJ in leapterm-cdn leapterm-website leapterm-docs; do
+              if [ -f "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" ]; then
+                node "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" --prune-only --project-name "$PAGES_PROJ" || true
+              else
+                node "$GITHUB_WORKSPACE/ci/promote-release.mjs" --prune-pages --project-name "$PAGES_PROJ" || true
+              fi
+            done
+            if [ -f "$DOCS_TMP_DIR/source/scripts/prune-packages.mjs" ]; then
+              node "$DOCS_TMP_DIR/source/scripts/prune-packages.mjs" || true
+            fi
+            echo "✓ Website, docs, and compiled Wasm CDN deployment & asset pruning completed"
           else
             echo "Cloudflare credentials not available, skipping Pages deployment."
+          fi
+
+      - name: Prune Superseded GitHub Releases & Staging Candidates
+        if: ${{ !inputs.verify_store_credentials_only && (inputs.publish_github_release || steps.rollout_environment.outputs.environment == 'production') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+          PROMOTE_VERSION: ${{ inputs.version }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          NORMALIZED_TAG="v${PROMOTE_VERSION#v}"
+          node ci/promote-release.mjs --prune-github-releases --repo "${GITHUB_REPOSITORY:-omnisolo-llc/leapterm-release}" --current-tag "$NORMALIZED_TAG" --keep-releases 3
+          if [ -n "${SOURCE_REPOSITORY:-}" ] && [ -n "${PRIVATE_RELEASE_TOKEN:-}" ]; then
+            node ci/promote-release.mjs --prune-github-releases --staging-repo --repo "$SOURCE_REPOSITORY" --current-tag "$NORMALIZED_TAG" --keep-releases 3
           fi
 
   promote_apple:
