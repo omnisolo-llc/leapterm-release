@@ -390,8 +390,10 @@ test('promoteIosToAppStoreConnect and promoteMacosToAppStoreConnect support test
             imported = true;
             assert.equal(args[args.indexOf('-P') + 1], '');
             assert.deepEqual(fs.readFileSync(args[1]), certificateBytes);
-            assert.equal(fs.statSync(args[1]).mode & 0o777, 0o600);
-            assert.equal(fs.statSync(path.dirname(args[1])).mode & 0o777, 0o700);
+            if (process.platform !== 'win32') {
+              assert.equal(fs.statSync(args[1]).mode & 0o777, 0o600);
+              assert.equal(fs.statSync(path.dirname(args[1])).mode & 0o777, 0o700);
+            }
           }
         },
       });
@@ -1037,7 +1039,7 @@ test('executeEnvironmentRollout invokes rollout.sh and prune-packages.mjs with D
 
 test('release and promote-release workflows wire staging/production rollout and Docker Hub + GHCR credentials', () => {
   const workflowsDir = path.resolve(
-    path.dirname(new URL(import.meta.url).pathname),
+    import.meta.dirname,
     '../.github/workflows',
   );
   const promoteYml = fs.readFileSync(
@@ -1246,7 +1248,9 @@ test('rollout acquisition errors do not expose checkout credentials', () => {
 });
 
 function releaseWorkflowJob(filename, job) {
-  const workflow = fs.readFileSync(path.resolve(import.meta.dirname, '../.github/workflows', filename), 'utf8');
+  const workflow = fs
+    .readFileSync(path.resolve(import.meta.dirname, '../.github/workflows', filename), 'utf8')
+    .replace(/\r\n/g, '\n');
   const block = workflow.match(new RegExp(`^  ${job}:\\n([\\s\\S]*?)(?=^  [a-z_]+:\\n|(?![\\s\\S]))`, 'm'));
   assert.ok(block, `Workflow job ${job} must exist`);
   return block[1];
@@ -1404,8 +1408,10 @@ for (const name of Object.keys(mockRolloutCredentials)) {
 
 function assertPrivateKubeconfig(filename, expectedBytes) {
   assert.equal(fs.statSync(filename).isFile(), true);
-  assert.equal(fs.statSync(filename).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(path.dirname(filename)).mode & 0o777, 0o700);
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(filename).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(path.dirname(filename)).mode & 0o777, 0o700);
+  }
   if (process.getuid) assert.equal(fs.statSync(filename).uid, process.getuid());
   assert.deepEqual(fs.readFileSync(filename), expectedBytes);
 }
@@ -1468,7 +1474,9 @@ test('rollout copies a KUBECONFIG filename into an owned private file and preser
   assert.equal(result.status, 'rolled-out');
   assert.equal(fs.existsSync(usedFile), false);
   assert.deepEqual(fs.readFileSync(configuredFile), configBytes);
-  assert.equal(fs.statSync(configuredFile).mode & 0o777, 0o640);
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(configuredFile).mode & 0o777, 0o640);
+  }
 });
 
 for (const kind of ['directory', 'empty file']) {

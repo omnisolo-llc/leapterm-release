@@ -118,7 +118,7 @@ jobs:
           node-version: 24.21.0
           package-manager-cache: false
       - name: Verify promotion and leak-scanner contracts
-        run: node --test ci/test_promote_release.mjs
+        run: node --test ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs
       - name: Resolve environment rollout from all promotion inputs
         id: rollout_environment
         env:
@@ -180,6 +180,13 @@ jobs:
           ADMIN_OPERATOR_ROLES: ${{ secrets.ADMIN_OPERATOR_ROLES }}
           INTERNAL_TESTER_EMAILS: ${{ secrets.INTERNAL_TESTER_EMAILS }}
         run: node ci/promote-release.mjs
+
+      - name: Verify promoted leap-agent installation and runtime library closure across all platforms
+        if: ${{ !inputs.verify_store_credentials_only && inputs.publish_github_release }}
+        env:
+          PROMOTE_VERSION: ${{ inputs.version }}
+          LEAPTERM_REPO: ${{ github.repository }}
+        run: node ci/verify-agent-install-e2e.mjs --version "${PROMOTE_VERSION}" --repo "${LEAPTERM_REPO}"
 
       - name: Deploy Website, Docs & Compiled Web CDN to Cloudflare Pages
         if: ${{ !inputs.verify_store_credentials_only && (inputs.deploy_docs || inputs.publish_github_release || steps.rollout_environment.outputs.environment != 'none') }}
@@ -311,7 +318,7 @@ jobs:
           node-version: 24.21.0
           package-manager-cache: false
       - name: Verify promotion and store contracts
-        run: node --test ci/test_promote_release.mjs
+        run: node --test ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs
       - name: Promote verified iOS/macOS build to TestFlight or App Store
         env:
           PROMOTE_VERSION: ${{ inputs.version }}
@@ -340,3 +347,35 @@ jobs:
           BUILD_CONFIG: ${{ secrets.BUILD_CONFIG }}
           GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
         run: node ci/promote-release.mjs
+
+  verify_agent_install:
+    name: Verify Leap Agent E2E Install (${{ matrix.runner }})
+    needs: [promote]
+    if: ${{ !cancelled() && needs.promote.result == 'success' && !inputs.verify_store_credentials_only && inputs.publish_github_release && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        runner: [ubuntu-24.04, windows-2025, macos-26]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout verification scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Verify E2E agent installation and runtime library closure
+        shell: bash
+        env:
+          VERIFY_VERSION: ${{ inputs.version }}
+          LEAPTERM_REPO: ${{ github.repository }}
+        run: |
+          node --test ci/test_verify_agent_install_e2e.mjs
+          node ci/verify-agent-install-e2e.mjs --version "${VERIFY_VERSION}" --repo "${LEAPTERM_REPO}"

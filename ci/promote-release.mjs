@@ -4201,11 +4201,26 @@ export async function promoteRelease({
             String(process.env.SOURCE_REPOSITORY || '').trim();
           if (sourceRepo) {
             const targetSha = stagingProvenance.source_sha || 'main';
-            const contentRes = await githubRequest(
-              `https://api.github.com/repos/${sourceRepo}/contents/deploy/packaging/install.sh?ref=${encodeURIComponent(targetSha)}`,
-              privateToken,
-            );
-            const contentJson = await contentRes.json();
+            let contentJson = null;
+            for (const candidatePath of [
+              'cloud/deploy/packaging/install.sh',
+              'website/public/leap-agent/install.sh',
+              'deploy/packaging/install.sh',
+            ]) {
+              try {
+                const contentRes = await githubRequest(
+                  `https://api.github.com/repos/${sourceRepo}/contents/${candidatePath}?ref=${encodeURIComponent(targetSha)}`,
+                  privateToken,
+                );
+                const parsed = await contentRes.json();
+                if (parsed && parsed.content) {
+                  contentJson = parsed;
+                  break;
+                }
+              } catch {
+                // Try next candidate path
+              }
+            }
             if (contentJson && contentJson.content) {
               const installShPath = path.join(workDir, 'install.sh');
               fs.writeFileSync(
