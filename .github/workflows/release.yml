@@ -60,7 +60,7 @@ on:
       run_test:
         description: 'Run consistent launcher, release-tool, and platform tests on every selected platform'
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
@@ -436,7 +436,7 @@ jobs:
         if: ${{ inputs.run_test }}
         run: |
           bash ci/test-native-release.sh
-          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs
       - name: Verify build without publishing
         id: public_candidates
         run: bash ci/native-release/run.sh verify-build
@@ -557,7 +557,7 @@ jobs:
         if: ${{ inputs.run_test }}
         run: |
           bash ci/test-native-release.sh
-          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs
       - name: Prepare pinned Windows verification signing client
         if: ${{ !inputs.build_only }}
         shell: pwsh
@@ -729,7 +729,7 @@ jobs:
         if: ${{ inputs.run_test }}
         run: |
           bash ci/test-native-release.sh
-          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs
       - name: Verify build without publishing
         id: public_candidates
         run: bash ci/native-release/run.sh verify-build
@@ -885,7 +885,7 @@ jobs:
         if: ${{ inputs.run_test }}
         run: |
           bash ci/test-native-release.sh
-          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs
       - name: Verify build without publishing
         id: public_candidates
         run: bash ci/native-release/run.sh verify-build
@@ -1009,7 +1009,7 @@ jobs:
         if: ${{ inputs.run_test }}
         run: |
           bash ci/test-native-release.sh
-          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs
       - name: Verify build without publishing
         id: public_candidates
         run: bash ci/native-release/run.sh verify-build
@@ -1139,7 +1139,7 @@ jobs:
         if: ${{ inputs.run_test }}
         run: |
           bash ci/test-native-release.sh
-          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs
       - name: Verify build without publishing
         id: public_candidates
         run: bash ci/native-release/run.sh verify-build

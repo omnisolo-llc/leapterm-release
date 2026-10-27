@@ -1470,7 +1470,7 @@ fn run_test_input_gates_verify_contracts_uniformly() {
     let release = workflow("release");
     let input = &release["on"]["workflow_dispatch"]["inputs"]["run_test"];
     assert_eq!(input["type"].as_str(), Some("boolean"));
-    assert_eq!(input["default"].as_bool(), Some(false));
+    assert_eq!(input["default"].as_bool(), Some(true));
     for (track_name, _) in TRACK_JOBS {
         let track_steps = steps(&release["jobs"][track_name]);
         for name in [
