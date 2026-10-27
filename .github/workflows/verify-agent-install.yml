@@ -1,0 +1,61 @@
+name: Verify Leap Agent Install
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version to verify across Linux, Windows, and macOS (for example 0.1.3)
+        required: true
+        default: "0.1.3"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-agent-install-${{ github.ref }}-${{ inputs.version || '0.1.3' }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    if: github.repository == 'omnisolo-llc/leapterm-release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Enforce standard-runner policy
+        run: >-
+          bash ci/native-release/run.sh audit-runners
+          --workflows .github/workflows/verify-agent-install.yml
+          --policy ci/standard-runner-policy.json
+
+  verify:
+    name: verify-agent-install (${{ matrix.runner }})
+    needs: policy
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        runner: [ubuntu-24.04, windows-2025, macos-26]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Verify leap-agent installation and runtime library closure on ${{ matrix.runner }}
+        shell: bash
+        env:
+          VERIFY_VERSION: ${{ inputs.version || '0.1.3' }}
+          LEAPTERM_REPO: ${{ github.repository }}
+        run: |
+          node --test ci/test_verify_agent_install_e2e.mjs
+          node ci/verify-agent-install-e2e.mjs --version "${VERIFY_VERSION}" --repo "${LEAPTERM_REPO}"
