@@ -622,6 +622,24 @@ function runCommandChecked(cmd, args, options = {}) {
   return res;
 }
 
+function tarExecutable() {
+  if (process.platform === 'win32') {
+    const sysTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+    if (fs.existsSync(sysTar)) {
+      return sysTar;
+    }
+  }
+  return 'tar';
+}
+
+function extractZipArchive(zipPath, destDir, includePatterns = []) {
+  if (process.platform === 'win32') {
+    runCommandChecked(tarExecutable(), ['-xf', zipPath, '-C', destDir, ...includePatterns]);
+  } else {
+    runCommandChecked('unzip', ['-q', zipPath, '-d', destDir]);
+  }
+}
+
 export function extractReleaseArchivesAndAuditAllPlatforms({ releaseDir, version }) {
   const workRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'leapterm-agent-audit-'));
   try {
@@ -634,7 +652,7 @@ export function extractReleaseArchivesAndAuditAllPlatforms({ releaseDir, version
     }
     const winExtractDir = path.join(workRoot, 'windows');
     fs.mkdirSync(winExtractDir, { recursive: true });
-    runCommandChecked('unzip', ['-q', winZip, '-d', winExtractDir]);
+    extractZipArchive(winZip, winExtractDir);
     results.windows = auditWindowsAgentBundle(winExtractDir);
 
     // 2. Audit macOS archive (leapterm-<version>-macos-arm64.zip)
@@ -644,7 +662,10 @@ export function extractReleaseArchivesAndAuditAllPlatforms({ releaseDir, version
     }
     const macExtractDir = path.join(workRoot, 'macos');
     fs.mkdirSync(macExtractDir, { recursive: true });
-    runCommandChecked('unzip', ['-q', macZip, '-d', macExtractDir]);
+    extractZipArchive(macZip, macExtractDir, [
+      '*/Contents/MacOS/*',
+      '*/Contents/Frameworks/*.dylib',
+    ]);
     const macContents = [
       path.join(macExtractDir, 'leapterm.app', 'Contents'),
       path.join(macExtractDir, 'LeapTerm.app', 'Contents'),
@@ -672,6 +693,13 @@ export function extractReleaseArchivesAndAuditAllPlatforms({ releaseDir, version
         throw new Error(`dpkg-deb --fsys-tarfile failed: ${fsys.stderr?.toString()}`);
       }
       fs.writeFileSync(dataTarPath, fsys.stdout);
+    } else if (process.platform === 'win32') {
+      runCommandChecked(tarExecutable(), ['-xf', linuxDeb, '-C', debExtractDir]);
+      const dataFile = fs.readdirSync(debExtractDir).find((f) => f.startsWith('data.tar'));
+      if (!dataFile) {
+        throw new Error(`No data.tar* member in ${linuxDeb}`);
+      }
+      runCommandChecked(tarExecutable(), ['-xf', path.join(debExtractDir, dataFile), '-C', debExtractDir]);
     } else {
       const arMembers = runCommandChecked('ar', ['t', linuxDeb]).stdout.trim().split(/\r?\n/);
       const dataMember = arMembers.find((m) => m.startsWith('data.tar'));
@@ -686,10 +714,10 @@ export function extractReleaseArchivesAndAuditAllPlatforms({ releaseDir, version
       }
       const rawPath = `${dataTarPath}.${dataMember.split('.').pop()}`;
       fs.writeFileSync(rawPath, rawData.stdout);
-      runCommandChecked('tar', ['-xf', rawPath, '-C', debExtractDir]);
+      runCommandChecked(tarExecutable(), ['-xf', rawPath, '-C', debExtractDir]);
     }
     if (fs.existsSync(dataTarPath)) {
-      runCommandChecked('tar', ['-xf', dataTarPath, '-C', debExtractDir]);
+      runCommandChecked(tarExecutable(), ['-xf', dataTarPath, '-C', debExtractDir]);
     }
     const linuxNativeRoot = path.join(debExtractDir, 'usr', 'libexec', 'leapterm');
     results.linux = auditLinuxAgentBundle(linuxNativeRoot);
@@ -714,7 +742,7 @@ export function verifyCurrentHostLiveInstall({ releaseDir, version, installerPat
       }
       const winInstallDir = path.join(homeDir, 'AppData', 'Local', 'Programs', 'LeapTerm');
       fs.mkdirSync(winInstallDir, { recursive: true });
-      runCommandChecked('tar', ['-xf', winZip, '-C', winInstallDir]);
+      runCommandChecked(tarExecutable(), ['-xf', winZip, '-C', winInstallDir]);
       auditWindowsAgentBundle(winInstallDir);
 
       // Write standard launcher shim in ~/.local/bin and verify execution from C:\ with scrubbed PATH
@@ -741,7 +769,7 @@ export function verifyCurrentHostLiveInstall({ releaseDir, version, installerPat
         cwd: path.parse(winInstallDir).root || 'C:\\',
         env: cleanWinEnv,
       });
-      const shimVer = runCommandChecked('cmd.exe', ['/d', '/s', '/c', `"${shimCmd}" --version`], {
+      const shimVer = runCommandChecked('cmd.exe', ['/c', shimCmd, '--version'], {
         cwd: path.parse(winInstallDir).root || 'C:\\',
         env: cleanWinEnv,
       });
