@@ -40,10 +40,13 @@ import {
   resolvePrivateStageRelease,
   resolveRolloutEnvironment,
   resolveStagingKeyringAssetName,
+  sanitizePublicLogText,
+  scanBufferForLeaks,
   scanDirectoryForLeaks,
   scanSelfHostedZipForLeaks,
   sha256Hex,
   stageCompiledWebCdnAssets,
+  syncAppleInternalTesters,
   validateStoreListings,
   verifyAllReleaseBuildsReady,
   verifyAppleStoreAccess,
@@ -266,7 +269,9 @@ test('promoteIosToAppStoreConnect and promoteMacosToAppStoreConnect support test
       }),
   });
   assert.equal(verifyRes.status, 'verified');
-  assert.equal(verifyRes.ascAppId, 'app-1');
+  assert.equal(verifyRes.bundleId, 'com.leapterm.app');
+  assert.equal(verifyRes.ascAppId, undefined);
+  assert.equal(verifyRes.recentBuilds, undefined);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-apple-promote-'));
   try {
@@ -664,6 +669,7 @@ test('promoteAndroidToPlayStore and verifyGooglePlayStoreAccess work with servic
     },
   });
   assert.equal(probeRes.status, 'verified');
+  assert.equal(probeRes.serviceAccount, undefined);
   assert.deepEqual(probeRes.tracks, ['internal', 'production']);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leap-play-promote-'));
@@ -3084,7 +3090,7 @@ test('pruneGithubReleases retains newest stable releases and currentTag while pr
     { id: 14, tag_name: 'ci-stage/application-99-1', draft: false, prerelease: true, published_at: '2026-10-19T09:40:00Z' },
   ];
   const stagingRes = await pruneGithubReleases({
-    repo: 'omnisolo-llc/leapterm',
+    repo: 'omnisolo-llc/private-source',
     token: 'mock-priv-token',
     keepReleases: 1,
     currentTag: 'v0.1.4',
@@ -3115,6 +3121,68 @@ test('pruneGithubReleases retains newest stable releases and currentTag while pr
   assert.match(promoteYml, /--project-name leapterm-cdn/);
   assert.match(promoteYml, /for PAGES_PROJ in leapterm-cdn leapterm-website leapterm-docs/);
   assert.match(promoteYml, /--prune-github-releases/);
+});
+
+test('sanitizePublicLogText, syncAppleInternalTesters masking, and install.sh leak scanning prevent public log/asset leaks', async () => {
+  const rawLog =
+    'Deploying docker.io/leapterm/private:cloud-latest from omnisolo-llc/private-repo via cloud/deploy/packaging/install.sh to preview-123.pages.dev and api.staging.leapterm.com (tag ci-stage/application-12345-1)';
+  const sanitized = sanitizePublicLogText(rawLog);
+  assert.ok(!sanitized.includes('docker.io/leapterm/private'));
+  assert.ok(!sanitized.includes('omnisolo-llc/private-repo'));
+  assert.ok(!sanitized.includes('cloud/deploy/packaging/install.sh'));
+  assert.ok(!sanitized.includes('preview-123.pages.dev'));
+  assert.ok(!sanitized.includes('api.staging.leapterm.com'));
+  assert.ok(!sanitized.includes('ci-stage/application-12345-1'));
+
+  const prevActions = process.env.GITHUB_ACTIONS;
+  const prevLog = console.log;
+  const prevWarn = console.warn;
+  const logs = [];
+  const warns = [];
+  process.env.GITHUB_ACTIONS = 'true';
+  console.log = (...args) => logs.push(args.join(' '));
+  console.warn = (...args) => warns.push(args.join(' '));
+  try {
+    await syncAppleInternalTesters({
+      internalTesterEmails: 'secret.tester@example.com',
+      ascRequest: async (endpoint, method = 'GET') => {
+        if (endpoint.startsWith('/v1/apps?')) {
+          return { data: [{ id: 'app-1' }] };
+        }
+        if (endpoint.endsWith('/betaGroups?limit=200')) {
+          return {
+            data: [
+              { id: 'grp-int', attributes: { isInternalGroup: true } },
+              { id: 'grp-ext', attributes: { isInternalGroup: false, name: 'External' } },
+            ],
+          };
+        }
+        if (endpoint.endsWith('/betaTesters?limit=200')) {
+          return { data: [] };
+        }
+        if (endpoint.startsWith('/v1/betaTesters?filter[email]=')) {
+          return { data: [] };
+        }
+        if (endpoint === '/v1/betaTesters' && method === 'POST') {
+          throw new Error('Cannot add secret.tester@example.com');
+        }
+        return {};
+      },
+    });
+  } finally {
+    if (prevActions === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = prevActions;
+    console.log = prevLog;
+    console.warn = prevWarn;
+  }
+  assert.ok(logs.includes('::add-mask::secret.tester@example.com'));
+  for (const w of warns) {
+    assert.ok(!w.includes('secret.tester@example.com'), `Warn leaked email: ${w}`);
+    assert.match(w, /tester#1/);
+  }
+
+  const leakyInstall = Buffer.from('#!/bin/sh\nREPO="omnisolo-llc/private-source"\n');
+  assert.ok(scanBufferForLeaks(leakyInstall, 'install.sh').length > 0);
 });
 
 

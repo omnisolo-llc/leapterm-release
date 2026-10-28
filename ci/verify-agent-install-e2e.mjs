@@ -612,11 +612,41 @@ export function auditMacosAgentBundle(contentsDir) {
   };
 }
 
+export function redactSensitiveCommandOutput(value) {
+  let text = String(value ?? '');
+  for (const envKey of [
+    'PRIVATE_RELEASE_TOKEN',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'CLOUDFLARE_API_TOKEN',
+    'SOURCE_REPOSITORY',
+  ]) {
+    const secretVal = String(process.env[envKey] || '').trim();
+    if (secretVal && secretVal.length >= 4) {
+      text = text.split(secretVal).join('[redacted]');
+    }
+  }
+  return text
+    .replace(
+      /\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/g,
+      '[redacted-token]',
+    )
+    .replace(/x-access-token:[^\s@"']+/gi, 'x-access-token:[redacted]')
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
+    .replace(/omnisolo-llc\/(?!leapterm-release\b)[A-Za-z0-9._/-]+/gi, 'omnisolo-llc/[redacted]')
+    .replace(/\bcloud\/deploy\/[A-Za-z0-9._/-]*/g, '[redacted-path]')
+    .replace(/\/(?:home|Users)\/[^\s:'"]+/g, '[redacted-host-path]')
+    .replace(/[A-Za-z]:\\Users\\[^\s:'"]+/g, '[redacted-host-path]');
+}
+
 function runCommandChecked(cmd, args, options = {}) {
   const res = spawnSync(cmd, args, { encoding: 'utf8', ...options });
   if (res.status !== 0) {
+    const safeArgs = args.map((a) => redactSensitiveCommandOutput(a)).join(' ');
+    const safeStdout = redactSensitiveCommandOutput(res.stdout);
+    const safeStderr = redactSensitiveCommandOutput(res.stderr);
     throw new Error(
-      `Command failed (${cmd} ${args.join(' ')}): status=${res.status}\nstdout=${res.stdout}\nstderr=${res.stderr}`,
+      `Command failed (${cmd} ${safeArgs}): status=${res.status}\nstdout=${safeStdout}\nstderr=${safeStderr}`,
     );
   }
   return res;
@@ -690,7 +720,9 @@ export function extractReleaseArchivesAndAuditAllPlatforms({ releaseDir, version
         maxBuffer: 256 * 1024 * 1024,
       });
       if (fsys.status !== 0) {
-        throw new Error(`dpkg-deb --fsys-tarfile failed: ${fsys.stderr?.toString()}`);
+        throw new Error(
+          `dpkg-deb --fsys-tarfile failed: ${redactSensitiveCommandOutput(fsys.stderr?.toString())}`,
+        );
       }
       fs.writeFileSync(dataTarPath, fsys.stdout);
     } else if (process.platform === 'win32') {
@@ -982,7 +1014,7 @@ async function main() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((err) => {
-    console.error(err.stack || err.message || String(err));
+    console.error(redactSensitiveCommandOutput(err.stack || err.message || String(err)));
     process.exit(1);
   });
 }
