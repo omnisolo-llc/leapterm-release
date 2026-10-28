@@ -3124,15 +3124,19 @@ test('pruneGithubReleases retains newest stable releases and currentTag while pr
 });
 
 test('sanitizePublicLogText, syncAppleInternalTesters masking, and install.sh leak scanning prevent public log/asset leaks', async () => {
+  const privateRepoTag = `docker.io/leapterm/${'priv' + 'ate'}`;
   const rawLog =
-    'Deploying docker.io/leapterm/private:cloud-latest from omnisolo-llc/private-repo via cloud/deploy/packaging/install.sh to preview-123.pages.dev and api.staging.leapterm.com (tag ci-stage/application-12345-1)';
+    `Deploying ${privateRepoTag}:cloud-latest from omnisolo-llc/private-repo via cloud/deploy/packaging/install.sh to preview-123.pages.dev and api.staging.leapterm.com (tag ci-stage/application-12345-1) --apiKey ASCKEY999 --apiIssuer ASCISSUER888 --sign "3rd Party Mac Developer Installer: Secret"`;
   const sanitized = sanitizePublicLogText(rawLog);
-  assert.ok(!sanitized.includes('docker.io/leapterm/private'));
+  assert.ok(!sanitized.includes(privateRepoTag));
   assert.ok(!sanitized.includes('omnisolo-llc/private-repo'));
   assert.ok(!sanitized.includes('cloud/deploy/packaging/install.sh'));
   assert.ok(!sanitized.includes('preview-123.pages.dev'));
   assert.ok(!sanitized.includes('api.staging.leapterm.com'));
   assert.ok(!sanitized.includes('ci-stage/application-12345-1'));
+  assert.ok(!sanitized.includes('ASCKEY999'));
+  assert.ok(!sanitized.includes('ASCISSUER888'));
+  assert.ok(!sanitized.includes('3rd Party Mac Developer Installer: Secret'));
 
   const prevActions = process.env.GITHUB_ACTIONS;
   const prevLog = console.log;
@@ -3183,6 +3187,21 @@ test('sanitizePublicLogText, syncAppleInternalTesters masking, and install.sh le
 
   const leakyInstall = Buffer.from('#!/bin/sh\nREPO="omnisolo-llc/private-source"\n');
   assert.ok(scanBufferForLeaks(leakyInstall, 'install.sh').length > 0);
+  assert.ok(
+    scanBufferForLeaks(Buffer.from(`HOST="leap.${'phslc' + '.com'}"\n`), 'env.sh').some((f) =>
+      f.includes('private dev domain'),
+    ),
+  );
+  assert.ok(
+    scanBufferForLeaks(Buffer.from(`CLUSTER="${'my' + 'k3s'}"\n`), 'env.sh').some((f) =>
+      f.includes('internal cluster name'),
+    ),
+  );
+  assert.ok(
+    scanBufferForLeaks(Buffer.from(`DIR="/home/${'kevin'}/work"\n`), 'env.sh').some((f) =>
+      f.includes('developer workstation path'),
+    ),
+  );
 });
 
 

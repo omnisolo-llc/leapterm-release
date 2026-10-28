@@ -1,5 +1,5 @@
 name: Public source CI
-run-name: source-ci:${{ inputs.profile }}
+run-name: source-ci:${{ inputs.source_sha }}:${{ inputs.builder_sha }}:${{ inputs.catalog_sha256 }}:ci
 
 on:
   workflow_dispatch:

@@ -215,7 +215,7 @@ jobs:
                   -e 's#omnisolo-llc/(leapterm\b|[A-Za-z0-9._-]+)#omnisolo-llc/[redacted]#g' \
                   -e 's#[A-Za-z0-9.-]+\.pages\.dev#[redacted-pages-host]#g' \
                   -e 's#[A-Za-z0-9.-]*\.staging\.leapterm\.com#[redacted-staging-host]#g' \
-                  -e 's#(docker\.io/)?leapterm/private(:[A-Za-z0-9._-]+)?#[redacted-image]#g' \
+                  -e 's#(docker\.io/)?leapterm/[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)?#[redacted-image]#g' \
                   -e 's#cloud/deploy/[A-Za-z0-9._/-]*#[redacted-path]#g' \
                   "$log_file" | tail -n 25 >&2 || true
                 exit 1
