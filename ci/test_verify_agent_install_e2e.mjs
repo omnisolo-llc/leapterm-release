@@ -16,6 +16,7 @@ import {
   parseElfDynamic,
   parseMachOImports,
   parsePeImports,
+  redactSensitiveCommandOutput,
 } from './verify-agent-install-e2e.mjs';
 
 function buildSyntheticPe64(importedDlls = []) {
@@ -279,4 +280,15 @@ test('parseCliArgs supports --local-dir, --release-dir, --version, and --install
   assert.equal(parsed.version, '0.1.3');
   assert.equal(parsed.localDir, '/tmp/outputs');
   assert.equal(parsed.installerPath, '/tmp/install.sh');
+});
+
+test('redactSensitiveCommandOutput redacts private tokens, repo slugs, and host paths', () => {
+  const fakeToken = `${'gh' + 'p_'}${'a'.repeat(32)}`;
+  const fakeAuth = `${'x-access' + '-token'}:${fakeToken}`;
+  const sample = `curl ${fakeAuth} omnisolo-llc/private-repo/cloud/deploy/install.sh /home/runner/work/secret.txt`;
+  const redacted = redactSensitiveCommandOutput(sample);
+  assert.ok(!redacted.includes(fakeToken));
+  assert.ok(!redacted.includes('omnisolo-llc/private-repo'));
+  assert.ok(!redacted.includes('cloud/deploy/install.sh'));
+  assert.ok(!redacted.includes('/home/runner/work/secret.txt'));
 });

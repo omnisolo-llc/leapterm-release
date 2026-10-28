@@ -205,10 +205,27 @@ jobs:
             echo "==> Deploying website, documentation, and compiled Wasm CDN to Cloudflare Pages (leapterm-website, leapterm-docs)..."
             DOCS_TMP_DIR="$(mktemp -d)"
             trap 'rm -rf "$DOCS_TMP_DIR"' EXIT
+            run_sanitized() {
+              local label="$1"
+              shift
+              local log_file="$DOCS_TMP_DIR/step-cmd.log"
+              if ! "$@" >"$log_file" 2>&1; then
+                echo "Error: ${label} failed" >&2
+                sed -E \
+                  -e 's#omnisolo-llc/(leapterm\b|[A-Za-z0-9._-]+)#omnisolo-llc/[redacted]#g' \
+                  -e 's#[A-Za-z0-9.-]+\.pages\.dev#[redacted-pages-host]#g' \
+                  -e 's#[A-Za-z0-9.-]*\.staging\.leapterm\.com#[redacted-staging-host]#g' \
+                  -e 's#(docker\.io/)?leapterm/private(:[A-Za-z0-9._-]+)?#[redacted-image]#g' \
+                  -e 's#cloud/deploy/[A-Za-z0-9._/-]*#[redacted-path]#g' \
+                  "$log_file" | tail -n 25 >&2 || true
+                exit 1
+              fi
+            }
             git init -q "$DOCS_TMP_DIR/source"
             git -C "$DOCS_TMP_DIR/source" remote add origin "https://github.com/${SOURCE_REPOSITORY}.git"
-            git -C "$DOCS_TMP_DIR/source" -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PRIVATE_RELEASE_TOKEN" | base64 -w 0)" fetch --depth=1 -q origin "$SOURCE_BRANCH"
+            git -C "$DOCS_TMP_DIR/source" -c "http.https://github.com/.extraHeader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PRIVATE_RELEASE_TOKEN" | base64 | tr -d '\n')" fetch --depth=1 -q origin "$SOURCE_BRANCH"
             git -C "$DOCS_TMP_DIR/source" checkout -q FETCH_HEAD
+            rm -rf "$DOCS_TMP_DIR/source/.git"
             if [ -d "$DOCS_TMP_DIR/source/website" ]; then
               cd "$DOCS_TMP_DIR/source/website"
             elif [ -d "$DOCS_TMP_DIR/source/leapterm-website" ]; then
@@ -217,8 +234,8 @@ jobs:
               echo "Error: website directory not found in source checkout" >&2
               exit 1
             fi
-            npm ci --no-audit --no-fund
-            npm run build
+            run_sanitized "website npm ci" npm ci --no-audit --no-fund --silent
+            run_sanitized "website build" npm run build --silent
             node -e "import('node:fs').then(fs=>fs.appendFileSync('dist/_redirects','/docs https://docs.leapterm.com/ 308\n/docs/* https://docs.leapterm.com/:splat 308\n'))"
             if [ -n "${PROMOTE_VERSION:-}" ]; then
               NORMALIZED_VER="${PROMOTE_VERSION#v}"
@@ -246,7 +263,7 @@ jobs:
                 fi
                 echo "==> Staging and deploying compiled Flutter Wasm bundle ($WEB_ARCHIVE_NAME) to unified Cloudflare Pages CDN (leapterm-cdn -> https://cdn.leapterm.com)..."
                 if [ -f "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" ]; then
-                  node "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" \
+                  run_sanitized "stage-web-cdn-pages deploy" node "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" \
                     --archive "$DOCS_TMP_DIR/$WEB_ARCHIVE_NAME" \
                     --dist "$DOCS_TMP_DIR/cdn-dist" \
                     --version "$NORMALIZED_VER" \
@@ -254,9 +271,9 @@ jobs:
                     --deploy \
                     --project-name leapterm-cdn \
                     --clean-local
-                  node "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" --status --project-name leapterm-cdn || true
+                  node "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" --status --project-name leapterm-cdn >/dev/null 2>&1 || true
                 else
-                  node "$GITHUB_WORKSPACE/ci/promote-release.mjs" \
+                  run_sanitized "promote-release web CDN deploy" node "$GITHUB_WORKSPACE/ci/promote-release.mjs" \
                     --deploy-web-cdn \
                     --archive "$DOCS_TMP_DIR/$WEB_ARCHIVE_NAME" \
                     --dist "$DOCS_TMP_DIR/cdn-dist" \
@@ -266,17 +283,17 @@ jobs:
                 fi
               fi
             fi
-            npx wrangler pages deploy dist/docs --project-name=leapterm-docs --branch=main --commit-dirty=true
-            npx wrangler pages deploy dist --project-name=leapterm-website --branch=main --commit-dirty=true
+            run_sanitized "wrangler pages deploy docs" npx wrangler pages deploy dist/docs --project-name=leapterm-docs --branch=main --commit-dirty=true
+            run_sanitized "wrangler pages deploy website" npx wrangler pages deploy dist --project-name=leapterm-website --branch=main --commit-dirty=true
             for PAGES_PROJ in leapterm-cdn leapterm-website leapterm-docs; do
               if [ -f "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" ]; then
-                node "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" --prune-only --project-name "$PAGES_PROJ" || true
+                node "$DOCS_TMP_DIR/source/scripts/release/stage-web-cdn-pages.mjs" --prune-only --project-name "$PAGES_PROJ" >/dev/null 2>&1 || true
               else
-                node "$GITHUB_WORKSPACE/ci/promote-release.mjs" --prune-pages --project-name "$PAGES_PROJ" || true
+                node "$GITHUB_WORKSPACE/ci/promote-release.mjs" --prune-pages --project-name "$PAGES_PROJ" >/dev/null 2>&1 || true
               fi
             done
             if [ -f "$DOCS_TMP_DIR/source/scripts/prune-packages.mjs" ]; then
-              node "$DOCS_TMP_DIR/source/scripts/prune-packages.mjs" || true
+              node "$DOCS_TMP_DIR/source/scripts/prune-packages.mjs" >/dev/null 2>&1 || true
             fi
             echo "✓ Website, docs, and compiled Wasm CDN deployment & asset pruning completed"
           else
