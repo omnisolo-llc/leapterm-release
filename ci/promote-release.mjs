@@ -295,6 +295,49 @@ export function scanBufferForLeaks(buffer, relativePath) {
   return findings;
 }
 
+export function sanitizePublicLogText(value) {
+  let text = String(value ?? '');
+  for (const envKey of [
+    'PRIVATE_RELEASE_TOKEN',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'CLOUDFLARE_API_TOKEN',
+    'CLOUDFLARE_ACCOUNT_ID',
+    'DOCKER_HUB_PAT_READ_WRITE',
+    'DOCKER_HUB_PAT_READ_ONLY',
+    'SOURCE_REPOSITORY',
+    'PROMOTE_CONTAINER_REGISTRY',
+    'PROMOTE_GHCR_REGISTRY',
+    'LEAP_GATEWAY_SOURCE_IMAGE',
+  ]) {
+    const secretVal = String(process.env[envKey] || '').trim();
+    if (secretVal && secretVal.length >= 4) {
+      text = text.split(secretVal).join('[redacted]');
+    }
+  }
+  return text
+    .replace(
+      /ghcr\.io\/omnisolo-llc\/(?!leapterm-release\b)[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})?/gi,
+      '[redacted-image]',
+    )
+    .replace(
+      /(?:docker\.io\/)?leapterm\/private(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})?/gi,
+      '[redacted-image]',
+    )
+    .replace(
+      /omnisolo-llc\/(?!leapterm-release\b)[A-Za-z0-9._/-]+/gi,
+      'omnisolo-llc/[redacted]',
+    )
+    .replace(/[A-Za-z0-9.-]*\.staging\.leapterm\.com\b/gi, '[redacted-staging-host]')
+    .replace(/[A-Za-z0-9.-]+\.pages\.dev\b/gi, '[redacted-pages-host]')
+    .replace(/\bcloud\/deploy\/[A-Za-z0-9._/-]*/g, '[redacted-path]')
+    .replace(/\bci-stage\/application-[A-Za-z0-9._-]*/g, 'ci-stage/[redacted]')
+    .replace(
+      /\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/g,
+      '[redacted-token]',
+    );
+}
+
 export function scanDirectoryForLeaks(rootDir) {
   const findings = [];
   const walk = (dir) => {
@@ -1312,33 +1355,9 @@ export async function verifyAppleStoreAccess({
       `App Store Connect app not found for bundleId ${appBundleId}`,
     );
   }
-  let recentBuilds = [];
-  try {
-    const buildsUrl = `https://api.appstoreconnect.apple.com/v1/builds?filter[app]=${encodeURIComponent(app.id)}&limit=10&sort=-uploadedDate`;
-    const bRes = await fetchImpl(buildsUrl, {
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        Accept: 'application/json',
-      },
-    });
-    const bData = await bRes.json().catch(() => ({}));
-    if (Array.isArray(bData?.data)) {
-      recentBuilds = bData.data.map((b) => ({
-        id: b.id,
-        version: b.attributes?.version,
-        uploadedDate: b.attributes?.uploadedDate,
-        processingState: b.attributes?.processingState,
-        expired: b.attributes?.expired,
-      }));
-    }
-  } catch {
-    // optional query
-  }
   return {
     provider: 'app-store-connect',
     bundleId: appBundleId,
-    ascAppId: app.id,
-    recentBuilds,
     status: 'verified',
   };
 }
@@ -1414,7 +1433,6 @@ export async function verifyGooglePlayStoreAccess({
     return {
       provider: 'google-play',
       packageName,
-      serviceAccount: key.client_email,
       tracks: (tracksData.tracks || []).map((t) => t.track),
       status: 'verified',
     };
@@ -1445,9 +1463,13 @@ export function parseInternalTesterEmails(raw = '') {
     .filter(Boolean);
   const seen = new Set();
   const emails = [];
-  for (const email of items) {
+  for (let i = 0; i < items.length; i += 1) {
+    const email = items[i];
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      console.log(`::add-mask::${email}`);
+    }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      throw new Error(`Invalid email in INTERNAL_TESTER_EMAILS: ${email}`);
+      throw new Error(`Invalid email in INTERNAL_TESTER_EMAILS at index ${i}`);
     }
     if (!seen.has(email)) {
       seen.add(email);
@@ -1513,7 +1535,11 @@ export async function syncAppleInternalTesters({
       .filter(Boolean),
   );
 
-  for (const email of emails) {
+  for (let idx = 0; idx < emails.length; idx += 1) {
+    const email = emails[idx];
+    const testerLabel = `tester#${idx + 1}`;
+    const redactEmail = (msg) =>
+      sanitizePublicLogText(String(msg || '')).split(email).join(testerLabel);
     if (existingEmails.has(email)) {
       continue;
     }
@@ -1534,7 +1560,7 @@ export async function syncAppleInternalTesters({
         );
       } catch (err) {
         console.warn(
-          `Could not assign existing tester ${email} to internal group: ${err.message}`,
+          `Could not assign existing ${testerLabel} to internal group: ${redactEmail(err.message)}`,
         );
       }
     } else {
@@ -1552,7 +1578,7 @@ export async function syncAppleInternalTesters({
         });
       } catch (err) {
         console.warn(
-          `Could not assign ${email} to internal TestFlight group: ${err.message}. Attempting external beta group fallback...`,
+          `Could not assign ${testerLabel} to internal TestFlight group: ${redactEmail(err.message)}. Attempting external beta group fallback...`,
         );
         let externalGroup = groups.find(
           (g) => g?.attributes?.isInternalGroup === false,
@@ -1575,7 +1601,7 @@ export async function syncAppleInternalTesters({
             externalGroup = createdExternal?.data;
           } catch (createErr) {
             console.warn(
-              `Could not create external beta group: ${createErr.message}`,
+              `Could not create external beta group: ${redactEmail(createErr.message)}`,
             );
           }
         }
@@ -1593,11 +1619,11 @@ export async function syncAppleInternalTesters({
               },
             });
             console.log(
-              `Assigned ${email} to external TestFlight group "${externalGroup.attributes?.name || 'External Testers'}".`,
+              `Assigned ${testerLabel} to external TestFlight group "${externalGroup.attributes?.name || 'External Testers'}".`,
             );
           } catch (extErr) {
             console.warn(
-              `Could not assign ${email} to external beta group: ${extErr.message}`,
+              `Could not assign ${testerLabel} to external beta group: ${redactEmail(extErr.message)}`,
             );
           }
         }
@@ -2995,20 +3021,28 @@ export function executeEnvironmentRollout({
       GH_TOKEN: privateToken || effectiveGithubToken,
     };
 
-    execFileImpl('bash', [rolloutScriptRel, '--env', environment], {
-      cwd: resolvedRoot,
-      env: childEnv,
-      stdio: 'inherit',
-    });
-
-    const pruneScriptRel = plan.container.prune_script;
-    const pruneScriptPath = path.join(resolvedRoot, ...pruneScriptRel.split('/'));
-    if (fs.existsSync(pruneScriptPath)) {
-      execFileImpl('node', [pruneScriptRel], {
+    try {
+      execFileImpl('bash', [rolloutScriptRel, '--env', environment], {
         cwd: resolvedRoot,
         env: childEnv,
-        stdio: 'inherit',
+        stdio: 'pipe',
       });
+
+      const pruneScriptRel = plan.container.prune_script;
+      const pruneScriptPath = path.join(resolvedRoot, ...pruneScriptRel.split('/'));
+      if (fs.existsSync(pruneScriptPath)) {
+        execFileImpl('node', [pruneScriptRel], {
+          cwd: resolvedRoot,
+          env: childEnv,
+          stdio: 'pipe',
+        });
+      }
+    } catch (rolloutErr) {
+      throw new Error(
+        sanitizePublicLogText(
+          rolloutErr instanceof Error ? rolloutErr.message : String(rolloutErr),
+        ),
+      );
     }
 
     return {
@@ -3542,24 +3576,32 @@ export async function deployCompiledWebCdnAssets({
       version,
       buildNumber,
     });
-    execFileImpl(
-      'npx',
-      [
-        '--yes',
-        'wrangler',
-        'pages',
-        'deploy',
-        resolvedDist,
-        `--project-name=${projectName}`,
-        '--branch=main',
-        '--commit-dirty=true',
-      ],
-      {
-        cwd: os.tmpdir(),
-        env: { ...process.env, WRANGLER_SEND_METRICS: 'false' },
-        stdio: 'inherit',
-      },
-    );
+    try {
+      execFileImpl(
+        'npx',
+        [
+          '--yes',
+          'wrangler',
+          'pages',
+          'deploy',
+          resolvedDist,
+          `--project-name=${projectName}`,
+          '--branch=main',
+          '--commit-dirty=true',
+        ],
+        {
+          cwd: os.tmpdir(),
+          env: { ...process.env, WRANGLER_SEND_METRICS: 'false' },
+          stdio: 'pipe',
+        },
+      );
+    } catch (deployErr) {
+      throw new Error(
+        sanitizePublicLogText(
+          deployErr instanceof Error ? deployErr.message : String(deployErr),
+        ),
+      );
+    }
     const pruneResult = await pruneSupersededPagesDeployments({
       projectName,
       accountId,
@@ -3791,18 +3833,26 @@ export async function promoteRelease({
   if (verifyStoreCredentialsOnly) {
     const results = [];
     if (googlePlayServiceAccountJson) {
-      results.push(
-        await verifyGooglePlayStoreAccess({
-          serviceAccountJson: googlePlayServiceAccountJson,
-        }),
-      );
+      const playVerified = await verifyGooglePlayStoreAccess({
+        serviceAccountJson: googlePlayServiceAccountJson,
+      });
+      const {
+        serviceAccount: _sa,
+        serviceAccountEmail: _sae,
+        ...sanitizedPlay
+      } = playVerified;
+      results.push(sanitizedPlay);
     }
     if (iosSigningConfigJson || macosSigningConfigJson) {
-      results.push(
-        await verifyAppleStoreAccess({
-          appleSigningConfigJson: iosSigningConfigJson || macosSigningConfigJson,
-        }),
-      );
+      const appleVerified = await verifyAppleStoreAccess({
+        appleSigningConfigJson: iosSigningConfigJson || macosSigningConfigJson,
+      });
+      const {
+        ascAppId: _appId,
+        recentBuilds: _builds,
+        ...sanitizedApple
+      } = appleVerified;
+      results.push(sanitizedApple);
     }
     console.log(JSON.stringify({ verified_stores: results }, null, 2));
     return { verified_stores: results };
@@ -4193,6 +4243,15 @@ export async function promoteRelease({
 
       if (assetsByName.has('install.sh')) {
         const installShPath = await requireStagingAsset('install.sh');
+        const installFindings = scanBufferForLeaks(
+          fs.readFileSync(installShPath),
+          'install.sh',
+        );
+        if (installFindings.length > 0) {
+          throw new Error(
+            `install.sh failed leak scan:\n${installFindings.join('\n')}`,
+          );
+        }
         filesToUpload.push(installShPath);
       } else {
         try {
@@ -4223,15 +4282,28 @@ export async function promoteRelease({
             }
             if (contentJson && contentJson.content) {
               const installShPath = path.join(workDir, 'install.sh');
-              fs.writeFileSync(
-                installShPath,
-                Buffer.from(contentJson.content, 'base64'),
+              const installShBytes = Buffer.from(contentJson.content, 'base64');
+              const installFindings = scanBufferForLeaks(
+                installShBytes,
+                'install.sh',
               );
+              if (installFindings.length > 0) {
+                throw new Error(
+                  `install.sh failed leak scan:\n${installFindings.join('\n')}`,
+                );
+              }
+              fs.writeFileSync(installShPath, installShBytes);
               filesToUpload.push(installShPath);
             }
           }
         } catch (err) {
-          console.warn('Could not fetch install.sh from source repo:', err.message);
+          if (String(err?.message || '').includes('install.sh failed leak scan')) {
+            throw err;
+          }
+          console.warn(
+            'Could not fetch install.sh from source repo:',
+            sanitizePublicLogText(err.message),
+          );
         }
       }
 
@@ -4360,8 +4432,11 @@ export async function promoteRelease({
             bestEffort: true,
           });
           if (stagingPrune.deleted.length > 0) {
+            const redactedDeleted = stagingPrune.deleted.map((t) =>
+              sanitizePublicLogText(t),
+            );
             console.log(
-              `Pruned ${stagingPrune.deleted.length} superseded staging release(s) on ${stagingRepo}: ${stagingPrune.deleted.join(', ')}`,
+              `Pruned ${stagingPrune.deleted.length} superseded staging release(s): ${redactedDeleted.join(', ')}`,
             );
           }
         }
@@ -4457,7 +4532,7 @@ export async function promoteRelease({
           }
           if (!stageRelease) {
             throw new Error(
-              `Private stage release not found on ${stagingRepo} for iOS IPA retrieval (runId: ${targetRunId || 'auto'}, build: ${targetBuildNumber || 'unknown'})`,
+              `Private stage release not found on staging repository for iOS IPA retrieval (runId: ${targetRunId || 'auto'}, build: ${targetBuildNumber || 'unknown'})`,
             );
           }
           const stageAssets = new Map(
@@ -4521,8 +4596,9 @@ export async function promoteRelease({
           if (!ipaAsset || !receiptAsset) {
             const ipaObjName = `object-${sha256Hex(Buffer.from(storageKeys.ipaKey, 'utf8'))}.bin`;
             const receiptObjName = `object-${sha256Hex(Buffer.from(storageKeys.receiptKey, 'utf8'))}.bin`;
+            const redactedStageTag = sanitizePublicLogText(stageRelease.tag_name);
             throw new Error(
-              `Private stage release ${stageRelease.tag_name} missing signed iOS IPA (${ipaObjName}) or receipt (${receiptObjName})`,
+              `Private stage release ${redactedStageTag} missing signed iOS IPA (${ipaObjName}) or receipt (${receiptObjName})`,
             );
           }
           const receiptPath = path.join(
@@ -4629,7 +4705,7 @@ export async function promoteRelease({
           execFileImpl,
         });
         console.log(
-          `Environment rollout (${rolloutResult.environment}) for v${normalizedVersion} (${resolvedBuildNumber}) image ${rolloutResult.container.image}: ${rolloutResult.status}.`,
+          `Environment rollout (${rolloutResult.environment}) for v${normalizedVersion} (${resolvedBuildNumber}): ${rolloutResult.status}.`,
         );
       }
     }
@@ -4665,7 +4741,9 @@ if (
         );
       })
       .catch((err) => {
-        console.error(err instanceof Error ? err.message : String(err));
+        console.error(
+          sanitizePublicLogText(err instanceof Error ? err.message : String(err)),
+        );
         process.exit(1);
       });
   } else if (cliArgs.includes('--prune-pages')) {
@@ -4677,7 +4755,9 @@ if (
         );
       })
       .catch((err) => {
-        console.error(err instanceof Error ? err.message : String(err));
+        console.error(
+          sanitizePublicLogText(err instanceof Error ? err.message : String(err)),
+        );
         process.exit(1);
       });
   } else if (cliArgs.includes('--prune-github-releases')) {
@@ -4696,12 +4776,17 @@ if (
       bestEffort: true,
     })
       .then((res) => {
+        const displayRepo = isStagingRepo
+          ? 'staging-repo'
+          : sanitizePublicLogText(res.repo);
         console.log(
-          `✓ GitHub release pruning on ${res.repo}: kept=${res.kept.length}, deleted=${res.deleted.length}`,
+          `✓ GitHub release pruning on ${displayRepo}: kept=${res.kept.length}, deleted=${res.deleted.length}`,
         );
       })
       .catch((err) => {
-        console.error(err instanceof Error ? err.message : String(err));
+        console.error(
+          sanitizePublicLogText(err instanceof Error ? err.message : String(err)),
+        );
         process.exit(1);
       });
   } else {
@@ -4739,7 +4824,9 @@ if (
       verifyStoreCredentialsOnly:
         String(process.env.VERIFY_STORE_CREDENTIALS_ONLY ?? 'false') === 'true',
     }).catch((err) => {
-      console.error(err instanceof Error ? err.message : String(err));
+      console.error(
+        sanitizePublicLogText(err instanceof Error ? err.message : String(err)),
+      );
       process.exit(1);
     });
   }
