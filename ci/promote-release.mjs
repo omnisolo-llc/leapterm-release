@@ -76,6 +76,18 @@ export const SELF_HOSTED_LEAK_PATTERNS = Object.freeze([
     regex: /DIAGNOSTICS_PRIVATE_KEY/,
   },
   { label: 'Cloudflare API token variable', regex: /CLOUDFLARE_API_TOKEN/ },
+  {
+    label: 'private dev domain',
+    regex: new RegExp('\\bphslc\\.' + 'com\\b', 'i'),
+  },
+  {
+    label: 'internal cluster name',
+    regex: new RegExp('\\bmy' + 'k3s\\b', 'i'),
+  },
+  {
+    label: 'developer workstation path',
+    regex: new RegExp('/home/' + 'kevin\\b', 'i'),
+  },
 ]);
 
 function normalizeMultilineField(value, separator = '\n\n') {
@@ -321,7 +333,7 @@ export function sanitizePublicLogText(value) {
       '[redacted-image]',
     )
     .replace(
-      /(?:docker\.io\/)?leapterm\/private(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})?/gi,
+      /(?:docker\.io\/)?leapterm\/(?!gateway\b|relay\b)[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})?/gi,
       '[redacted-image]',
     )
     .replace(
@@ -332,6 +344,9 @@ export function sanitizePublicLogText(value) {
     .replace(/[A-Za-z0-9.-]+\.pages\.dev\b/gi, '[redacted-pages-host]')
     .replace(/\bcloud\/deploy\/[A-Za-z0-9._/-]*/g, '[redacted-path]')
     .replace(/\bci-stage\/application-[A-Za-z0-9._-]*/g, 'ci-stage/[redacted]')
+    .replace(/(--apiKey\s+)\S+/g, '$1[redacted]')
+    .replace(/(--apiIssuer\s+)\S+/g, '$1[redacted]')
+    .replace(/(--sign\s+)(?:"[^"]+"|\S+)/g, '$1[redacted]')
     .replace(
       /\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/g,
       '[redacted-token]',
@@ -1327,6 +1342,10 @@ export async function verifyAppleStoreAccess({
   const signing = JSON.parse(appleSigningConfigJson || '{}');
   const keyId = String(signing.APP_STORE_CONNECT_KEY_ID || '').trim();
   const issuerId = String(signing.APP_STORE_CONNECT_ISSUER_ID || '').trim();
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    if (keyId) console.log(`::add-mask::${keyId}`);
+    if (issuerId) console.log(`::add-mask::${issuerId}`);
+  }
   const apiKeyBase64 = String(
     signing.APP_STORE_CONNECT_API_KEY_BASE64 || '',
   ).trim();
@@ -1665,6 +1684,10 @@ export async function promoteAppleToAppStoreConnect({
   const signing = JSON.parse(appleSigningConfigJson || '{}');
   const keyId = String(signing.APP_STORE_CONNECT_KEY_ID || '').trim();
   const issuerId = String(signing.APP_STORE_CONNECT_ISSUER_ID || '').trim();
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    if (keyId) console.log(`::add-mask::${keyId}`);
+    if (issuerId) console.log(`::add-mask::${issuerId}`);
+  }
   const apiKeyBase64 = String(
     signing.APP_STORE_CONNECT_API_KEY_BASE64 || '',
   ).trim();
@@ -2064,31 +2087,39 @@ export async function promoteAppleToAppStoreConnect({
           productbuildArgs.push('--keychain', tempKeychain);
         }
         productbuildArgs.push(pkgPath);
-        execFileImpl('productbuild', productbuildArgs, { stdio: 'pipe' });
+        try {
+          execFileImpl('productbuild', productbuildArgs, { stdio: 'pipe' });
+        } catch (err) {
+          throw new Error(sanitizePublicLogText(err?.message || String(err)));
+        }
         uploadFilePath = pkgPath;
       }
-      execFileImpl(
-        'xcrun',
-        [
-          'altool',
-          '--upload-app',
-          '--type',
-          altoolType,
-          '--file',
-          uploadFilePath,
-          '--apiKey',
-          keyId,
-          '--apiIssuer',
-          issuerId,
-        ],
-        {
-          env: {
-            ...process.env,
-            API_PRIVATE_KEYS_DIR: keyDir,
+      try {
+        execFileImpl(
+          'xcrun',
+          [
+            'altool',
+            '--upload-app',
+            '--type',
+            altoolType,
+            '--file',
+            uploadFilePath,
+            '--apiKey',
+            keyId,
+            '--apiIssuer',
+            issuerId,
+          ],
+          {
+            env: {
+              ...process.env,
+              API_PRIVATE_KEYS_DIR: keyDir,
+            },
+            stdio: 'pipe',
           },
-          stdio: 'pipe',
-        },
-      );
+        );
+      } catch (err) {
+        throw new Error(sanitizePublicLogText(err?.message || String(err)));
+      }
     } finally {
       if (tempKeychain) {
         if (originalKeychains.length > 0) {

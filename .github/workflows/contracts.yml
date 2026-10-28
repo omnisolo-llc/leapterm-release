@@ -59,4 +59,4 @@ jobs:
         shell: bash
         run: |
           bash ci/test-native-release.sh
-          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs ci/test_install_sccache.mjs ci/test_tag_flow.mjs
