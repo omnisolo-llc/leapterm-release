@@ -434,6 +434,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+          sudo chmod u+s /usr/bin/bwrap 2>/dev/null || true
           rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
       - name: Verify public launcher contracts
         if: ${{ inputs.run_test }}
