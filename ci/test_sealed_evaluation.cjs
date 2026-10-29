@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 process.env.SOURCE_REPOSITORY = 'example-org/private-source';
-const {MAGIC, sealEvaluation} = require('./seal_evaluation.cjs');
+const {MAGIC, hashSourceSha, sealEvaluation} = require('./seal_evaluation.cjs');
 const keys = crypto.generateKeyPairSync('rsa', {modulusLength: 3072});
 const pem = keys.publicKey.export({type: 'spki', format: 'pem'});
 const identity = {source_repository: 'example-org/private-source', source_sha: 'a'.repeat(40),
@@ -35,7 +35,8 @@ test('evaluation bytes stream under recipient encryption and bind pipeline metad
   const f = fixture(t); sealEvaluation(f.input, f.output, identity, 'verify-windows', pem);
   const encrypted = fs.readFileSync(f.output); const result = open(encrypted);
   assert.deepEqual(result.plaintext, f.bytes);
-  assert.deepEqual(result.header.identity, identity);
+  assert.deepEqual(result.header.identity, {...identity, source_sha: hashSourceSha(identity.source_sha)});
+  assert(!encrypted.toString('latin1').includes(identity.source_sha));
   assert.equal(result.header.scope, 'verify-windows');
   assert.equal(result.header.plaintext_size, f.bytes.length);
   assert(!encrypted.includes(f.bytes.subarray(0, 1024)));

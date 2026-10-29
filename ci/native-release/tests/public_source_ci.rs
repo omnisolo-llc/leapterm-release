@@ -5,7 +5,9 @@ use leap_release_launcher::{
     Environment,
     ci_request::{CI_STAGES, SourceCiRequest},
     source_api::{GitHubApi, Role, SourceApi},
-    source_discovery::{Approval, acquire_approval, discover_cli, fresh_source, select_candidates},
+    source_discovery::{
+        Approval, acquire_approval, correlation_id, discover_cli, fresh_source, select_candidates,
+    },
     source_handoff::{cleanup_candidates, retain_stage_with, verify_stage_receipt},
     source_report::{report_cli, source_status},
 };
@@ -392,7 +394,7 @@ impl Fixture {
                 {
                     let runs = if dispatched {
                         vec![
-                            json!({"id":789,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/leapterm-release"},"head_sha":"b".repeat(40),"display_title":format!("source-ci:{}:{}:{}:ci","a".repeat(40),"b".repeat(40),"c".repeat(64))}),
+                            json!({"id":789,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/leapterm-release"},"head_sha":"b".repeat(40),"display_title":format!("source-ci:{}",correlation_id("example-org/private-source",&"a".repeat(40),&"b".repeat(40),"ci"))}),
                         ]
                     } else {
                         vec![]
@@ -564,7 +566,7 @@ fn trusted_metadata(fixture: &Fixture, approval: &Value) {
     );
     fixture.response("GET","/repos/omnisolo-llc/leapterm-release/environments/source-ci-authority/variables/SOURCE_CI_APPROVAL_123_1",json!({"name":"SOURCE_CI_APPROVAL_123_1","value":approval.to_string()}));
     fixture.response("GET","/repos/omnisolo-llc/leapterm-release/environments/source-ci-authority",json!({"id":10,"name":"source-ci-authority","can_admins_bypass":false,"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false},"protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","reviewer":{"id":99,"login":"fixture-reviewer"}}]}]}));
-    fixture.response("GET","/repos/omnisolo-llc/leapterm-release/actions/runs/123",json!({"id":123,"run_attempt":1,"event":"workflow_dispatch","head_branch":"main","head_sha":"b".repeat(40),"path":".github/workflows/source-ci.yml","repository":{"full_name":"omnisolo-llc/leapterm-release","private":false},"head_repository":{"full_name":"omnisolo-llc/leapterm-release","fork":false},"actor":{"id":55},"status":"completed","conclusion":"success","display_title":format!("source-ci:{}:{}:{}:ci","a".repeat(40),"b".repeat(40),"c".repeat(64))}));
+    fixture.response("GET","/repos/omnisolo-llc/leapterm-release/actions/runs/123",json!({"id":123,"run_attempt":1,"event":"workflow_dispatch","head_branch":"main","head_sha":"b".repeat(40),"path":".github/workflows/source-ci.yml","repository":{"full_name":"omnisolo-llc/leapterm-release","private":false},"head_repository":{"full_name":"omnisolo-llc/leapterm-release","fork":false},"actor":{"id":55},"status":"completed","conclusion":"success","display_title":format!("source-ci:{}",correlation_id("example-org/private-source",&"a".repeat(40),&"b".repeat(40),"ci"))}));
     fixture.response("GET","/repos/omnisolo-llc/leapterm-release/actions/runs/123/approvals",json!([{"state":"approved","user":{"id":99},"comment":format!("leapterm-source-ci-approval:{}",sha(approval)),"environments":[{"id":10,"name":"source-ci-authority"}]}]));
     fixture.response(
         "GET",
@@ -843,7 +845,7 @@ fn owned_http_discovery_reads_all_pages_and_rate_limits_before_dispatch() {
     let dir = tempfile::tempdir().unwrap();
     let env = discovery_environment(&fixture, dir.path());
     let first=(1..=100).map(|id|json!({"id":id,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/leapterm-release"},"head_sha":"b".repeat(40),"display_title":"other-reviewed-request"})).collect::<Vec<_>>();
-    let second = json!({"id":101,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/leapterm-release"},"head_sha":"b".repeat(40),"display_title":format!("source-ci:{}:{}:{}:ci","a".repeat(40),"b".repeat(40),"c".repeat(64))});
+    let second = json!({"id":101,"event":"workflow_dispatch","head_branch":"main","repository":{"full_name":"omnisolo-llc/leapterm-release"},"head_sha":"b".repeat(40),"display_title":format!("source-ci:{}",correlation_id("example-org/private-source",&"a".repeat(40),&"b".repeat(40),"ci"))});
     let page1 = "/repos/omnisolo-llc/leapterm-release/actions/workflows/source-ci.yml/runs?event=workflow_dispatch&branch=main&per_page=100&page=1";
     let page2 = "/repos/omnisolo-llc/leapterm-release/actions/workflows/source-ci.yml/runs?event=workflow_dispatch&branch=main&per_page=100&page=2";
     fixture.response(

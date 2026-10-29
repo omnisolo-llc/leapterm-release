@@ -626,6 +626,12 @@ export function redactSensitiveCommandOutput(value) {
       text = text.split(secretVal).join('[redacted]');
     }
   }
+  const publicOrg = 'omnisolo-llc';
+  const publicRepoName = 'leapterm-release';
+  const privateRepoPattern = new RegExp(
+    `(?:${publicOrg}\\/(?!${publicRepoName}\\b)|example-org\\/private-)[A-Za-z0-9._/-]+`,
+    'gi',
+  );
   return text
     .replace(
       /\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/g,
@@ -633,7 +639,7 @@ export function redactSensitiveCommandOutput(value) {
     )
     .replace(/x-access-token:[^\s@"']+/gi, 'x-access-token:[redacted]')
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
-    .replace(/omnisolo-llc\/(?!leapterm-release\b)[A-Za-z0-9._/-]+/gi, 'omnisolo-llc/[redacted]')
+    .replace(privateRepoPattern, '[redacted-repo]')
     .replace(/\bcloud\/deploy\/[A-Za-z0-9._/-]*/g, '[redacted-path]')
     .replace(/\/(?:home|Users)\/[^\s:'"]+/g, '[redacted-host-path]')
     .replace(/[A-Za-z]:\\Users\\[^\s:'"]+/g, '[redacted-host-path]');
@@ -816,10 +822,18 @@ export function locateEnrolledAgentEnv(homeDir) {
 
 export function verifyLiveAgentLifecycleAndZeroSshJoin({ agentBin, baseEnv, workRoot }) {
   const helpOut = runCommandChecked(agentBin, ['--help'], { env: baseEnv }).stdout;
-  if (!helpOut.includes('status') || !helpOut.includes('self-install')) {
+  const statusHelp = spawnSync(agentBin, ['status', '--help'], {
+    env: baseEnv,
+    encoding: 'utf8',
+  });
+  if (
+    !helpOut.includes('self-install') ||
+    statusHelp.status !== 0 ||
+    !String(statusHelp.stdout || '').includes('--json')
+  ) {
     return {
       skipped: true,
-      reason: 'binary predates status and self-install subcommands',
+      reason: 'binary predates status --json and self-install subcommands',
     };
   }
 
