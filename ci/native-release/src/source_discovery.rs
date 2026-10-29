@@ -99,6 +99,22 @@ impl Approval {
 pub fn request_digest(request: &SourceCiRequest) -> Result<String> {
     json_digest(&serde_json::to_value(request).map_err(|_| "Invalid Source-CI request encoding")?)
 }
+pub fn correlation_id(
+    source_repository: &str,
+    source_sha: &str,
+    release_builder_sha: &str,
+    stage: &str,
+) -> String {
+    let payload =
+        format!("leap-source-ci-v1:{source_repository}:{source_sha}:{release_builder_sha}:{stage}");
+    source_api::digest(payload.as_bytes())[..24].to_owned()
+}
+pub fn valid_correlation_id(value: &str) -> bool {
+    value.len() == 24
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
 fn repository(value: &Value, name: &str, private: bool) -> Result<Value> {
     if value["full_name"] != name
         || value["private"] != private
@@ -616,24 +632,26 @@ pub fn select_candidates(metadata: &Value, prior: &Value) -> Result<Value> {
         {
             return Err("Source-CI discovery candidate denied");
         }
-        let key = format!(
-            "{}:{}:{}:ci",
-            text(row, "source_sha")?,
-            text(row, "builder_sha")?,
-            text(row, "catalog_sha256")?
-        );
+        let source_sha = text(row, "source_sha")?;
+        let builder_sha = text(row, "builder_sha")?;
+        let catalog_sha256 = text(row, "catalog_sha256")?;
+        let cid = correlation_id(source_repo, source_sha, builder_sha, "ci");
+        let stage_cid = correlation_id(source_repo, source_sha, builder_sha, "source");
+        let key = format!("{source_sha}:{builder_sha}:{catalog_sha256}:ci");
         if !seen.insert(key) {
             return Err("Duplicate Source-CI discovery candidate");
         }
         if prior.iter().any(|r| {
-            r["source_sha"] == row["source_sha"]
+            r["mode"] == "ci"
                 && r["builder_sha"] == row["builder_sha"]
-                && r["catalog_sha256"] == row["catalog_sha256"]
-                && r["mode"] == "ci"
+                && (r["correlation_id"].as_str() == Some(cid.as_str())
+                    || r["correlation_id"].as_str() == Some(stage_cid.as_str())
+                    || (r["source_sha"] == row["source_sha"]
+                        && r["catalog_sha256"] == row["catalog_sha256"]))
         }) {
             continue;
         }
-        selected.push(json!({"source_ref":row["source_ref"],"source_sha":row["source_sha"],"builder_sha":row["builder_sha"],"catalog_sha256":row["catalog_sha256"],"mode":"ci"}));
+        selected.push(json!({"source_ref":row["source_ref"],"source_sha":row["source_sha"],"builder_sha":row["builder_sha"],"catalog_sha256":row["catalog_sha256"],"correlation_id":cid,"mode":"ci"}));
     }
     Ok(json!({"candidates":selected}))
 }
@@ -657,16 +675,12 @@ fn recorded_runs(public: &mut dyn SourceApi) -> Result<Value> {
                 return Err("Invalid Source-CI discovery run");
             }
             let title = text(run, "display_title")?;
-            let parts = title.split(':').collect::<Vec<_>>();
-            if parts.len() == 5
-                && parts[0] == "source-ci"
-                && crate::input::valid_sha(parts[1])
-                && crate::input::valid_sha(parts[2])
-                && hash(parts[3])
-                && parts[4] == "ci"
-                && run["head_sha"] == parts[2]
+            let head_sha = text(run, "head_sha")?;
+            if let Some(cid) = title.strip_prefix("source-ci:")
+                && valid_correlation_id(cid)
+                && crate::input::valid_sha(head_sha)
             {
-                rows.push(json!({"source_sha":parts[1],"builder_sha":parts[2],"catalog_sha256":parts[3],"mode":"ci"}));
+                rows.push(json!({"correlation_id":cid,"builder_sha":head_sha,"mode":"ci"}));
             }
         }
         if runs.len() < 100 {
@@ -801,7 +815,7 @@ pub fn discover_cli(args: &[String], env: &Environment) -> Result<()> {
         {
             return Err("Source-CI discovery binding expired before dispatch");
         }
-        let result=public.post_json(&format!("repos/{BUILDER_REPOSITORY}/actions/workflows/source-ci.yml/dispatches"),&json!({"ref":"main","inputs":{"source_sha":candidate["source_sha"],"source_ref":candidate["source_ref"],"builder_sha":candidate["builder_sha"],"catalog_sha256":candidate["catalog_sha256"]}}));
+        let result=public.post_json(&format!("repos/{BUILDER_REPOSITORY}/actions/workflows/source-ci.yml/dispatches"),&json!({"ref":"main","inputs":{"source_sha":candidate["source_sha"],"source_ref":candidate["source_ref"],"builder_sha":candidate["builder_sha"],"catalog_sha256":candidate["catalog_sha256"],"correlation_id":candidate["correlation_id"]}}));
         if result.is_err()
             && select_candidates(&one, &recorded_runs(&mut public)?)?["candidates"] != json!([])
         {

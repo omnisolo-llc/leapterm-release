@@ -6,7 +6,8 @@ use crate::{
     ci_request::{BUILDER_REPOSITORY, CI_STAGES, SourceCiRequest},
     source_api::{self, GitHubApi, Role, SourceApi, fields, text},
     source_discovery::{
-        acquire_approval, fresh_source, hosted_job, require_origin, run_jobs, subject_run,
+        acquire_approval, correlation_id, fresh_source, hosted_job, require_origin, run_jobs,
+        subject_run,
     },
     source_handoff::{read_handoffs, verify_handoff_metadata},
 };
@@ -170,11 +171,21 @@ pub fn report_cli(args: &[String], env: &Environment) -> Result<()> {
         shard_count: 1,
     };
     let run = subject_run(&mut public, &request.identity)?;
-    let title = format!(
-        "source-ci:{}:{}:{}:ci",
-        request.identity.source_sha, request.identity.builder_sha, approval.catalog_sha256
+    let ci_correlation_id = correlation_id(
+        &request.identity.source_repository,
+        &request.identity.source_sha,
+        &request.identity.builder_sha,
+        "ci",
     );
-    if run["display_title"] != title {
+    let stage_correlation_id = correlation_id(
+        &request.identity.source_repository,
+        &request.identity.source_sha,
+        &request.identity.builder_sha,
+        &request.stage,
+    );
+    let expected_ci_title = format!("source-ci:{ci_correlation_id}");
+    let expected_stage_title = format!("source-ci:{stage_correlation_id}");
+    if run["display_title"] != expected_ci_title && run["display_title"] != expected_stage_title {
         return Err("Source-CI report request title changed");
     }
     fresh_source(&mut source, &request, &approval)?;

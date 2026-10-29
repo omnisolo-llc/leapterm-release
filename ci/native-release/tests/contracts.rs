@@ -269,9 +269,9 @@ fn submodule_repo() -> (tempfile::TempDir, String, String) {
             "https://github.com/example-org/private-website.git",
         ),
         (
-            "vibe-space",
             "framework",
-            leap_release_launcher::source::FRAMEWORK_URL,
+            "framework",
+            leap_release_launcher::source::TEST_FRAMEWORK_URL,
         ),
     ] {
         git(
@@ -320,7 +320,10 @@ fn submodule_repo() -> (tempfile::TempDir, String, String) {
             "leapterm-website",
             "https://github.com/example-org/private-website.git",
         ),
-        ("framework", leap_release_launcher::source::FRAMEWORK_URL),
+        (
+            "framework",
+            leap_release_launcher::source::TEST_FRAMEWORK_URL,
+        ),
     ] {
         git(
             &root.path().join(path),
@@ -580,7 +583,7 @@ fn ordinary_release_subtree_and_core_framework_materialize() {
             "add",
             "-q",
             "--name",
-            "vibe-space",
+            "framework",
             seed.path().to_str().unwrap(),
             "core/framework",
         ],
@@ -591,8 +594,8 @@ fn ordinary_release_subtree_and_core_framework_materialize() {
             "config",
             "--file",
             ".gitmodules",
-            "submodule.vibe-space.url",
-            leap_release_launcher::source::FRAMEWORK_URL,
+            "submodule.framework.url",
+            leap_release_launcher::source::TEST_FRAMEWORK_URL,
         ],
     );
     git(
@@ -619,7 +622,7 @@ fn ordinary_release_subtree_and_core_framework_materialize() {
             "remote",
             "set-url",
             "origin",
-            leap_release_launcher::source::FRAMEWORK_URL,
+            leap_release_launcher::source::TEST_FRAMEWORK_URL,
         ],
     );
     git(

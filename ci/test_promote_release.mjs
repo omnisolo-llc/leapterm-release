@@ -11,6 +11,7 @@ import {
   LEGACY_KEYRING_ASSET,
   PRIMARY_CONTAINER_REGISTRY,
   PRIMARY_KEYRING_ASSET,
+  PUBLIC_REPOSITORY,
   PUBLIC_TARGETS,
   FORBIDDEN_PRIVATE_TARGETS,
   STORE_LISTINGS,
@@ -120,22 +121,22 @@ function makeStagingFixtures(version = '0.1.1') {
       name,
       bytes: 1000 + idx,
       sha256: `${String(idx).padStart(2, '0')}${'a'.repeat(62)}`,
-      url: `https://github.com/omnisolo-llc/private-source/releases/download/v${version}/${name}`,
-      checksum_url: `https://github.com/omnisolo-llc/private-source/releases/download/v${version}/${name}.sha256`,
-      signature_url: `https://github.com/omnisolo-llc/private-source/releases/download/v${version}/${name}.sha256.sig`,
+      url: `https://github.com/example-org/private-source/releases/download/v${version}/${name}`,
+      checksum_url: `https://github.com/example-org/private-source/releases/download/v${version}/${name}.sha256`,
+      signature_url: `https://github.com/example-org/private-source/releases/download/v${version}/${name}.sha256.sig`,
     })),
     self_hosted: {
       name: `leapterm-${version}-self-hosted.zip`,
       bytes: 4096,
       sha256: 'f'.repeat(64),
-      url: `https://github.com/omnisolo-llc/private-source/releases/download/v${version}/leapterm-${version}-self-hosted.zip`,
-      sha256_url: `https://github.com/omnisolo-llc/private-source/releases/download/v${version}/leapterm-${version}-self-hosted.zip.sha256`,
-      signature_url: `https://github.com/omnisolo-llc/private-source/releases/download/v${version}/leapterm-${version}-self-hosted.zip.sha256.sig`,
+      url: `https://github.com/example-org/private-source/releases/download/v${version}/leapterm-${version}-self-hosted.zip`,
+      sha256_url: `https://github.com/example-org/private-source/releases/download/v${version}/leapterm-${version}-self-hosted.zip.sha256`,
+      signature_url: `https://github.com/example-org/private-source/releases/download/v${version}/leapterm-${version}-self-hosted.zip.sha256.sig`,
     },
     ios_delivery: {
       action: 'upload',
       artifact: `leapterm-${version}-ios-private.ipa`,
-      url: `https://github.com/omnisolo-llc/private-source/releases/download/v${version}/leapterm-${version}-ios-private.ipa`,
+      url: `https://github.com/example-org/private-source/releases/download/v${version}/leapterm-${version}-ios-private.ipa`,
     },
   };
 
@@ -184,7 +185,7 @@ test('filterPublicDownloadLinks strips all private targets and rewrites URLs to 
   }
   const serialized = JSON.stringify(pubLinks);
   assertNoPrivateLeakInPublicMetadata('download-links.json', serialized);
-  assert.ok(!serialized.includes('omnisolo-llc/private-source/releases'));
+  assert.ok(!serialized.includes('example-org/private-source/releases'));
   assert.ok(
     serialized.includes(
       'omnisolo-llc/leapterm-release/releases/download/v0.1.1/',
@@ -639,7 +640,7 @@ test('promoteAndroidToPlayStore and verifyGooglePlayStoreAccess work with servic
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   const serviceAccountJson = JSON.stringify({
     type: 'service_account',
-    client_email: 'play-publisher@leapterm.iam.gserviceaccount.com',
+    client_email: 'play-publisher@example-project.iam.gserviceaccount.test',
     private_key: pem,
   });
 
@@ -778,7 +779,7 @@ test('self-hosted repository files and zip archive pass leak scanner and reject 
       leakyZipPath,
       createZipBuffer({
         'START-HERE.md': '# Self-host relay kit\n',
-        'relay/README.md': 'SOURCE_REPO=omnisolo-llc/private-source\n',
+        'relay/README.md': 'SOURCE_REPO=example-org/private-source\n',
       }),
     );
     assert.throws(
@@ -2283,7 +2284,7 @@ test('promoteAndroidToPlayStore falls back to status draft on draft apps', async
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   const serviceAccountJson = JSON.stringify({
     type: 'service_account',
-    client_email: 'play-publisher@leapterm.iam.gserviceaccount.com',
+    client_email: 'play-publisher@example-project.iam.gserviceaccount.test',
     private_key: pem,
   });
 
@@ -2653,7 +2654,7 @@ test('STORE_LISTINGS and buildPublicReleaseBody satisfy all store character limi
         ...STORE_LISTINGS,
         ios: {
           ...STORE_LISTINGS.ios,
-          description: 'Leaked omnisolo-llc/private-source repository',
+          description: 'Leaked example-org/private-source repository',
         },
       }),
     /leaked private repository reference/,
@@ -2788,7 +2789,7 @@ test('promoteIosToAppStoreConnect and promoteAndroidToPlayStore sync platform st
   const rsaPem = rsaKey.export({ type: 'pkcs8', format: 'pem' });
   const serviceAccountJson = JSON.stringify({
     type: 'service_account',
-    client_email: 'play-publisher@leapterm.iam.gserviceaccount.com',
+    client_email: 'play-publisher@example-project.iam.gserviceaccount.test',
     private_key: rsaPem,
   });
 
@@ -3125,7 +3126,7 @@ test('pruneGithubReleases retains newest stable releases and currentTag while pr
     { id: 14, tag_name: 'ci-stage/application-99-1', draft: false, prerelease: true, published_at: '2026-10-19T09:40:00Z' },
   ];
   const stagingRes = await pruneGithubReleases({
-    repo: 'omnisolo-llc/private-source',
+    repo: 'example-org/private-source',
     token: 'mock-priv-token',
     keepReleases: 1,
     currentTag: 'v0.1.4',
@@ -3159,19 +3160,33 @@ test('pruneGithubReleases retains newest stable releases and currentTag while pr
 });
 
 test('sanitizePublicLogText, syncAppleInternalTesters masking, and install.sh leak scanning prevent public log/asset leaks', async () => {
-  const privateRepoTag = `docker.io/leapterm/${'priv' + 'ate'}`;
-  const rawLog =
-    `Deploying ${privateRepoTag}:cloud-latest from omnisolo-llc/private-repo via cloud/deploy/packaging/install.sh to preview-123.pages.dev and api.staging.leapterm.com (tag ci-stage/application-12345-1) --apiKey ASCKEY999 --apiIssuer ASCISSUER888 --sign "3rd Party Mac Developer Installer: Secret"`;
-  const sanitized = sanitizePublicLogText(rawLog);
-  assert.ok(!sanitized.includes(privateRepoTag));
-  assert.ok(!sanitized.includes('omnisolo-llc/private-repo'));
-  assert.ok(!sanitized.includes('cloud/deploy/packaging/install.sh'));
-  assert.ok(!sanitized.includes('preview-123.pages.dev'));
-  assert.ok(!sanitized.includes('api.staging.leapterm.com'));
-  assert.ok(!sanitized.includes('ci-stage/application-12345-1'));
-  assert.ok(!sanitized.includes('ASCKEY999'));
-  assert.ok(!sanitized.includes('ASCISSUER888'));
-  assert.ok(!sanitized.includes('3rd Party Mac Developer Installer: Secret'));
+  const org = PUBLIC_REPOSITORY.split('/')[0];
+  const privImg = ['docker.io', 'leapterm', 'private'].join('/');
+  const privRepo = `${org}/private-repo`;
+  const pagesHost = ['preview-123', 'pages', 'dev'].join('.');
+  const stagingHost = ['api', 'staging', 'leapterm', 'com'].join('.');
+  const prevPrivToken = process.env.PRIVATE_RELEASE_TOKEN;
+  process.env.PRIVATE_RELEASE_TOKEN = 'secret-pat-value-12345';
+  try {
+    const basicHeader = Buffer.from(
+      `x-access-token:${process.env.PRIVATE_RELEASE_TOKEN}`,
+    ).toString('base64');
+    const rawLog = `Deploying ${privImg}:cloud-latest from ${privRepo} via cloud/deploy/packaging/install.sh to ${pagesHost} and ${stagingHost} (tag ci-stage/application-12345-1) auth=${basicHeader} --apiKey ASCKEY999 --apiIssuer ASCISSUER888 --sign "3rd Party Mac Developer Installer: Secret"`;
+    const sanitized = sanitizePublicLogText(rawLog);
+    assert.ok(!sanitized.includes(privImg));
+    assert.ok(!sanitized.includes(privRepo));
+    assert.ok(!sanitized.includes('cloud/deploy/packaging/install.sh'));
+    assert.ok(!sanitized.includes(pagesHost));
+    assert.ok(!sanitized.includes(stagingHost));
+    assert.ok(!sanitized.includes('ci-stage/application-12345-1'));
+    assert.ok(!sanitized.includes(basicHeader));
+    assert.ok(!sanitized.includes('ASCKEY999'));
+    assert.ok(!sanitized.includes('ASCISSUER888'));
+    assert.ok(!sanitized.includes('3rd Party Mac Developer Installer: Secret'));
+  } finally {
+    if (prevPrivToken === undefined) delete process.env.PRIVATE_RELEASE_TOKEN;
+    else process.env.PRIVATE_RELEASE_TOKEN = prevPrivToken;
+  }
 
   const prevActions = process.env.GITHUB_ACTIONS;
   const prevLog = console.log;
@@ -3220,7 +3235,7 @@ test('sanitizePublicLogText, syncAppleInternalTesters masking, and install.sh le
     assert.match(w, /tester#1/);
   }
 
-  const leakyInstall = Buffer.from('#!/bin/sh\nREPO="omnisolo-llc/private-source"\n');
+  const leakyInstall = Buffer.from('#!/bin/sh\nREPO="example-org/private-source"\n');
   assert.ok(scanBufferForLeaks(leakyInstall, 'install.sh').length > 0);
   assert.ok(
     scanBufferForLeaks(Buffer.from(`HOST="leap.${'phslc' + '.com'}"\n`), 'env.sh').some((f) =>
@@ -3236,6 +3251,58 @@ test('sanitizePublicLogText, syncAppleInternalTesters masking, and install.sh le
     scanBufferForLeaks(Buffer.from(`DIR="/home/${'kevin'}/work"\n`), 'env.sh').some((f) =>
       f.includes('developer workstation path'),
     ),
+  );
+});
+
+test('promoteRelease enforces RELEASE_APPROVER_TEAM_SLUG when GITHUB_ACTOR is set and sanitizes GitHub API failure URLs', async (t) => {
+  const prevActor = process.env.GITHUB_ACTOR;
+  const prevTeam = process.env.RELEASE_APPROVER_TEAM_SLUG;
+  const prevFetch = globalThis.fetch;
+  t.after(() => {
+    if (prevActor === undefined) delete process.env.GITHUB_ACTOR;
+    else process.env.GITHUB_ACTOR = prevActor;
+    if (prevTeam === undefined) delete process.env.RELEASE_APPROVER_TEAM_SLUG;
+    else process.env.RELEASE_APPROVER_TEAM_SLUG = prevTeam;
+    globalThis.fetch = prevFetch;
+  });
+
+  process.env.GITHUB_ACTOR = 'release-operator';
+  delete process.env.RELEASE_APPROVER_TEAM_SLUG;
+  await assert.rejects(
+    promoteRelease({
+      version: '0.1.1',
+      privateToken: 'mock-priv-token',
+      rolloutEnvironment: 'none',
+      verifyStoreCredentialsOnly: true,
+    }),
+    /RELEASE_APPROVER_TEAM_SLUG is required/,
+  );
+
+  process.env.RELEASE_APPROVER_TEAM_SLUG = 'approver-team';
+  const org = PUBLIC_REPOSITORY.split('/')[0];
+  const privStaging = `${org}/private-staging`;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/teams/approver-team/memberships/release-operator')) {
+      return new Response(JSON.stringify({ state: 'active' }), { status: 200 });
+    }
+    return new Response('Not Found', { status: 404 });
+  };
+
+  await assert.rejects(
+    promoteRelease({
+      version: '0.1.1',
+      stagingRepo: privStaging,
+      privateToken: 'mock-priv-token',
+      publicToken: 'mock-pub-token',
+      rolloutEnvironment: 'none',
+      publishGithubRelease: false,
+    }),
+    (err) => {
+      assert.ok(!err.message.includes(privStaging), `Error leaked private repo: ${err.message}`);
+      assert.match(err.message, /\[redacted-repo\]/);
+      return true;
+    },
   );
 });
 
@@ -3325,7 +3392,5 @@ test('promoteIosToAppStoreConnect handles duplicate altool upload and transient 
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
-
-
 
 

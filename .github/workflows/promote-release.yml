@@ -83,7 +83,7 @@ on:
           - beta
           - production
       verify_store_credentials_only:
-        description: Verify live Google Play and Apple App Store Connect API credentials and Release Eng authorization without mutating releases
+        description: Verify live Google Play and Apple App Store Connect API credentials and release approver authorization without mutating releases
         required: false
         default: false
         type: boolean
@@ -166,6 +166,7 @@ jobs:
           PROMOTE_ANDROID_STORE_ACTION: ${{ inputs.android_store_action }}
           VERIFY_STORE_CREDENTIALS_ONLY: ${{ inputs.verify_store_credentials_only }}
           GITHUB_ACTOR: ${{ github.actor }}
+          RELEASE_APPROVER_TEAM_SLUG: ${{ vars.RELEASE_APPROVER_TEAM_SLUG || secrets.RELEASE_APPROVER_TEAM_SLUG }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
           PACKAGE_SIGNING_CONFIG: ${{ secrets.PACKAGE_SIGNING_CONFIG }}
@@ -211,19 +212,22 @@ jobs:
               local log_file="$DOCS_TMP_DIR/step-cmd.log"
               if ! "$@" >"$log_file" 2>&1; then
                 echo "Error: ${label} failed" >&2
-                sed -E \
-                  -e 's#omnisolo-llc/(leapterm\b|[A-Za-z0-9._-]+)#omnisolo-llc/[redacted]#g' \
-                  -e 's#[A-Za-z0-9.-]+\.pages\.dev#[redacted-pages-host]#g' \
-                  -e 's#[A-Za-z0-9.-]*\.staging\.leapterm\.com#[redacted-staging-host]#g' \
-                  -e 's#(docker\.io/)?leapterm/[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)?#[redacted-image]#g' \
-                  -e 's#cloud/deploy/[A-Za-z0-9._/-]*#[redacted-path]#g' \
-                  "$log_file" | tail -n 25 >&2 || true
+                LOG_FILE="$log_file" PROMOTE_SCRIPT="$GITHUB_WORKSPACE/ci/promote-release.mjs" node --input-type=module -e '
+                  import fs from "node:fs";
+                  import { pathToFileURL } from "node:url";
+                  const { sanitizePublicLogText } = await import(pathToFileURL(process.env.PROMOTE_SCRIPT).href);
+                  const raw = fs.readFileSync(process.env.LOG_FILE, "utf8");
+                  const lines = sanitizePublicLogText(raw).split(/\r?\n/).slice(-25);
+                  process.stderr.write(lines.join("\n") + "\n");
+                ' || true
                 exit 1
               fi
             }
             git init -q "$DOCS_TMP_DIR/source"
             git -C "$DOCS_TMP_DIR/source" remote add origin "https://github.com/${SOURCE_REPOSITORY}.git"
-            git -C "$DOCS_TMP_DIR/source" -c "http.https://github.com/.extraHeader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PRIVATE_RELEASE_TOKEN" | base64 | tr -d '\n')" fetch --depth=1 -q origin "$SOURCE_BRANCH"
+            GIT_AUTH="$(printf 'x-access-token:%s' "$PRIVATE_RELEASE_TOKEN" | base64 | tr -d '\n')"
+            echo "::add-mask::${GIT_AUTH}"
+            run_sanitized "source checkout fetch" git -C "$DOCS_TMP_DIR/source" -c "http.https://github.com/.extraHeader=AUTHORIZATION: basic ${GIT_AUTH}" fetch --depth=1 -q origin "$SOURCE_BRANCH"
             git -C "$DOCS_TMP_DIR/source" checkout -q FETCH_HEAD
             rm -rf "$DOCS_TMP_DIR/source/.git"
             if [ -d "$DOCS_TMP_DIR/source/website" ]; then
@@ -351,6 +355,7 @@ jobs:
           PROMOTE_ANDROID_STORE_ACTION: none
           VERIFY_STORE_CREDENTIALS_ONLY: ${{ inputs.verify_store_credentials_only }}
           GITHUB_ACTOR: ${{ github.actor }}
+          RELEASE_APPROVER_TEAM_SLUG: ${{ vars.RELEASE_APPROVER_TEAM_SLUG || secrets.RELEASE_APPROVER_TEAM_SLUG }}
           PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
           IOS_SIGNING_CONFIG: ${{ secrets.IOS_SIGNING_CONFIG }}
           MACOS_SIGNING_CONFIG: ${{ secrets.MACOS_SIGNING_CONFIG }}

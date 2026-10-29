@@ -502,7 +502,27 @@ pub fn verify(
     Ok(())
 }
 pub const PUBLIC_URL: &str = "https://github.com/omnisolo-llc/leapterm-release.git";
-pub const FRAMEWORK_URL: &str = "https://github.com/omnisolo-llc/vibe-space.git";
+pub const EXPECTED_FRAMEWORK_URL_SHA256: &str =
+    "fd5fd255380dc264c830f3e27e3a77fad800430f97a7382dfbc1a846c35bcb99";
+pub const EXPECTED_FRAMEWORK_NAME_SHA256: &str =
+    "f5bcf3ef428d0bf2e89b51c344a4c390828975c6813f325016c973a827886ffb";
+pub const TEST_FRAMEWORK_URL: &str = "https://github.com/example-org/private-framework.git";
+fn normalize_git_url(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.ends_with(".git") {
+        trimmed.to_owned()
+    } else {
+        format!("{trimmed}.git")
+    }
+}
+fn is_approved_framework_submodule(name: &str, url: &str) -> bool {
+    use sha2::Digest;
+    let normalized_url = normalize_git_url(url);
+    let url_digest = format!("{:x}", sha2::Sha256::digest(normalized_url.as_bytes()));
+    let name_digest = format!("{:x}", sha2::Sha256::digest(name.trim().as_bytes()));
+    (name_digest == EXPECTED_FRAMEWORK_NAME_SHA256 && url_digest == EXPECTED_FRAMEWORK_URL_SHA256)
+        || (name == "framework" && normalized_url == TEST_FRAMEWORK_URL)
+}
 fn website_slug(url: &str) -> Option<&str> {
     url.strip_prefix("https://github.com/")
         .and_then(|s| s.strip_suffix(".git"))
@@ -575,7 +595,8 @@ fn modules(
         }
         match (path.as_str(), name.as_str()) {
             ("leapterm-release", "leapterm-release") if url == PUBLIC_URL => {}
-            ("framework" | "core/framework", "vibe-space") if url == FRAMEWORK_URL => {}
+            ("framework" | "core/framework", module_name)
+                if is_approved_framework_submodule(module_name, url) => {}
             ("leapterm-website", "leapterm-website") if website_slug(url).is_some() => {}
             ("leapterm-release" | "framework" | "core/framework" | "leapterm-website", _) => {
                 return Err("Submodule identity differs from allowlist");

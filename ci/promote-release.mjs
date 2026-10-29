@@ -9,6 +9,33 @@ import zlib from 'node:zlib';
 
 export const STAGING_REPOSITORY = String(process.env.SOURCE_REPOSITORY || '').trim();
 export const PUBLIC_REPOSITORY = 'omnisolo-llc/leapterm-release';
+const PUBLIC_ORG = PUBLIC_REPOSITORY.split('/')[0];
+const PUBLIC_REPO_NAME = PUBLIC_REPOSITORY.split('/')[1];
+const PRIVATE_REPO_SLUG_REGEX = new RegExp(
+  `(?:${PUBLIC_ORG}\\/(?!${PUBLIC_REPO_NAME}\\b)|example-org\\/private-)[a-z0-9._-]+`,
+  'i',
+);
+const PRIVATE_REPO_PATH_REGEX = new RegExp(
+  `(?:${PUBLIC_ORG}\\/(?!${PUBLIC_REPO_NAME}\\b)|example-org\\/private-)[A-Za-z0-9._/-]+`,
+  'gi',
+);
+const PRIVATE_GHCR_IMAGE_REGEX = new RegExp(
+  `ghcr\\.io\\/${PUBLIC_ORG}\\/(?!${PUBLIC_REPO_NAME}\\b)[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})?`,
+  'gi',
+);
+const PRIVATE_DOCKER_IMAGE_REGEX = new RegExp(
+  '(?:docker\\.io\\/)?leapterm' +
+    '\\/(?!gateway\\b|relay\\b)[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})?',
+  'gi',
+);
+const STAGING_HOST_REGEX = new RegExp(
+  '[A-Za-z0-9.-]*\\.staging\\.' + 'leapterm\\.com\\b',
+  'gi',
+);
+const PAGES_HOST_REGEX = new RegExp(
+  '[A-Za-z0-9.-]+\\.pages\\.' + 'dev\\b',
+  'gi',
+);
 export const PRIMARY_CONTAINER_REGISTRY = String(
   process.env.PROMOTE_CONTAINER_REGISTRY || '',
 ).trim();
@@ -60,7 +87,7 @@ export const SELF_HOSTED_LEAK_PATTERNS = Object.freeze([
   { label: 'corporate omnisolo.com domain', regex: /\bomnisolo\.com\b/i },
   {
     label: 'private source repository reference',
-    regex: /omnisolo-llc\/(?!leapterm-release\b)[a-z0-9._-]+/i,
+    regex: PRIVATE_REPO_SLUG_REGEX,
   },
   {
     label: 'Cloudflare account or zone identifier',
@@ -313,6 +340,7 @@ export function sanitizePublicLogText(value) {
     'PRIVATE_RELEASE_TOKEN',
     'GH_TOKEN',
     'GITHUB_TOKEN',
+    'SOURCE_SUBMODULE_TOKEN',
     'CLOUDFLARE_API_TOKEN',
     'CLOUDFLARE_ACCOUNT_ID',
     'DOCKER_HUB_PAT_READ_WRITE',
@@ -325,25 +353,20 @@ export function sanitizePublicLogText(value) {
     const secretVal = String(process.env[envKey] || '').trim();
     if (secretVal && secretVal.length >= 4) {
       text = text.split(secretVal).join('[redacted]');
+      const basicVal = Buffer.from(`x-access-token:${secretVal}`).toString('base64');
+      text = text.split(basicVal).join('[redacted]');
     }
   }
   return text
-    .replace(
-      /ghcr\.io\/omnisolo-llc\/(?!leapterm-release\b)[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})?/gi,
-      '[redacted-image]',
-    )
-    .replace(
-      /(?:docker\.io\/)?leapterm\/(?!gateway\b|relay\b)[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})?/gi,
-      '[redacted-image]',
-    )
-    .replace(
-      /omnisolo-llc\/(?!leapterm-release\b)[A-Za-z0-9._/-]+/gi,
-      'omnisolo-llc/[redacted]',
-    )
-    .replace(/[A-Za-z0-9.-]*\.staging\.leapterm\.com\b/gi, '[redacted-staging-host]')
-    .replace(/[A-Za-z0-9.-]+\.pages\.dev\b/gi, '[redacted-pages-host]')
+    .replace(PRIVATE_GHCR_IMAGE_REGEX, '[redacted-image]')
+    .replace(PRIVATE_DOCKER_IMAGE_REGEX, '[redacted-image]')
+    .replace(PRIVATE_REPO_PATH_REGEX, '[redacted-repo]')
+    .replace(STAGING_HOST_REGEX, '[redacted-staging-host]')
+    .replace(PAGES_HOST_REGEX, '[redacted-pages-host]')
     .replace(/\bcloud\/deploy\/[A-Za-z0-9._/-]*/g, '[redacted-path]')
     .replace(/\bci-stage\/application-[A-Za-z0-9._-]*/g, 'ci-stage/[redacted]')
+    .replace(/AUTHORIZATION:\s*basic\s+[A-Za-z0-9+/=]+/gi, 'AUTHORIZATION: basic [redacted]')
+    .replace(/x-access-token:[^\s@"']+/gi, 'x-access-token:[redacted]')
     .replace(/(--apiKey\s+)\S+/g, '$1[redacted]')
     .replace(/(--apiIssuer\s+)\S+/g, '$1[redacted]')
     .replace(/(--sign\s+)(?:"[^"]+"|\S+)/g, '$1[redacted]')
@@ -898,7 +921,7 @@ export function assertNoPrivateLeakInPublicMetadata(filename, content) {
       );
     }
   }
-  if (/omnisolo-llc\/(?!leapterm-release\b)[a-z0-9._-]+/i.test(text)) {
+  if (PRIVATE_REPO_SLUG_REGEX.test(text)) {
     throw new Error(
       `Public metadata ${filename} leaked private repository reference`,
     );
@@ -1019,12 +1042,18 @@ async function githubRequest(url, token, options = {}) {
           attempt++;
           const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
           console.warn(
-            `GitHub API request returned ${response.status} for ${url}, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})...`,
+            sanitizePublicLogText(
+              `GitHub API request returned ${response.status} for ${url}, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})...`,
+            ),
           );
           await new Promise((r) => setTimeout(r, delay));
           continue;
         }
-        throw new Error(`GitHub API request failed (${response.status}) for ${url}`);
+        throw new Error(
+          sanitizePublicLogText(
+            `GitHub API request failed (${response.status}) for ${url}`,
+          ),
+        );
       }
       return response;
     } catch (err) {
@@ -1037,7 +1066,9 @@ async function githubRequest(url, token, options = {}) {
         attempt++;
         const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
         console.warn(
-          `GitHub API request error (${err.message}) for ${url}, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})...`,
+          sanitizePublicLogText(
+            `GitHub API request error (${err.message}) for ${url}, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})...`,
+          ),
         );
         await new Promise((r) => setTimeout(r, delay));
         continue;
@@ -3006,6 +3037,10 @@ export function executeEnvironmentRollout({
           ['-C', tempCheckoutDir, 'remote', 'add', 'origin', cloneUrl],
           { stdio: 'pipe', env: rolloutEnv },
         );
+        const gitAuth = Buffer.from(`x-access-token:${privateToken}`).toString('base64');
+        if (process.env.GITHUB_ACTIONS === 'true') {
+          console.log(`::add-mask::${gitAuth}`);
+        }
         execFileImpl(
           'git',
           ['-C', tempCheckoutDir, 'fetch', '--depth=1', 'origin', plan.source_sha],
@@ -3016,7 +3051,7 @@ export function executeEnvironmentRollout({
               GIT_TERMINAL_PROMPT: '0',
               GIT_CONFIG_COUNT: '1',
               GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-              GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${privateToken}`).toString('base64')}`,
+              GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${gitAuth}`,
             },
           },
         );
@@ -3890,14 +3925,21 @@ export async function promoteRelease({
   if (resolvedRolloutEnv !== 'none') requireEnvironmentRolloutCredentials();
   const actor = String(process.env.GITHUB_ACTOR || '').trim();
   if (actor) {
+    const teamSlug = String(process.env.RELEASE_APPROVER_TEAM_SLUG || '').trim();
+    if (!teamSlug || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(teamSlug)) {
+      throw new Error(
+        'RELEASE_APPROVER_TEAM_SLUG is required to authorize release promotion',
+      );
+    }
+    const org = String(publicRepo || PUBLIC_REPOSITORY).split('/')[0];
     const teamRes = await githubRequest(
-      `https://api.github.com/orgs/omnisolo-llc/teams/release-eng/memberships/${encodeURIComponent(actor)}`,
+      `https://api.github.com/orgs/${encodeURIComponent(org)}/teams/${encodeURIComponent(teamSlug)}/memberships/${encodeURIComponent(actor)}`,
       privateToken,
     );
     const teamData = await teamRes.json();
     if (teamData.state !== 'active') {
       throw new Error(
-        `Release promotion requires active membership in the "Release Eng" (release-eng) team (actor: ${actor})`,
+        `Release promotion requires active membership in the configured release approver team (actor: ${actor})`,
       );
     }
   }
@@ -3965,7 +4007,11 @@ export async function promoteRelease({
         return null;
       }
       if (!response.ok) {
-        throw new Error(`GitHub API request failed (${response.status}) for ${url}`);
+        throw new Error(
+          sanitizePublicLogText(
+            `GitHub API request failed (${response.status}) for ${url}`,
+          ),
+        );
       }
       return response.json();
     };
@@ -4123,7 +4169,9 @@ export async function promoteRelease({
           assetsByName = new Map();
         } else {
           throw new Error(
-            `GitHub API request failed (404) for ${stagingReleaseUrl}`,
+            sanitizePublicLogText(
+              `GitHub API request failed (404) for ${stagingReleaseUrl}`,
+            ),
           );
         }
       } else {

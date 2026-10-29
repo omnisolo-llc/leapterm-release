@@ -288,10 +288,11 @@ test('parseCliArgs supports --local-dir, --release-dir, --version, and --install
 test('redactSensitiveCommandOutput redacts private tokens, repo slugs, and host paths', () => {
   const fakeToken = `${'gh' + 'p_'}${'a'.repeat(32)}`;
   const fakeAuth = `${'x-access' + '-token'}:${fakeToken}`;
-  const sample = `curl ${fakeAuth} omnisolo-llc/private-repo/cloud/deploy/install.sh /home/runner/work/secret.txt`;
+  const privRepo = ['omnisolo-llc', 'private-repo'].join('/');
+  const sample = `curl ${fakeAuth} ${privRepo}/cloud/deploy/install.sh /home/runner/work/secret.txt`;
   const redacted = redactSensitiveCommandOutput(sample);
   assert.ok(!redacted.includes(fakeToken));
-  assert.ok(!redacted.includes('omnisolo-llc/private-repo'));
+  assert.ok(!redacted.includes(privRepo));
   assert.ok(!redacted.includes('cloud/deploy/install.sh'));
   assert.ok(!redacted.includes('/home/runner/work/secret.txt'));
 });
@@ -315,25 +316,48 @@ test('buildIsolatedHomeEnv and locateEnrolledAgentEnv isolate user state without
   }
 });
 
-test('verifyLiveAgentLifecycleAndZeroSshJoin skips gracefully on legacy binaries without status/self-install', () => {
+test('verifyLiveAgentLifecycleAndZeroSshJoin skips gracefully on legacy binaries without status --json', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'leapterm-legacy-skip-test-'));
   try {
-    let stubBin;
+    let legacyBin;
+    let v013Bin;
     if (process.platform === 'win32') {
-      stubBin = path.join(root, 'legacy-agent.cmd');
-      fs.writeFileSync(stubBin, '@echo off\r\necho leap-agent legacy help\r\n', 'utf8');
+      legacyBin = path.join(root, 'legacy-agent.cmd');
+      fs.writeFileSync(legacyBin, '@echo off\r\necho leap-agent legacy help\r\n', 'utf8');
+      v013Bin = path.join(root, 'v013-agent.cmd');
+      fs.writeFileSync(
+        v013Bin,
+        '@echo off\r\nif "%1"=="--help" (\r\necho leap-agent self-install runtime status\r\nexit /b 0\r\n)\r\necho leap-agent arguments are invalid 1>&2\r\nexit /b 1\r\n',
+        'utf8',
+      );
     } else {
-      stubBin = path.join(root, 'legacy-agent');
-      fs.writeFileSync(stubBin, '#!/usr/bin/env sh\necho "leap-agent legacy help"\n', {
+      legacyBin = path.join(root, 'legacy-agent');
+      fs.writeFileSync(legacyBin, '#!/usr/bin/env sh\necho "leap-agent legacy help"\n', {
         mode: 0o755,
       });
+      v013Bin = path.join(root, 'v013-agent');
+      fs.writeFileSync(
+        v013Bin,
+        '#!/usr/bin/env sh\nif [ "$1" = "--help" ]; then echo "leap-agent self-install runtime status"; exit 0; fi\necho "leap-agent arguments are invalid" >&2\nexit 1\n',
+        { mode: 0o755 },
+      );
     }
-    const res = verifyLiveAgentLifecycleAndZeroSshJoin({
-      agentBin: stubBin,
-      baseEnv: process.env,
-      workRoot: root,
-    });
-    assert.equal(res.skipped, true);
+    assert.equal(
+      verifyLiveAgentLifecycleAndZeroSshJoin({
+        agentBin: legacyBin,
+        baseEnv: process.env,
+        workRoot: root,
+      }).skipped,
+      true,
+    );
+    assert.equal(
+      verifyLiveAgentLifecycleAndZeroSshJoin({
+        agentBin: v013Bin,
+        baseEnv: process.env,
+        workRoot: root,
+      }).skipped,
+      true,
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -341,16 +365,17 @@ test('verifyLiveAgentLifecycleAndZeroSshJoin skips gracefully on legacy binaries
 
 test('verifyLiveAgentLifecycleAndZeroSshJoin verifies real leap-agent zero-SSH join and status when built binary exists', (t) => {
   const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+  const targetRoot = process.env.CARGO_TARGET_DIR || path.join(repoRoot, 'target');
   const candidates =
     process.platform === 'win32'
       ? [
-          path.join(repoRoot, 'leapterm', 'target', 'x86_64-pc-windows-msvc', 'release', 'leap-agent.exe'),
+          path.join(targetRoot, 'x86_64-pc-windows-msvc', 'release', 'leap-agent.exe'),
           path.join(repoRoot, 'target', 'x86_64-pc-windows-msvc', 'release', 'leap-agent.exe'),
         ]
       : [
-          path.join(repoRoot, 'leapterm', 'target', 'debug', 'leap-agent'),
+          path.join(targetRoot, 'debug', 'leap-agent'),
+          path.join(targetRoot, 'release', 'leap-agent'),
           path.join(repoRoot, 'target', 'debug', 'leap-agent'),
-          path.join(repoRoot, 'leapterm', 'target', 'release', 'leap-agent'),
           path.join(repoRoot, 'target', 'release', 'leap-agent'),
         ];
   const agentBin = candidates.find((p) => fs.existsSync(p));

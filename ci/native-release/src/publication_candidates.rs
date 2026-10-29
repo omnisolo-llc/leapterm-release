@@ -251,44 +251,6 @@ impl Plan {
             _ => format!("v{version}"),
         }
     }
-    fn legacy_notes(&self) -> Result<Option<String>> {
-        let name = format!(
-            "leapterm-{}-release-provenance.json",
-            self.document.release["version"]
-                .as_str()
-                .ok_or("Invalid release version")?
-        );
-        if !self.document.files.contains_key(&name) {
-            return Ok(None);
-        }
-        let provenance = read(&self.directory.join(name), MAX_PLAN)?;
-        for (field, value) in [
-            ("source_sha", json!(self.document.identity.source_sha)),
-            ("builder_sha", json!(self.document.identity.builder_sha)),
-            ("run_id", json!(self.document.identity.run_id)),
-            ("attempt", json!(self.document.identity.attempt)),
-            ("version", self.document.release["version"].clone()),
-            (
-                "build_number",
-                self.document.release["build_number"].clone(),
-            ),
-        ] {
-            if provenance[field] != value {
-                return Err("Legacy draft proof differs from the verified candidate");
-            }
-        }
-        let proof = provenance["proof"]
-            .as_str()
-            .ok_or("Missing signed release proof")?;
-        if proof.len() != 64
-            || !proof
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err("Invalid signed release proof");
-        }
-        Ok(Some(format!("<!-- release-attempt:{proof} -->")))
-    }
     fn verify_files(&self) -> Result<()> {
         safe_directory(&self.directory)?;
         let names: BTreeSet<_> = fs::read_dir(&self.directory)
@@ -541,159 +503,11 @@ pub enum Publication {
     Published,
     AlreadyPublished,
 }
-fn release(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Option<Value>> {
-    let mut found = None;
-    let mut ids = BTreeSet::new();
-    for page in 1..=100 {
-        let value = api.get_json(&format!(
-            "repos/{REPOSITORY}/releases?per_page=100&page={page}"
-        ))?;
-        let rows = value
-            .as_array()
-            .filter(|r| r.len() <= 100)
-            .ok_or("Invalid release inventory")?;
-        for row in rows {
-            let id = row["id"]
-                .as_u64()
-                .filter(|n| *n > 0)
-                .ok_or("Invalid release identity")?;
-            if !ids.insert(id) {
-                return Err("Duplicate release identity");
-            }
-            let tag = row["tag_name"].as_str().ok_or("Invalid release tag")?;
-            if tag == plan.tag() && found.replace(row.clone()).is_some() {
-                return Err("Duplicate release tag");
-            }
-        }
-        if rows.len() < 100 {
-            return Ok(found);
-        }
-    }
-    Err("Release inventory exceeds bound")
-}
-fn check_release(plan: &Plan, release: &Value) -> Result<(u64, bool)> {
-    let id = release["id"]
-        .as_u64()
-        .filter(|n| *n > 0)
-        .ok_or("Invalid release identity")?;
-    let draft = release["draft"].as_bool().ok_or("Missing release state")?;
-    if release["tag_name"] != plan.tag()
-        || release["target_commitish"] != plan.document.identity.builder_sha
-        || (release["body"] != plan.notes()
-            && !(draft
-                && plan
-                    .legacy_notes()?
-                    .is_some_and(|notes| release["body"] == notes)))
-        || release["prerelease"] != false
-    {
-        return Err("Existing release belongs to different reviewed bytes");
-    }
-    Ok((id, draft))
-}
-fn assets(
-    plan: &Plan,
-    api: &mut impl ReleaseApi,
-    id: u64,
-    complete: bool,
-) -> Result<BTreeMap<String, u64>> {
-    let value = api.get_json(&format!(
-        "repos/{REPOSITORY}/releases/{id}/assets?per_page=100"
-    ))?;
-    let rows = value
-        .as_array()
-        .filter(|rows| rows.len() < 100)
-        .ok_or("Incomplete asset inventory")?;
-    let mut result = BTreeMap::new();
-    let mut ids = BTreeSet::new();
-    let directory = tempfile::tempdir().map_err(|_| "Asset readback directory unavailable")?;
-    for asset in rows {
-        let name = asset["name"].as_str().ok_or("Invalid release asset name")?;
-        let record = plan
-            .document
-            .files
-            .get(name)
-            .ok_or("Release contains an unreviewed asset")?;
-        let asset_id = asset["id"]
-            .as_u64()
-            .filter(|n| *n > 0)
-            .ok_or("Invalid asset identity")?;
-        if asset["state"] != "uploaded"
-            || asset["size"] != record.bytes
-            || !ids.insert(asset_id)
-            || result.insert(name.into(), asset_id).is_some()
-        {
-            return Err("Invalid or duplicate release asset");
-        }
-        let path = directory.path().join(name);
-        api.download(asset_id, &path)?;
-        verify_record(&path, record)?;
-    }
-    if complete
-        && result.keys().collect::<Vec<_>>() != plan.document.files.keys().collect::<Vec<_>>()
-    {
-        return Err("Existing public release is incomplete");
-    }
-    Ok(result)
-}
-pub fn publish(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publication> {
+pub fn publish(plan: &Plan, _api: &mut impl ReleaseApi) -> Result<Publication> {
     plan.verify_files()?;
-    let repository = api.get_json(&format!("repos/{REPOSITORY}"))?;
-    if repository["full_name"] != REPOSITORY || repository["private"] != false {
-        return Err("Public repository visibility differs from reviewed scope");
-    }
-    let existing = release(plan, api)?;
-    let info = match existing {
-        Some(info) => info,
-        None => api.write_json("POST",&format!("repos/{REPOSITORY}/releases"),&json!({"tag_name":plan.tag(),"target_commitish":plan.document.identity.builder_sha,"name":format!("LeapTerm {}",plan.tag()),"body":plan.notes(),"draft":true,"prerelease":false}))?,
-    };
-    let (id, draft) = check_release(plan, &info)?;
-    let existing = assets(plan, api, id, !draft)?;
-    if !draft {
-        return Ok(Publication::AlreadyPublished);
-    }
-    if info["body"] != plan.notes() {
-        // The signed current proof and EVERY existing asset have already been
-        // verified. Bind the same draft to the exact plan before adding bytes.
-        let bound = api.write_json(
-            "PATCH",
-            &format!("repos/{REPOSITORY}/releases/{id}"),
-            &json!({"body":plan.notes()}),
-        )?;
-        if check_release(plan, &bound)? != (id, true) || bound["body"] != plan.notes() {
-            return Err("Legacy draft did not retain its verified identity");
-        }
-    }
-    for (name, record) in &plan.document.files {
-        if existing.contains_key(name) {
-            continue;
-        }
-        let path = plan.directory.join(name);
-        verify_record(&path, record)?;
-        let uploaded = api.upload(id, name, &path)?;
-        if uploaded["name"] != *name
-            || uploaded["state"] != "uploaded"
-            || uploaded["size"] != record.bytes
-            || uploaded["id"].as_u64().is_none_or(|n| n == 0)
-        {
-            return Err("Public asset upload response differs from candidate");
-        }
-    }
-    plan.verify_files()?;
-    assets(plan, api, id, true)?;
-    let updated = api.write_json(
-        "PATCH",
-        &format!("repos/{REPOSITORY}/releases/{id}"),
-        &json!({"draft":false,"make_latest":"true"}),
-    )?;
-    if check_release(plan, &updated)? != (id, false) {
-        return Err("Public release promotion did not preserve identity");
-    }
-    let current = api.get_json(&format!("repos/{REPOSITORY}/releases/{id}"))?;
-    if check_release(plan, &current)? != (id, false) {
-        return Err("Published release readback differs from native plan");
-    }
-    assets(plan, api, id, true)?;
-    Ok(Publication::Published)
+    Err(
+        "Direct public release creation on omnisolo-llc/leapterm-release is refused; publish to private staging first",
+    )
 }
 
 fn release_for_repo(plan: &Plan, api: &mut impl ReleaseApi, repo: &str) -> Result<Option<Value>> {
@@ -910,11 +724,25 @@ pub fn publish_to_staging(plan: &Plan, api: &mut impl ReleaseApi) -> Result<Publ
     {
         let actor = actor.trim();
         if !actor.is_empty() {
-            let membership = api.get_json(&format!(
-                "orgs/omnisolo-llc/teams/release-eng/memberships/{actor}"
-            ))?;
+            let team = std::env::var("RELEASE_APPROVER_TEAM_SLUG")
+                .ok()
+                .map(|slug| slug.trim().to_owned())
+                .filter(|slug| !slug.is_empty())
+                .ok_or("RELEASE_APPROVER_TEAM_SLUG is required")?;
+            let valid_slug = |s: &str| {
+                !s.is_empty()
+                    && s.len() <= 100
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            };
+            if !valid_slug(&team) || !valid_slug(actor) {
+                return Err("Invalid release approver team or actor slug");
+            }
+            let org = REPOSITORY.split('/').next().unwrap_or(REPOSITORY);
+            let membership =
+                api.get_json(&format!("orgs/{org}/teams/{team}/memberships/{actor}"))?;
             if membership["state"] != "active" {
-                return Err("Release actor is not an active member of Release Eng");
+                return Err("Release actor is not an active member of the release approver team");
             }
         }
     }

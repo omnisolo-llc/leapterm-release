@@ -2510,6 +2510,7 @@ jobs:
         run: bash ci/native-release/run.sh publish-candidates
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+          RELEASE_APPROVER_TEAM_SLUG: ${{ vars.RELEASE_APPROVER_TEAM_SLUG || secrets.RELEASE_APPROVER_TEAM_SLUG }}
           APPROVED_PRIVATE_ARCHIVE_PROOF_SHA256: ${{ steps.private_final_archive_readback.outputs.private_archive_proof_sha256 }}
           APPROVED_NATIVE_VERIFIER_SHA256: ${{ steps.publication_candidates.outputs.native_verifier_sha256 }}
           APPROVED_PUBLICATION_PLAN_SHA256: ${{ steps.publication_candidates.outputs.publication_plan_sha256 }}

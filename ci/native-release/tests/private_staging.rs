@@ -84,6 +84,7 @@ enum Failure {
 struct State {
     repository: Value,
     membership_actor: Option<String>,
+    membership_team: Option<String>,
     membership: Value,
     release: Option<Value>,
     assets: BTreeMap<u64, Asset>,
@@ -127,6 +128,10 @@ impl State {
                 .ok()
                 .map(|actor| actor.trim().to_owned())
                 .filter(|actor| !actor.is_empty()),
+            membership_team: std::env::var("RELEASE_APPROVER_TEAM_SLUG")
+                .ok()
+                .map(|team| team.trim().to_owned())
+                .filter(|team| !team.is_empty()),
             membership: json!({"state":"active"}),
             release: Some(release(plan, draft)),
             assets,
@@ -230,7 +235,13 @@ impl State {
             self.repository.clone()
         } else if method == "GET"
             && self.membership_actor.as_ref().is_some_and(|actor| {
-                endpoint == format!("orgs/omnisolo-llc/teams/release-eng/memberships/{actor}")
+                self.membership_team.as_ref().is_some_and(|team| {
+                    let org = publication_candidates::REPOSITORY
+                        .split('/')
+                        .next()
+                        .unwrap_or(publication_candidates::REPOSITORY);
+                    endpoint == format!("orgs/{org}/teams/{team}/memberships/{actor}")
+                })
             })
         {
             // This fixture supplies a controlled synthetic team response for
@@ -1703,9 +1714,10 @@ fn denial_of_individual_private_release_readback_cannot_authorize_a_write() {
 }
 
 #[test]
-fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
+fn release_approver_team_membership_requires_an_active_matching_actor_over_loopback() {
     const CASE: &str = "LEAP_STAGING_MEMBERSHIP_CASE";
     const ACTOR: &str = "leap-synthetic-ci-actor";
+    const TEAM: &str = "synthetic-release-approvers";
     if let Ok(case) = std::env::var(CASE) {
         assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
         assert_eq!(std::env::var("GITHUB_ACTOR").as_deref(), Ok(ACTOR));
@@ -1715,7 +1727,7 @@ fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
             "active" => Ok(Publication::AlreadyPublished),
             "inactive" => {
                 state.membership = json!({"state":"pending"});
-                Err("Release actor is not an active member of Release Eng")
+                Err("Release actor is not an active member of the release approver team")
             }
             "denied" => {
                 state.membership = json!({"status":403});
@@ -1725,6 +1737,7 @@ fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
                 state.membership_actor = Some("another-synthetic-ci-actor".into());
                 Err("Sentinel readback HTTP failure")
             }
+            "missing-team" => Err("RELEASE_APPROVER_TEAM_SLUG is required"),
             _ => panic!("Unknown synthetic membership case: {case}"),
         };
         let mut fixture = HttpFixture::start(format!("membership-{case}"), state);
@@ -1738,11 +1751,19 @@ fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
             state.requests[0]["endpoint"],
             format!("repos/{STAGING_REPOSITORY}")
         );
+        if case == "missing-team" {
+            assert_eq!(state.requests.len(), 1);
+            return;
+        }
         let membership = &state.requests[1];
+        let org = publication_candidates::REPOSITORY
+            .split('/')
+            .next()
+            .unwrap_or(publication_candidates::REPOSITORY);
         assert_eq!(membership["method"], "GET");
         assert_eq!(
             membership["endpoint"],
-            format!("orgs/omnisolo-llc/teams/release-eng/memberships/{ACTOR}")
+            format!("orgs/{org}/teams/{TEAM}/memberships/{ACTOR}")
         );
         if case == "active" {
             assert_eq!(membership["response_status"], 200);
@@ -1770,12 +1791,18 @@ fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
     // Each child supplies its own process actor context. This avoids global
     // environment mutation and exercises the real production membership gate.
     let safe = leap_release_launcher::clean_environment(&std::env::vars().collect());
-    for case in ["active", "inactive", "denied", "wrong-actor"] {
+    for case in [
+        "active",
+        "inactive",
+        "denied",
+        "wrong-actor",
+        "missing-team",
+    ] {
         let mut child = Command::new(std::env::current_exe().unwrap());
         child
             .args([
                 "--exact",
-                "release_eng_membership_requires_an_active_matching_actor_over_loopback",
+                "release_approver_team_membership_requires_an_active_matching_actor_over_loopback",
                 "--test-threads=1",
             ])
             .env_clear()
@@ -1783,6 +1810,9 @@ fn release_eng_membership_requires_an_active_matching_actor_over_loopback() {
             .env("GITHUB_ACTIONS", "true")
             .env("GITHUB_ACTOR", ACTOR)
             .env(CASE, case);
+        if case != "missing-team" {
+            child.env("RELEASE_APPROVER_TEAM_SLUG", TEAM);
+        }
         if let Ok(evidence) = std::env::var("LEAP_PRIVATE_STAGING_EVIDENCE") {
             child.env("LEAP_PRIVATE_STAGING_EVIDENCE", evidence);
         }
