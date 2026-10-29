@@ -640,7 +640,8 @@ export function redactSensitiveCommandOutput(value) {
 }
 
 function runCommandChecked(cmd, args, options = {}) {
-  const res = spawnSync(cmd, args, { encoding: 'utf8', ...options });
+  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
+  const res = spawnSync(cmd, args, { encoding: 'utf8', shell: needsShell, ...options });
   if (res.status !== 0) {
     const safeArgs = args.map((a) => redactSensitiveCommandOutput(a)).join(' ');
     const safeStdout = redactSensitiveCommandOutput(res.stdout);
