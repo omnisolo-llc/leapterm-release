@@ -2206,6 +2206,41 @@ test('promoteRelease locates draft or past release in staging by expectedBuildNu
   );
 });
 
+test('promoteRelease proceeds to store promotion when no wave staging tags exist and publishGithubRelease is false', async (t) => {
+  const previousFetch = globalThis.fetch;
+  const requestedUrls = [];
+  globalThis.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    if (String(url).includes('/releases/tags/')) {
+      return { ok: false, status: 404, statusText: 'Not Found' };
+    }
+    if (String(url).includes('/releases?per_page=100')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [],
+      };
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+
+  await assert.rejects(
+    promoteRelease({
+      version: '0.1.4',
+      expectedBuildNumber: '68',
+      privateToken: 'mock-private-token',
+      stagingRepo: 'example-org/private-source',
+      publishGithubRelease: false,
+      iosStoreAction: 'internal',
+      rolloutEnvironment: 'none',
+    }),
+    /Private stage release not found on staging repository for iOS IPA retrieval/,
+  );
+});
+
 test('verifyAllReleaseBuildsReady recognizes self_hosted when present in assetsByName', () => {
   const version = '0.1.1';
   const downloads = PUBLIC_TARGETS.map((target) => ({
