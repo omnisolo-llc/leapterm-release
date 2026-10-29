@@ -3239,5 +3239,93 @@ test('sanitizePublicLogText, syncAppleInternalTesters masking, and install.sh le
   );
 });
 
+test('promoteIosToAppStoreConnect handles duplicate altool upload and transient syncAppleInternalTesters error gracefully', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-apple-promote-'));
+  const ipaPath = path.join(tmpDir, 'test.ipa');
+  fs.writeFileSync(ipaPath, Buffer.from('PK0304dummy-ipa-bytes'));
+
+  const { privateKey } = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1',
+  });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+
+  let altoolCallCount = 0;
+  let fetchCallCount = 0;
+  const mockExecFileSync = (cmd, args) => {
+    if (cmd === 'xcrun' && args.includes('altool')) {
+      altoolCallCount += 1;
+      const err = new Error('The build number 68 has already been used.');
+      throw err;
+    }
+    return Buffer.from('');
+  };
+
+  const mockFetch = async (url) => {
+    fetchCallCount += 1;
+    if (url.includes('/betaGroups')) {
+      // Simulate transient 500 error once, then succeed
+      if (fetchCallCount === 2) {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ errors: [{ detail: 'An unexpected error occurred on the server side.' }] }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [{
+            type: 'betaGroups',
+            id: 'group-1',
+            attributes: { isInternalGroup: true, hasAccessToAllBuilds: true },
+          }],
+        }),
+      };
+    }
+    if (url.includes('/betaTesters')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [] }),
+      };
+    }
+    if (url.includes('/v1/apps?filter')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ id: 'app-123' }] }),
+      };
+    }
+    return { ok: true, status: 200, json: async () => ({ data: [] }) };
+  };
+
+  const dummySigningConfig = JSON.stringify({
+    APP_STORE_CONNECT_KEY_ID: 'KEY123',
+    APP_STORE_CONNECT_ISSUER_ID: 'ISS123',
+    APP_STORE_CONNECT_API_KEY_BASE64: Buffer.from(pem).toString('base64'),
+  });
+
+  const result = await promoteIosToAppStoreConnect({
+    version: '0.1.4',
+    buildNumber: '68',
+    action: 'internal',
+    ipaPath,
+    iosSigningConfigJson: dummySigningConfig,
+    internalTesterEmails: 'tester@example.com',
+    fetchImpl: mockFetch,
+    execFileImpl: mockExecFileSync,
+  });
+
+  assert.strictEqual(result.platform, 'ios');
+  assert.strictEqual(result.action, 'internal');
+  assert.strictEqual(result.build_number, '68');
+  assert.strictEqual(altoolCallCount, 1);
+  assert.ok(fetchCallCount >= 3);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+
 
 

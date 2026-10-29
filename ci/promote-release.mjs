@@ -1697,30 +1697,53 @@ export async function promoteAppleToAppStoreConnect({
     privateKeyBase64: apiKeyBase64,
   });
 
-  const ascRequest = async (endpoint, method = 'GET', body = null) => {
+  const ascRequest = async (endpoint, method = 'GET', body = null, retries = 3) => {
     const url = new URL(endpoint, 'https://api.appstoreconnect.apple.com');
     if (url.origin !== 'https://api.appstoreconnect.apple.com') {
       throw new Error('Untrusted App Store Connect URL');
     }
-    const res = await fetchImpl(url.toString(), {
-      method,
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        Accept: 'application/json',
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const detail =
-        data?.errors?.map((e) => e.detail || e.title).join('; ') ||
-        `HTTP ${res.status}`;
-      throw new Error(
-        `App Store Connect API ${method} ${url.pathname} failed: ${detail}`,
-      );
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        const res = await fetchImpl(url.toString(), {
+          method,
+          headers: {
+            Authorization: `Bearer ${jwt}`,
+            Accept: 'application/json',
+            ...(body ? { 'Content-Type': 'application/json' } : {}),
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const detail =
+            data?.errors?.map((e) => e.detail || e.title).join('; ') ||
+            `HTTP ${res.status}`;
+          if ((res.status >= 500 || res.status === 429) && attempt < retries) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, Math.min(1000 * 2 ** attempt, 8000)),
+            );
+            continue;
+          }
+          throw new Error(
+            `App Store Connect API ${method} ${url.pathname} failed: ${detail}`,
+          );
+        }
+        return data;
+      } catch (err) {
+        if (
+          attempt < retries &&
+          /ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|server side|HTTP 5/i.test(
+            err?.message || '',
+          )
+        ) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.min(1000 * 2 ** attempt, 8000)),
+          );
+          continue;
+        }
+        throw err;
+      }
     }
-    return data;
   };
 
   const uploadAppleCandidatePackage = () => {
@@ -2118,7 +2141,18 @@ export async function promoteAppleToAppStoreConnect({
           },
         );
       } catch (err) {
-        throw new Error(sanitizePublicLogText(err?.message || String(err)));
+        const msg = String(err?.message || err);
+        if (
+          /already been used|already exists|redundant binary upload|duplicate/i.test(
+            msg,
+          )
+        ) {
+          console.warn(
+            `Candidate package for ${platform} build ${normalizedBuild} already uploaded to App Store Connect; continuing.`,
+          );
+        } else {
+          throw new Error(sanitizePublicLogText(msg));
+        }
       }
     } finally {
       if (tempKeychain) {
@@ -2147,11 +2181,18 @@ export async function promoteAppleToAppStoreConnect({
 
   if (action === 'internal' || action === 'testflight') {
     uploadAppleCandidatePackage();
-    const testerSync = await syncAppleInternalTesters({
-      ascRequest,
-      appBundleId,
-      internalTesterEmails,
-    });
+    let testerSync = { synced: [], group_id: null };
+    try {
+      testerSync = await syncAppleInternalTesters({
+        ascRequest,
+        appBundleId,
+        internalTesterEmails,
+      });
+    } catch (err) {
+      console.warn(
+        `Internal tester synchronization warning: ${sanitizePublicLogText(err?.message || String(err))}`,
+      );
+    }
     return {
       platform,
       action,
