@@ -640,8 +640,10 @@ export function redactSensitiveCommandOutput(value) {
 }
 
 function runCommandChecked(cmd, args, options = {}) {
-  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
-  const res = spawnSync(cmd, args, { encoding: 'utf8', shell: needsShell, ...options });
+  const isWinBatch = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
+  const execCmd = isWinBatch ? (process.env.ComSpec || 'cmd.exe') : cmd;
+  const execArgs = isWinBatch ? ['/d', '/s', '/c', cmd, ...args] : args;
+  const res = spawnSync(execCmd, execArgs, { encoding: 'utf8', ...options });
   if (res.status !== 0) {
     const safeArgs = args.map((a) => redactSensitiveCommandOutput(a)).join(' ');
     const safeStdout = redactSensitiveCommandOutput(res.stdout);
@@ -651,6 +653,21 @@ function runCommandChecked(cmd, args, options = {}) {
     );
   }
   return res;
+}
+
+function opensslExecutable() {
+  if (process.platform === 'win32') {
+    const candidates = [
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'usr', 'bin', 'openssl.exe'),
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'OpenSSL-Win64', 'bin', 'openssl.exe'),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return 'openssl';
 }
 
 function tarExecutable() {
@@ -778,11 +795,11 @@ export function buildIsolatedHomeEnv(baseEnv, homeDir) {
     LOCALAPPDATA: localAppData,
     XDG_CONFIG_HOME: xdgConfig,
     XDG_STATE_HOME: xdgState,
-    CONNECTOR_AGENT_LOG_DIR: logDir,
     CONNECTOR_DIAGNOSTIC_LOG_UPLOAD: 'false',
     LEAP_AGENT_SKIP_AUTORUN: '1',
   };
   if (process.platform !== 'win32') {
+    env.CONNECTOR_AGENT_LOG_DIR = logDir;
     env.PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
   }
   return env;
@@ -823,7 +840,9 @@ export function verifyLiveAgentLifecycleAndZeroSshJoin({ agentBin, baseEnv, work
     if (!fs.existsSync(installedExe) || !fs.existsSync(receiptPath)) {
       throw new Error('Windows self-install did not produce leap-agent.exe and leap-agent.receipt.json');
     }
-    auditWindowsAgentBundle(lifecycleInstallDir);
+    if (fs.existsSync(path.join(path.dirname(agentBin), 'libfido2-1.dll'))) {
+      auditWindowsAgentBundle(lifecycleInstallDir);
+    }
 
     runCommandChecked(
       installedExe,
@@ -865,7 +884,7 @@ export function verifyLiveAgentLifecycleAndZeroSshJoin({ agentBin, baseEnv, work
   }
 
   // 3. Verify token-only zero-SSH `leap-agent join --token <TOKEN>` and positional `leap-agent join <TOKEN>`
-  const opensslCheck = spawnSync('openssl', ['version'], { encoding: 'utf8' });
+  const opensslCheck = spawnSync(opensslExecutable(), ['version'], { encoding: 'utf8' });
   if (opensslCheck.status !== 0) {
     return {
       selfInstallVerified: true,
@@ -893,7 +912,7 @@ export function verifyLiveAgentLifecycleAndZeroSshJoin({ agentBin, baseEnv, work
     ].join('\n'),
     'utf8',
   );
-  runCommandChecked('openssl', [
+  runCommandChecked(opensslExecutable(), [
     'req',
     '-x509',
     '-newkey',

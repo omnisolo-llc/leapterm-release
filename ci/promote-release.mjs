@@ -4085,14 +4085,15 @@ export async function promoteRelease({
             `GitHub API request failed (404) for ${stagingReleaseUrl}`,
           );
         }
+      } else {
+        const merged = mergeWaveStagingMetadata({
+          wavePayloads,
+          version: normalizedVersion,
+        });
+        stagingLinks = merged.stagingLinks;
+        stagingProvenance = merged.stagingProvenance;
+        assetsByName = merged.assetsByName;
       }
-      const merged = mergeWaveStagingMetadata({
-        wavePayloads,
-        version: normalizedVersion,
-      });
-      stagingLinks = merged.stagingLinks;
-      stagingProvenance = merged.stagingProvenance;
-      assetsByName = merged.assetsByName;
     }
 
     const requireStagingAsset = async (name) => {
@@ -4539,7 +4540,6 @@ export async function promoteRelease({
               privateToken,
               version: normalizedVersion,
               buildNumber: targetBuildNumber,
-              fetchImpl,
             });
             if (stageInfo) {
               stageRelease = stageInfo.stageRelease;
