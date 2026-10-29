@@ -640,7 +640,8 @@ export function redactSensitiveCommandOutput(value) {
 }
 
 function runCommandChecked(cmd, args, options = {}) {
-  const res = spawnSync(cmd, args, { encoding: 'utf8', ...options });
+  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
+  const res = spawnSync(cmd, args, { encoding: 'utf8', shell: needsShell, ...options });
   if (res.status !== 0) {
     const safeArgs = args.map((a) => redactSensitiveCommandOutput(a)).join(' ');
     const safeStdout = redactSensitiveCommandOutput(res.stdout);
@@ -760,6 +761,308 @@ export function extractReleaseArchivesAndAuditAllPlatforms({ releaseDir, version
   }
 }
 
+export function buildIsolatedHomeEnv(baseEnv, homeDir) {
+  const appData = path.join(homeDir, 'AppData', 'Roaming');
+  const localAppData = path.join(homeDir, 'AppData', 'Local');
+  const xdgConfig = path.join(homeDir, '.config');
+  const xdgState = path.join(homeDir, '.local', 'state');
+  const logDir = path.join(xdgState, 'leap-agent', 'logs');
+  for (const dir of [homeDir, appData, localAppData, xdgConfig, xdgState, logDir]) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+  const env = {
+    ...baseEnv,
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+    XDG_CONFIG_HOME: xdgConfig,
+    XDG_STATE_HOME: xdgState,
+    CONNECTOR_AGENT_LOG_DIR: logDir,
+    CONNECTOR_DIAGNOSTIC_LOG_UPLOAD: 'false',
+    LEAP_AGENT_SKIP_AUTORUN: '1',
+  };
+  if (process.platform !== 'win32') {
+    env.PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+  }
+  return env;
+}
+
+export function locateEnrolledAgentEnv(homeDir) {
+  const candidates = [
+    path.join(homeDir, '.config', 'leapterm', 'agent.env'),
+    path.join(homeDir, 'AppData', 'Roaming', 'LeapTerm', 'agent.env'),
+    path.join(homeDir, 'Library', 'Application Support', 'LeapTerm', 'agent.env'),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) || candidates[0];
+}
+
+export function verifyLiveAgentLifecycleAndZeroSshJoin({ agentBin, baseEnv, workRoot }) {
+  const helpOut = runCommandChecked(agentBin, ['--help'], { env: baseEnv }).stdout;
+  if (!helpOut.includes('status') || !helpOut.includes('self-install')) {
+    return {
+      skipped: true,
+      reason: 'binary predates status and self-install subcommands',
+    };
+  }
+
+  // 1. Verify self-install -> self-uninstall -> self-install lifecycle
+  if (process.platform === 'win32') {
+    const lifecycleHome = path.join(workRoot, 'win-lifecycle-home');
+    const lifecycleInstallDir = path.join(workRoot, 'win-self-install-dir');
+    fs.mkdirSync(lifecycleInstallDir, { recursive: true });
+    const lifecycleEnv = buildIsolatedHomeEnv(baseEnv, lifecycleHome);
+
+    runCommandChecked(
+      agentBin,
+      ['self-install', '--user', '--force', '--install-dir', lifecycleInstallDir],
+      { env: lifecycleEnv },
+    );
+    const installedExe = path.join(lifecycleInstallDir, 'leap-agent.exe');
+    const receiptPath = path.join(lifecycleInstallDir, 'leap-agent.receipt.json');
+    if (!fs.existsSync(installedExe) || !fs.existsSync(receiptPath)) {
+      throw new Error('Windows self-install did not produce leap-agent.exe and leap-agent.receipt.json');
+    }
+    auditWindowsAgentBundle(lifecycleInstallDir);
+
+    runCommandChecked(
+      installedExe,
+      ['self-uninstall', '--user', '--purge', '--install-dir', lifecycleInstallDir],
+      { env: lifecycleEnv },
+    );
+    if (fs.existsSync(installedExe) || fs.existsSync(receiptPath)) {
+      throw new Error('Windows self-uninstall --purge did not remove leap-agent.exe and receipt');
+    }
+
+    runCommandChecked(
+      agentBin,
+      ['self-install', '--user', '--force', '--install-dir', lifecycleInstallDir],
+      { env: lifecycleEnv },
+    );
+    if (!fs.existsSync(installedExe) || !fs.existsSync(receiptPath)) {
+      throw new Error('Windows reinstall via self-install failed');
+    }
+  } else {
+    runCommandChecked(agentBin, ['self-install', '--help'], { env: baseEnv });
+    runCommandChecked(agentBin, ['self-uninstall', '--help'], { env: baseEnv });
+  }
+
+  // 2. Verify pre-enrollment `leap-agent status --json` in a fresh home without .ssh
+  const flagHome = path.join(workRoot, 'zero-ssh-flag-home');
+  const flagEnv = buildIsolatedHomeEnv(baseEnv, flagHome);
+  if (fs.existsSync(path.join(flagHome, '.ssh'))) {
+    throw new Error('Isolated flagHome unexpectedly contained .ssh before join');
+  }
+  const preStatusRaw = runCommandChecked(agentBin, ['status', '--json'], {
+    env: {
+      ...flagEnv,
+      CONNECTOR_ENVIRONMENT_FILE: path.join(flagHome, 'missing-agent.env'),
+    },
+  }).stdout;
+  const preStatus = JSON.parse(preStatusRaw);
+  if (preStatus.enrolled !== false) {
+    throw new Error(`Expected pre-join status enrolled=false, got: ${preStatusRaw}`);
+  }
+
+  // 3. Verify token-only zero-SSH `leap-agent join --token <TOKEN>` and positional `leap-agent join <TOKEN>`
+  const opensslCheck = spawnSync('openssl', ['version'], { encoding: 'utf8' });
+  if (opensslCheck.status !== 0) {
+    return {
+      selfInstallVerified: true,
+      preStatusVerified: true,
+      zeroSshJoinSkipped: 'openssl unavailable on host',
+    };
+  }
+  const tlsDir = path.join(workRoot, 'zero-ssh-tls');
+  fs.mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
+  const keyPath = path.join(tlsDir, 'key.pem');
+  const certPath = path.join(tlsDir, 'cert.pem');
+  const opensslCnf = path.join(tlsDir, 'openssl.cnf');
+  fs.writeFileSync(
+    opensslCnf,
+    [
+      '[req]',
+      'distinguished_name = dn',
+      'x509_extensions = v3_ext',
+      'prompt = no',
+      '[dn]',
+      'CN = 127.0.0.1',
+      '[v3_ext]',
+      'subjectAltName = IP:127.0.0.1,DNS:localhost',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  runCommandChecked('openssl', [
+    'req',
+    '-x509',
+    '-newkey',
+    'ec',
+    '-pkeyopt',
+    'ec_paramgen_curve:prime256v1',
+    '-nodes',
+    '-keyout',
+    keyPath,
+    '-out',
+    certPath,
+    '-days',
+    '1',
+    '-config',
+    opensslCnf,
+    '-extensions',
+    'v3_ext',
+  ]);
+
+  const posHome = path.join(workRoot, 'zero-ssh-pos-home');
+  const posEnv = buildIsolatedHomeEnv(baseEnv, posHome);
+  const runnerScript = path.join(tlsDir, 'run-zero-ssh-join.mjs');
+  fs.writeFileSync(
+    runnerScript,
+    `import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import https from 'node:https';
+
+const [agentBin, keyPath, certPath, flagEnvJson, posEnvJson] = process.argv.slice(2);
+const flagEnv = JSON.parse(flagEnvJson);
+const posEnv = JSON.parse(posEnvJson);
+const key = fs.readFileSync(keyPath);
+const cert = fs.readFileSync(certPath);
+const requests = [];
+
+function spawnAsync(cmd, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      resolve({ status: code, stdout, stderr });
+    });
+  });
+}
+
+const server = https.createServer({ key, cert }, (req, res) => {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk; });
+  req.on('end', () => {
+    const parsed = JSON.parse(body || '{}');
+    requests.push({ url: req.url, method: req.method, body: parsed });
+    const suffix = parsed.pairing_token === 'ptk_vm_e2e_pos_token' ? 'pos' : 'flag';
+    const port = server.address().port;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'paired',
+      connector_id: \`conn-vm-e2e-\${suffix}\`,
+      target_id: \`host-vm-e2e-\${suffix}\`,
+      tenant_id: 'tenant-vm-e2e',
+      endpoint: \`wss://127.0.0.1:\${port}/v1/connectors/stream\`,
+    }));
+  });
+});
+
+server.listen(0, '127.0.0.1', async () => {
+  const port = server.address().port;
+  const origin = \`https://127.0.0.1:\${port}\`;
+  try {
+    for (const [envObj, args] of [
+      [flagEnv, ['join', '--token', 'ptk_vm_e2e_flag_token', '--ca-cert', certPath]],
+      [posEnv, ['join', 'ptk_vm_e2e_pos_token', '--ca-cert', certPath]],
+    ]) {
+      const res = await spawnAsync(agentBin, args, {
+        env: {
+          ...envObj,
+          LEAPTERM_API_ORIGIN: origin,
+          CONNECTOR_CA_CERT: certPath,
+          SSL_CERT_FILE: certPath,
+          CURL_CA_BUNDLE: certPath,
+        },
+      });
+      if (res.status !== 0) {
+        console.error(res.stdout || '');
+        console.error(res.stderr || '');
+        process.exit(res.status || 1);
+      }
+    }
+    if (requests.length !== 2) {
+      console.error('Expected 2 pairing requests, got ' + requests.length);
+      process.exit(1);
+    }
+  } finally {
+    server.close();
+  }
+});
+`,
+    'utf8',
+  );
+
+  runCommandChecked(process.execPath, [
+    runnerScript,
+    agentBin,
+    keyPath,
+    certPath,
+    JSON.stringify(flagEnv),
+    JSON.stringify(posEnv),
+  ]);
+
+  for (const [label, home] of [
+    ['flag', flagHome],
+    ['positional', posHome],
+  ]) {
+    for (const sshFile of ['id_ed25519', 'id_ed25519.pub', 'authorized_keys']) {
+      const full = path.join(home, '.ssh', sshFile);
+      if (!fs.existsSync(full) || !fs.statSync(full).isFile()) {
+        throw new Error(`Zero-SSH ${label} join did not auto-generate ${full}`);
+      }
+    }
+  }
+
+  const flagAgentEnv = locateEnrolledAgentEnv(flagHome);
+  if (!fs.existsSync(flagAgentEnv)) {
+    throw new Error(`Zero-SSH flag join did not write agent.env at ${flagAgentEnv}`);
+  }
+  const posAgentEnv = locateEnrolledAgentEnv(posHome);
+  if (!fs.existsSync(posAgentEnv)) {
+    throw new Error(`Zero-SSH positional join did not write agent.env at ${posAgentEnv}`);
+  }
+
+  // 4. Verify post-enrollment `leap-agent status --json` and human-readable `leap-agent status`
+  const postStatusRaw = runCommandChecked(agentBin, ['status', '--json'], {
+    env: {
+      ...flagEnv,
+      CONNECTOR_ENVIRONMENT_FILE: flagAgentEnv,
+    },
+  }).stdout;
+  const postStatus = JSON.parse(postStatusRaw);
+  if (
+    postStatus.enrolled !== true ||
+    postStatus.connector_id !== 'conn-vm-e2e-flag' ||
+    postStatus.tenant_id !== 'tenant-vm-e2e' ||
+    !Array.isArray(postStatus.configured_targets) ||
+    postStatus.configured_targets.length === 0
+  ) {
+    throw new Error(`Unexpected post-join status --json output: ${postStatusRaw}`);
+  }
+
+  const humanStatus = runCommandChecked(agentBin, ['status'], {
+    env: {
+      ...flagEnv,
+      CONNECTOR_ENVIRONMENT_FILE: flagAgentEnv,
+    },
+  }).stdout;
+  if (!humanStatus.includes('Enrollment State: Enrolled') || !humanStatus.includes('conn-vm-e2e-flag')) {
+    throw new Error(`Unexpected human-readable status output: ${humanStatus}`);
+  }
+
+  return {
+    selfInstallVerified: true,
+    zeroSshFlagJoinVerified: true,
+    zeroSshPositionalJoinVerified: true,
+    statusJsonVerified: true,
+  };
+}
+
 export function verifyCurrentHostLiveInstall({ releaseDir, version, installerPath }) {
   const workRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'leapterm-live-install-'));
   try {
@@ -808,7 +1111,12 @@ export function verifyCurrentHostLiveInstall({ releaseDir, version, installerPat
       if (shimVer.stdout.trim() !== `leap-agent ${version}`) {
         throw new Error(`Unexpected Windows shim version output: ${shimVer.stdout}`);
       }
-      return { platform: 'win32', verifiedVersion: directVer.stdout.trim() };
+      const lifecycle = verifyLiveAgentLifecycleAndZeroSshJoin({
+        agentBin: path.join(winInstallDir, 'leap-agent.exe'),
+        baseEnv: cleanWinEnv,
+        workRoot,
+      });
+      return { platform: 'win32', verifiedVersion: directVer.stdout.trim(), lifecycle };
     }
 
     if (process.platform === 'darwin') {
@@ -838,7 +1146,12 @@ export function verifyCurrentHostLiveInstall({ releaseDir, version, installerPat
         throw new Error(`Unexpected macOS leap-agent version output: ${verOut}`);
       }
       runCommandChecked(agentBin, ['--help'], { env: cleanMacEnv });
-      return { platform: 'darwin', verifiedVersion: verOut };
+      const lifecycle = verifyLiveAgentLifecycleAndZeroSshJoin({
+        agentBin,
+        baseEnv: cleanMacEnv,
+        workRoot,
+      });
+      return { platform: 'darwin', verifiedVersion: verOut, lifecycle };
     }
 
     if (process.platform === 'linux') {
@@ -881,7 +1194,12 @@ export function verifyCurrentHostLiveInstall({ releaseDir, version, installerPat
           installerStage,
         ]);
       }
-      return { platform: 'linux', verifiedVersion: verOut };
+      const lifecycle = verifyLiveAgentLifecycleAndZeroSshJoin({
+        agentBin,
+        baseEnv: env,
+        workRoot,
+      });
+      return { platform: 'linux', verifiedVersion: verOut, lifecycle };
     }
 
     throw new Error(`Unsupported host platform: ${process.platform}`);
