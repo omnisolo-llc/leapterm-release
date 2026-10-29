@@ -12,11 +12,14 @@ import {
   auditLinuxAgentBundle,
   auditMacosAgentBundle,
   auditWindowsAgentBundle,
+  buildIsolatedHomeEnv,
+  locateEnrolledAgentEnv,
   parseCliArgs,
   parseElfDynamic,
   parseMachOImports,
   parsePeImports,
   redactSensitiveCommandOutput,
+  verifyLiveAgentLifecycleAndZeroSshJoin,
 } from './verify-agent-install-e2e.mjs';
 
 function buildSyntheticPe64(importedDlls = []) {
@@ -291,4 +294,92 @@ test('redactSensitiveCommandOutput redacts private tokens, repo slugs, and host 
   assert.ok(!redacted.includes('omnisolo-llc/private-repo'));
   assert.ok(!redacted.includes('cloud/deploy/install.sh'));
   assert.ok(!redacted.includes('/home/runner/work/secret.txt'));
+});
+
+test('buildIsolatedHomeEnv and locateEnrolledAgentEnv isolate user state without .ssh', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'leapterm-isolated-home-test-'));
+  try {
+    const home = path.join(root, 'home');
+    const env = buildIsolatedHomeEnv(process.env, home);
+    assert.equal(env.HOME, home);
+    assert.equal(env.USERPROFILE, home);
+    assert.equal(env.LEAP_AGENT_SKIP_AUTORUN, '1');
+    assert.equal(fs.existsSync(path.join(home, '.ssh')), false);
+
+    const linuxEnvPath = path.join(home, '.config', 'leapterm', 'agent.env');
+    fs.mkdirSync(path.dirname(linuxEnvPath), { recursive: true });
+    fs.writeFileSync(linuxEnvPath, 'CONNECTOR_ID=conn-test\n', 'utf8');
+    assert.equal(locateEnrolledAgentEnv(home), linuxEnvPath);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('verifyLiveAgentLifecycleAndZeroSshJoin skips gracefully on legacy binaries without status/self-install', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'leapterm-legacy-skip-test-'));
+  try {
+    let stubBin;
+    if (process.platform === 'win32') {
+      stubBin = path.join(root, 'legacy-agent.cmd');
+      fs.writeFileSync(stubBin, '@echo off\r\necho leap-agent legacy help\r\n', 'utf8');
+    } else {
+      stubBin = path.join(root, 'legacy-agent');
+      fs.writeFileSync(stubBin, '#!/usr/bin/env sh\necho "leap-agent legacy help"\n', {
+        mode: 0o755,
+      });
+    }
+    const res = verifyLiveAgentLifecycleAndZeroSshJoin({
+      agentBin: stubBin,
+      baseEnv: process.env,
+      workRoot: root,
+    });
+    assert.equal(res.skipped, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('verifyLiveAgentLifecycleAndZeroSshJoin verifies real leap-agent zero-SSH join and status when built binary exists', (t) => {
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+  const candidates =
+    process.platform === 'win32'
+      ? [
+          path.join(repoRoot, 'leapterm', 'target', 'x86_64-pc-windows-msvc', 'release', 'leap-agent.exe'),
+          path.join(repoRoot, 'target', 'x86_64-pc-windows-msvc', 'release', 'leap-agent.exe'),
+        ]
+      : [
+          path.join(repoRoot, 'leapterm', 'target', 'debug', 'leap-agent'),
+          path.join(repoRoot, 'target', 'debug', 'leap-agent'),
+          path.join(repoRoot, 'leapterm', 'target', 'release', 'leap-agent'),
+          path.join(repoRoot, 'target', 'release', 'leap-agent'),
+        ];
+  const agentBin = candidates.find((p) => fs.existsSync(p));
+  if (!agentBin) {
+    t.skip('No local leap-agent binary found in target/ directory');
+    return;
+  }
+  if (process.platform === 'win32') {
+    // Windows self-install audits companion DLLs in the binary directory
+    const hasDlls = REQUIRED_WINDOWS_DLLS.every((dll) =>
+      fs.existsSync(path.join(path.dirname(agentBin), dll)),
+    );
+    if (!hasDlls) {
+      t.skip('Windows target directory does not have staged companion DLLs');
+      return;
+    }
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'leapterm-real-agent-lifecycle-test-'));
+  try {
+    const res = verifyLiveAgentLifecycleAndZeroSshJoin({
+      agentBin,
+      baseEnv: process.env,
+      workRoot: root,
+    });
+    assert.equal(res.selfInstallVerified, true);
+    assert.equal(res.zeroSshFlagJoinVerified, true);
+    assert.equal(res.zeroSshPositionalJoinVerified, true);
+    assert.equal(res.statusJsonVerified, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
