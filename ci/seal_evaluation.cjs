@@ -53,13 +53,17 @@ function inventory(directory) {
   }
   return {file, metadata, checksum: line.slice(0, 64), filename: zip};
 }
+function hashSourceSha(sourceSha) {
+  return crypto.createHash('sha256').update(`leap-eval-source-v1:${sourceSha}`).digest('hex').slice(0, 40);
+}
 function sealEvaluation(directory, output, identity, scope, pem) {
   validateIdentity(identity);
   if (typeof scope !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(scope) || !path.isAbsolute(output)) {
     throw Error('Invalid evaluation scope');
   }
   const source = inventory(directory);
-  return sealBoundFile(source, output, {schema: 1, kind: 'evaluation', identity, scope,
+  const redactedIdentity = {...identity, source_sha: hashSourceSha(identity.source_sha)};
+  return sealBoundFile(source, output, {schema: 1, kind: 'evaluation', identity: redactedIdentity, scope,
     filename: source.filename, plaintext_sha256: source.checksum, plaintext_size: Number(source.metadata.size)},
     pem, MAGIC, MAX_ZIP);
 }
@@ -127,4 +131,4 @@ if (require.main === module) {
       process.env.DIAGNOSTICS_PUBLIC_KEY || '');
   } catch (_) { process.stderr.write('Evaluation encryption failed.\n'); process.exitCode = 1; }
 }
-module.exports = {MAGIC, MAX_ZIP, validateIdentity, inventory, sealEvaluation, sealBoundFile, regular};
+module.exports = {MAGIC, MAX_ZIP, validateIdentity, inventory, hashSourceSha, sealEvaluation, sealBoundFile, regular};

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Native unit/local-Git/process tests, not an Apple device certificate.
 set -euo pipefail
+unset GITHUB_ACTOR
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 manifest="$here/native-release/Cargo.toml"
 guard="$(mktemp -d)"

@@ -1,5 +1,5 @@
 name: Public source CI
-run-name: source-ci:${{ inputs.source_sha }}:${{ inputs.builder_sha }}:${{ inputs.catalog_sha256 }}:ci
+run-name: source-ci:${{ inputs.correlation_id || 'manual' }}
 
 on:
   workflow_dispatch:
@@ -18,6 +18,10 @@ on:
         type: string
       catalog_sha256:
         description: Reviewed current source suite and workflow catalog digest
+        required: true
+        type: string
+      correlation_id:
+        description: Deterministic opaque correlation token for run discovery
         required: true
         type: string
 
