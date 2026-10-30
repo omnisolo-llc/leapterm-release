@@ -4703,7 +4703,9 @@ export async function promoteRelease({
                   (parsed.receipt && parsed.receipt.name === ipaName) ||
                   (iosChannel === 'internal' &&
                     parsed.receipt &&
-                    parsed.receipt.target === 'ios')
+                    parsed.receipt.target === 'ios' &&
+                    (parsed.receipt.name === ipaName ||
+                      String(parsed.receipt.name || '').includes('-private.ipa')))
                 ) {
                   receiptAsset = cand;
                   break;
