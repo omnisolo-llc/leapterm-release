@@ -1,16 +1,31 @@
-name: Nightly TestFlight Build
+name: Twice-Daily Release & TestFlight Build
 
 on:
   schedule:
-    # Nightly & midday: 02:00 UTC and 14:00 UTC (twice a day)
+    # Twice a day: 02:00 UTC and 14:00 UTC
     - cron: '0 2,14 * * *'
   workflow_dispatch:
     inputs:
       target:
-        description: 'Platform targets (ios or all)'
+        description: 'Platform release wave (all publishes public release + TestFlight + Play Internal)'
         type: choice
-        options: [ios, all]
-        default: ios
+        options: [all, slow, fast]
+        default: all
+      version:
+        description: 'Optional semver override (leave empty to auto-increment next patch version)'
+        required: false
+        type: string
+        default: ''
+      build_number:
+        description: 'Optional build number override (leave empty to auto-increment past TestFlight & staged builds)'
+        required: false
+        type: string
+        default: ''
+      source_sha:
+        description: 'Optional source commit SHA override (leave empty to build latest main)'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -22,7 +37,7 @@ concurrency:
 
 jobs:
   dispatch_nightly:
-    name: Dispatch Nightly TestFlight Build
+    name: Dispatch Twice-Daily Release & TestFlight Build
     if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     environment: release-source-approval
@@ -33,18 +48,26 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node for App Store Connect query
+      - name: Setup Node for App Store Connect & release discovery
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.21.0'
+          package-manager-cache: false
 
-      - name: Query next build number and dispatch release
+      - name: Verify twice-daily dispatcher contracts
+        run: node --test ci/test_nightly_testflight_dispatch.mjs
+
+      - name: Resolve next version & build number and dispatch release
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN || github.token }}
+          PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
           APP_STORE_CONNECT_KEY_ID: ${{ vars.APP_STORE_CONNECT_KEY_ID || secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ vars.APP_STORE_CONNECT_ISSUER_ID || secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
-          APPROVED_SOURCE_SHA: ${{ vars.APPROVED_RELEASE_SOURCE_SHA }}
-          APPROVED_BUILDER_SHA: ${{ vars.APPROVED_RELEASE_BUILDER_SHA }}
-          TARGET: ${{ inputs.target || 'ios' }}
+          APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
+          TARGET: ${{ inputs.target || 'all' }}
+          INPUT_VERSION: ${{ inputs.version || '' }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number || '' }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha || '' }}
         run: node ci/nightly-testflight-dispatch.mjs

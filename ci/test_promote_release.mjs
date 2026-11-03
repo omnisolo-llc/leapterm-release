@@ -1070,7 +1070,9 @@ test('release and promote-release workflows wire staging/production rollout and 
     promoteYml,
     /PROMOTE_ROLLOUT_ENVIRONMENT:\s*\$\{\{\s*(?:inputs\.rollout_environment|steps\.rollout_environment\.outputs\.environment)\s*\}\}/,
   );
-  assert.match(releaseYml, /-f rollout_environment=staging/);
+  assert.match(releaseYml, /-f rollout_environment=none/);
+  assert.match(releaseYml, /-f publish_github_release=false/);
+  assert.match(releaseYml, /-f publish_github_release=true/);
 });
 
 function makeRolloutSourceFixture(t) {
