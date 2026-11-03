@@ -2538,40 +2538,49 @@ jobs:
           IOS_ACTION="none"
           MACOS_ACTION="none"
           ANDROID_ACTION="none"
+          PUBLISH_PUBLIC_RELEASE="false"
           case "${{ inputs.verify_target }}" in
             all)
               IOS_ACTION="internal"
-              MACOS_ACTION="internal"
               ANDROID_ACTION="internal"
+              PUBLISH_PUBLIC_RELEASE="true"
               ;;
             fast|android)
               ANDROID_ACTION="internal"
               ;;
             slow)
               IOS_ACTION="internal"
-              MACOS_ACTION="internal"
               ;;
             ios)
               IOS_ACTION="internal"
               ;;
-            macos)
-              MACOS_ACTION="internal"
-              ;;
           esac
-          if [ "${IOS_ACTION}" = "none" ] && [ "${MACOS_ACTION}" = "none" ] && [ "${ANDROID_ACTION}" = "none" ]; then
-            echo "No store-backed platform targets active for verify_target=${{ inputs.verify_target }}; skipping store auto-promotion."
-            exit 0
+          if [ "${IOS_ACTION}" != "none" ] || [ "${MACOS_ACTION}" != "none" ] || [ "${ANDROID_ACTION}" != "none" ]; then
+            echo "Auto-promoting release candidate to internal store tracks (iOS=${IOS_ACTION}, macOS=${MACOS_ACTION}, Android=${ANDROID_ACTION})..."
+            gh workflow run promote-release.yml \
+              --ref main \
+              -f version="${{ needs.resolve.outputs.version }}" \
+              -f build_number="${{ needs.resolve.outputs.build_number }}" \
+              -f run_id="${{ github.run_id }}" \
+              -f publish_github_release=false \
+              -f rollout_environment=none \
+              -f ios_store_action="${IOS_ACTION}" \
+              -f macos_store_action="${MACOS_ACTION}" \
+              -f android_store_action="${ANDROID_ACTION}"
           fi
-          echo "Auto-promoting release candidate to internal store tracks and staging environment (iOS=${IOS_ACTION}, macOS=${MACOS_ACTION}, Android=${ANDROID_ACTION})..."
-          gh workflow run promote-release.yml \
-            --ref main \
-            -f version="${{ needs.resolve.outputs.version }}" \
-            -f build_number="${{ needs.resolve.outputs.build_number }}" \
-            -f publish_github_release=false \
-            -f rollout_environment=staging \
-            -f ios_store_action="${IOS_ACTION}" \
-            -f macos_store_action="${MACOS_ACTION}" \
-            -f android_store_action="${ANDROID_ACTION}"
+          if [ "${PUBLISH_PUBLIC_RELEASE}" = "true" ]; then
+            echo "Auto-promoting full release candidate v${{ needs.resolve.outputs.version }} to public GitHub Releases..."
+            gh workflow run promote-release.yml \
+              --ref main \
+              -f version="${{ needs.resolve.outputs.version }}" \
+              -f build_number="${{ needs.resolve.outputs.build_number }}" \
+              -f run_id="${{ github.run_id }}" \
+              -f publish_github_release=true \
+              -f rollout_environment=none \
+              -f ios_store_action=none \
+              -f macos_store_action=none \
+              -f android_store_action=none
+          fi
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN || github.token }}
 
