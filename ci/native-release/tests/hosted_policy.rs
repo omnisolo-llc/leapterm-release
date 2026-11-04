@@ -107,7 +107,7 @@ fn public_candidates_workflow() -> Value {
             ]
         },
         "publish": {
-            "if": "${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}",
+            "if": "${{ !failure() && !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}",
             "needs": ["resolve", "verify"],
             "environment": "public-release",
             "permissions": {"contents": "write"},
@@ -120,7 +120,7 @@ fn public_candidates_workflow() -> Value {
             ]
         },
         "option1_signatures": {
-            "if": "${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}",
+            "if": "${{ !failure() && !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}",
             "needs": ["resolve", "verify"],
             "environment": "package-signing",
             "permissions": {"contents": "read"},
