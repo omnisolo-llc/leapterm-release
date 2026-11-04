@@ -488,7 +488,7 @@ test('release.yml blocks option1_signatures and publish on upstream track failur
   assert.ok(sigMatch, 'expected option1_signatures if condition');
   assert.ok(sigMatch[1].includes('!failure()'), 'option1_signatures must guard against upstream track failure');
 
-  const pubMatch = releaseYml.match(/\n  publish:\n[\s\S]*?if:\s*(.+)/);
+  const pubMatch = releaseYml.match(/\r?\n  publish:\r?\n[\s\S]*?if:\s*(.+)/);
   assert.ok(pubMatch, 'expected publish if condition');
   assert.ok(pubMatch[1].includes('!failure()'), 'publish must guard against upstream track failure');
   assert.ok(
