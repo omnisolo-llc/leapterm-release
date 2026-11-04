@@ -1,9 +1,9 @@
-name: Twice-Daily Release & TestFlight Build
+name: Nightly & Twice-Daily Release
 
 on:
   schedule:
-    # Twice a day: 02:00 UTC and 14:00 UTC
-    - cron: '0 2,14 * * *'
+    # Twice a day off the top-of-hour boundary (02:17 UTC and 14:17 UTC) to avoid GitHub cron starvation
+    - cron: '17 2,14 * * *'
   workflow_dispatch:
     inputs:
       target:
@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   dispatch_nightly:
-    name: Dispatch Twice-Daily Release & TestFlight Build
+    name: Dispatch Nightly & Twice-Daily Release
     if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     environment: release-source-approval
@@ -66,6 +66,7 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ vars.APP_STORE_CONNECT_ISSUER_ID || secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
           APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
           TARGET: ${{ inputs.target || 'all' }}
           INPUT_VERSION: ${{ inputs.version || '' }}
           INPUT_BUILD_NUMBER: ${{ inputs.build_number || '' }}

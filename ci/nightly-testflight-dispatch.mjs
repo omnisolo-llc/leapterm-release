@@ -246,6 +246,7 @@ export async function collectGithubReleaseState({
 } = {}) {
   const versions = new Set();
   let maxBuildNumber = 0;
+  const activeFullReleaseRunIds = [];
   const headers = githubHeaders(token);
 
   const inspectRepoReleases = async (repoSlug) => {
@@ -293,6 +294,7 @@ export async function collectGithubReleaseState({
           (r?.status === 'completed' && r?.conclusion === 'success'),
       );
       for (const run of relevantRuns.slice(0, 5)) {
+        const isActiveRun = run?.status === 'in_progress' || run?.status === 'queued';
         const jobsRes = await fetchImpl(
           `https://api.github.com/repos/${publicRepo}/actions/runs/${run.id}/jobs?per_page=30`,
           { headers },
@@ -300,6 +302,12 @@ export async function collectGithubReleaseState({
         if (!jobsRes.ok) continue;
         const jobsJson = await jobsRes.json();
         const jobs = Array.isArray(jobsJson?.jobs) ? jobsJson.jobs : [];
+        const approvalJob = jobs.find(
+          (j) => j?.name === 'Validate release request automatically',
+        );
+        if (isActiveRun && approvalJob && approvalJob.conclusion !== 'skipped') {
+          activeFullReleaseRunIds.push(run.id);
+        }
         const inputJob = jobs.find(
           (j) =>
             j?.conclusion === 'success' &&
@@ -314,6 +322,9 @@ export async function collectGithubReleaseState({
         if (!logRes.ok) continue;
         const logText = await logRes.text();
         const extracted = extractReleaseInputsFromLog(logText);
+        if (extracted && isActiveRun && !activeFullReleaseRunIds.includes(run.id)) {
+          activeFullReleaseRunIds.push(run.id);
+        }
         if (extracted?.version) {
           versions.add(extracted.version);
         }
@@ -333,6 +344,7 @@ export async function collectGithubReleaseState({
   return {
     versions: [...versions],
     maxBuildNumber,
+    activeFullReleaseRunIds,
   };
 }
 
@@ -403,6 +415,7 @@ export async function resolveDispatchPlan({
     version,
     buildNumber,
     sourceSha: explicitSourceSha,
+    activeFullReleaseRunIds: ghState.activeFullReleaseRunIds || [],
   };
 }
 
@@ -475,6 +488,20 @@ export async function main({
   execFileImpl = execFileSync,
 } = {}) {
   const plan = await resolveDispatchPlan({ env, fetchImpl });
+
+  if (
+    trimEnv(env, 'GITHUB_EVENT_NAME') === 'schedule' &&
+    trimEnv(env, 'FORCE_DISPATCH') !== 'true' &&
+    !trimEnv(env, 'VERSION') &&
+    !trimEnv(env, 'INPUT_VERSION') &&
+    Array.isArray(plan.activeFullReleaseRunIds) &&
+    plan.activeFullReleaseRunIds.length > 0
+  ) {
+    console.log(
+      `[nightly-dispatch] Active full release.yml run(s) already in progress (${plan.activeFullReleaseRunIds.join(', ')}); skipping duplicate scheduled dispatch.`,
+    );
+    return { ...plan, skipped: true };
+  }
 
   console.log(
     `[nightly-dispatch] Source selection: ${plan.sourceSha || 'latest main (resolved by release.yml)'}`,

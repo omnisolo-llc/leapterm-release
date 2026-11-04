@@ -50,8 +50,8 @@ fn track_target(job: &str) -> Option<&'static str> {
 
 const VERIFY_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}";
 const VERIFY_SDK_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}";
-const PUBLISH_CANDIDATE_IF: &str = "${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}";
-const SIGN_CANDIDATE_IF: &str = "${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}";
+const PUBLISH_CANDIDATE_IF: &str = "${{ !failure() && !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}";
+const SIGN_CANDIDATE_IF: &str = "${{ !failure() && !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CandidateRole {

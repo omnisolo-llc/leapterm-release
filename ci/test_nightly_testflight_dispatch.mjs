@@ -10,6 +10,7 @@ import {
   collectGithubReleaseState,
   compareSemver,
   computeNextPatchVersion,
+  main as runNightlyDispatch,
   parseSemverTag,
   queryHighestAscBuild,
   resolveAppleApiCredentials,
@@ -358,4 +359,149 @@ test('twice-daily workflow and dispatcher contain zero private repository leaks'
     );
     assert.deepEqual(leaks, []);
   }
+});
+
+test('nightly workflow avoids top-of-hour cron congestion and clearly identifies Nightly Release', () => {
+  const workflowPath = path.resolve(
+    __dirname,
+    '..',
+    '.github',
+    'workflows',
+    'nightly-testflight.yml',
+  );
+  const content = fs.readFileSync(workflowPath, 'utf8');
+  assert.match(content, /^name:\s*.*Nightly.*Release/m);
+  const cronMatch = content.match(/cron:\s*'(\d+)\s+([0-9,*/-]+)\s+\*\s+\*\s+\*'/);
+  assert.ok(cronMatch, 'expected a 5-field cron schedule in nightly-testflight.yml');
+  const minute = Number(cronMatch[1]);
+  assert.ok(
+    minute > 0 && minute < 60,
+    `expected off-hour-boundary cron minute (1-59) to avoid GitHub schedule starvation, got ${cronMatch[1]}`,
+  );
+});
+
+test('scheduled nightly run skips duplicate dispatch when a full release.yml run is already active, while manual dispatch proceeds', async () => {
+  const apiKeyBase64 = generateTestEs256KeyBase64();
+  const fetchImpl = async (url, options = {}) => {
+    const u = String(url);
+    if (options.method === 'HEAD') {
+      return { ok: true, status: 200, headers: new Map() };
+    }
+    if (u.includes('api.appstoreconnect.apple.com')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { data: [{ attributes: { version: '71' } }], included: [] };
+        },
+      };
+    }
+    if (u.includes('/releases')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return [{ tag_name: 'v0.1.3', draft: false }];
+        },
+      };
+    }
+    if (u.includes('/actions/workflows/release.yml/runs')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            workflow_runs: [
+              { id: 9001, status: 'in_progress', conclusion: null },
+            ],
+          };
+        },
+      };
+    }
+    if (u.includes('/actions/runs/9001/jobs')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            jobs: [
+              {
+                id: 9002,
+                name: 'Validate release request automatically',
+                conclusion: 'success',
+              },
+            ],
+          };
+        },
+      };
+    }
+    if (u.includes('/actions/jobs/9002/logs')) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return '"build_only": false,\n"version": "0.1.4",\n"build_number": "72"\n';
+        },
+      };
+    }
+    throw new Error(`Unexpected URL: ${u}`);
+  };
+
+  const scheduledCalls = [];
+  const scheduledResult = await runNightlyDispatch({
+    env: {
+      GITHUB_EVENT_NAME: 'schedule',
+      GH_TOKEN: 'ghs_test',
+      APP_STORE_CONNECT_KEY_ID: 'K1',
+      APP_STORE_CONNECT_ISSUER_ID: 'I1',
+      APP_STORE_CONNECT_API_KEY_BASE64: apiKeyBase64,
+    },
+    fetchImpl,
+    execFileImpl: (cmd, args) => scheduledCalls.push([cmd, args]),
+  });
+  assert.equal(scheduledResult.skipped, true);
+  assert.equal(scheduledCalls.length, 0);
+
+  const manualCalls = [];
+  const manualResult = await runNightlyDispatch({
+    env: {
+      GITHUB_EVENT_NAME: 'workflow_dispatch',
+      GH_TOKEN: 'ghs_test',
+      APP_STORE_CONNECT_KEY_ID: 'K1',
+      APP_STORE_CONNECT_ISSUER_ID: 'I1',
+      APP_STORE_CONNECT_API_KEY_BASE64: apiKeyBase64,
+    },
+    fetchImpl,
+    execFileImpl: (cmd, args) => manualCalls.push([cmd, args]),
+  });
+  assert.equal(Boolean(manualResult.skipped), false);
+  assert.equal(manualCalls.length, 1);
+  assert.equal(manualCalls[0][0], 'gh');
+});
+
+test('release.yml blocks option1_signatures and publish on upstream track failure and isolates auto_promote docs deploy', () => {
+  const releaseYml = fs.readFileSync(
+    path.resolve(__dirname, '..', '.github', 'workflows', 'release.yml'),
+    'utf8',
+  );
+  const sigMatch = releaseYml.match(/option1_signatures:[\s\S]*?if:\s*(.+)/);
+  assert.ok(sigMatch, 'expected option1_signatures if condition');
+  assert.ok(sigMatch[1].includes('!failure()'), 'option1_signatures must guard against upstream track failure');
+
+  const pubMatch = releaseYml.match(/\r?\n  publish:\r?\n[\s\S]*?if:\s*(.+)/);
+  assert.ok(pubMatch, 'expected publish if condition');
+  assert.ok(pubMatch[1].includes('!failure()'), 'publish must guard against upstream track failure');
+  assert.ok(
+    pubMatch[1].includes("needs.option1_signatures.result == 'success'"),
+    'publish must require option1_signatures success',
+  );
+
+  const autoPromoteMatch = releaseYml.match(
+    /Auto-promoting release candidate to internal store tracks[\s\S]*?if \[ "\$\{PUBLISH_PUBLIC_RELEASE\}" = "true" \]/,
+  );
+  assert.ok(autoPromoteMatch, 'expected internal store auto-promote block');
+  assert.ok(
+    autoPromoteMatch[0].includes('-f deploy_docs=false'),
+    'internal store auto-promote run must disable duplicate docs/CDN deploy',
+  );
 });

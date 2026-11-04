@@ -515,8 +515,13 @@ fn complete_same_run_release_graph_keeps_all_evidence_and_approval_edges() {
             assert!(condition.contains("!inputs.build_only"), "{name}");
         }
     }
+    let signing_if = jobs["option1_signatures"]["if"].as_str().unwrap();
+    assert!(signing_if.contains("!failure()"));
+    assert!(signing_if.contains("!cancelled()"));
     let publish = jobs["publish"]["if"].as_str().unwrap();
     assert!(publish.contains("needs.resolve.result == 'success'"));
+    assert!(publish.contains("needs.option1_signatures.result == 'success'"));
+    assert!(publish.contains("!failure()"));
     assert!(publish.contains("!cancelled()"));
     let apple = jobs["apple_submission"]["if"].as_str().unwrap();
     for parent in [

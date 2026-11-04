@@ -2274,7 +2274,7 @@ jobs:
   option1_signatures:
     name: Sign exact verified public candidate bytes
     needs: [resolve, linux_track, windows_track, macos_track, android_track, web_track, ios_track]
-    if: ${{ !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}
     environment: package-signing
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -2371,7 +2371,7 @@ jobs:
 
   publish:
     name: Publish release (${{ needs.resolve.outputs.workflow_id }})
-    if: ${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}
+    if: ${{ !failure() && !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && needs.option1_signatures.result == 'success' && inputs.release_route == 'option1' }}
     needs: [resolve, linux_track, windows_track, macos_track, android_track, web_track, ios_track, option1_signatures]
     environment: public-release
     runs-on: ubuntu-24.04
@@ -2563,6 +2563,7 @@ jobs:
               -f build_number="${{ needs.resolve.outputs.build_number }}" \
               -f run_id="${{ github.run_id }}" \
               -f publish_github_release=false \
+              -f deploy_docs=false \
               -f rollout_environment=none \
               -f ios_store_action="${IOS_ACTION}" \
               -f macos_store_action="${MACOS_ACTION}" \
