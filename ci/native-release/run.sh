@@ -4,7 +4,9 @@ set -euo pipefail
 umask 077
 caller="$(pwd -P)"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+default_tmp=/tmp
+[[ -d /var/tmp && -w /var/tmp ]] && default_tmp=/var/tmp
+base="${RUNNER_TEMP:-${TMPDIR:-$default_tmp}}"
 if [[ -n "${RUNNER_TEMP:-}" ]] && mkdir "$base/leap-native-launcher" 2>/dev/null; then
   chmod 700 "$base/leap-native-launcher"
   scratch="$base/leap-native-launcher"

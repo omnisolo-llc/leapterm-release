@@ -64,11 +64,7 @@ fn option1_publication_keeps_the_test_matrix_decoupled_and_requires_native_publi
     require_text(publish, "!inputs.build_only");
     for (track_name, _) in TRACK_JOBS {
         let track = &workflow["jobs"][track_name];
-        assert_eq!(
-            track["continue-on-error"].as_bool(),
-            Some(true),
-            "{track_name}"
-        );
+        assert!(track["continue-on-error"].is_null(), "{track_name}");
         let producer = steps(track)
             .iter()
             .find(|step| step["id"].as_str() == Some("public_candidates"))
@@ -518,6 +514,7 @@ fn complete_same_run_release_graph_keeps_all_evidence_and_approval_edges() {
     let signing_if = jobs["option1_signatures"]["if"].as_str().unwrap();
     assert!(signing_if.contains("!failure()"));
     assert!(signing_if.contains("!cancelled()"));
+    assert!(signing_if.contains("needs.windows_track.result == 'success'"));
     let publish = jobs["publish"]["if"].as_str().unwrap();
     assert!(publish.contains("needs.resolve.result == 'success'"));
     assert!(publish.contains("needs.option1_signatures.result == 'success'"));
