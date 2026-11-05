@@ -52,6 +52,7 @@ const VERIFY_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == '
 const VERIFY_SDK_CANDIDATE_IF: &str = "${{ !cancelled() && needs.resolve.result == 'success' && (needs.windows_sdk.result == 'success' || (needs.windows_sdk.result == 'skipped' && inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}";
 const PUBLISH_CANDIDATE_IF: &str = "${{ !failure() && !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.release_route == 'option1' }}";
 const SIGN_CANDIDATE_IF: &str = "${{ !failure() && !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}";
+const SIGN_CANDIDATE_TRACK_IF: &str = "${{ !failure() && !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && (needs.windows_track.result == 'success' || (inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows')) }}";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CandidateRole {
@@ -436,7 +437,11 @@ pub fn reviewed_public_candidate_exchange(
             || !condition.contains("needs.resolve.result == 'success'")
             || !condition.contains("github.repository == 'omnisolo-llc/leapterm-release'")
             || !condition.contains("github.ref == 'refs/heads/main'")
-            || definition["continue-on-error"] != true
+            || (if job == "verify" {
+                definition["continue-on-error"] != true
+            } else {
+                !definition["continue-on-error"].is_null()
+            })
             || definition["environment"] != "downloads"
             || definition["permissions"]
                 != if sdk_role {
@@ -525,7 +530,8 @@ pub fn reviewed_public_candidate_exchange(
                             "option1_signatures",
                         ],
                     ));
-            if condition != expected_if
+            if (condition != expected_if
+                && !(job == "option1_signatures" && condition == SIGN_CANDIDATE_TRACK_IF))
                 || !valid_needs
                 || definition["environment"] != environment
                 || definition["permissions"] != json!({"contents": contents})
