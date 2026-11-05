@@ -138,3 +138,48 @@ test('installSccache bounds sccache disk cache size per target to prevent reposi
 
   fs.rmSync(runnerTemp, { recursive: true, force: true });
 });
+
+test('installSccache retries transient 5xx responses when downloading sccache archive', async () => {
+  const runnerTemp = makeTempDir();
+  const payload = Buffer.from('fake-sccache-tarball-retry');
+  const payloadSha = crypto.createHash('sha256').update(payload).digest('hex');
+  const fakeSpec = {
+    ...SCCACHE_SPECS.Windows,
+    sha256: payloadSha,
+  };
+
+  let attempts = 0;
+  const fakeFetch = async () => {
+    attempts += 1;
+    if (attempts < 3) {
+      return {
+        ok: false,
+        status: 504,
+        arrayBuffer: async () => Buffer.alloc(0),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => payload,
+    };
+  };
+  const fakeExec = (_cmd, _args, opts) => {
+    const extractedDir = path.join(opts.cwd, fakeSpec.folder);
+    fs.mkdirSync(extractedDir, { recursive: true });
+    fs.writeFileSync(path.join(extractedDir, fakeSpec.binary), 'binary-bytes');
+  };
+
+  const resolved = await installSccache({
+    runnerOs: 'Windows',
+    runnerTemp,
+    fetchImpl: fakeFetch,
+    execFileImpl: fakeExec,
+    specs: { Windows: fakeSpec },
+    retryDelayMs: 0,
+  });
+
+  assert.equal(attempts, 3);
+  assert.equal(path.basename(resolved), 'sccache.exe');
+  fs.rmSync(runnerTemp, { recursive: true, force: true });
+});

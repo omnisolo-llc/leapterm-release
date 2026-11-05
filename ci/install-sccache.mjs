@@ -47,6 +47,42 @@ export const SCCACHE_DISK_SIZES_BYTES = Object.freeze({
   'windows-sdk': 524288000,   // 500 MB
 });
 
+export const SCCACHE_DOWNLOAD_MAX_ATTEMPTS = 5;
+export const SCCACHE_DOWNLOAD_BASE_DELAY_MS = 1500;
+
+function isRetryableStatus(status) {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
+async function fetchSccacheArchive(url, { fetchImpl, maxAttempts, retryDelayMs }) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, { redirect: 'follow' });
+      if (response.ok) {
+        return Buffer.from(await response.arrayBuffer());
+      }
+      lastError = new Error(`Failed downloading sccache (${response.status}) from ${url}`);
+      if (!isRetryableStatus(response.status) || attempt === maxAttempts) {
+        throw lastError;
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (
+        attempt === maxAttempts ||
+        (/^Failed downloading sccache \(\d+\)/.test(lastError.message) &&
+          !isRetryableStatus(Number(lastError.message.match(/\((\d+)\)/)?.[1] || 0)))
+      ) {
+        throw lastError;
+      }
+    }
+    if (retryDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+    }
+  }
+  throw lastError || new Error(`Failed downloading sccache from ${url}`);
+}
+
 export async function installSccache({
   runnerOs = process.env.RUNNER_OS || '',
   runnerTemp = process.env.RUNNER_TEMP || '',
@@ -55,6 +91,8 @@ export async function installSccache({
   fetchImpl = fetch,
   execFileImpl = execFileSync,
   specs = SCCACHE_SPECS,
+  maxAttempts = SCCACHE_DOWNLOAD_MAX_ATTEMPTS,
+  retryDelayMs = SCCACHE_DOWNLOAD_BASE_DELAY_MS,
 } = {}) {
   if (!runnerTemp) {
     throw new Error('RUNNER_TEMP is required');
@@ -91,11 +129,7 @@ export async function installSccache({
   const binaryPath = path.join(installRoot, spec.folder, spec.binary);
   if (!fs.existsSync(binaryPath)) {
     const url = `https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${spec.archive}`;
-    const response = await fetchImpl(url, { redirect: 'follow' });
-    if (!response.ok) {
-      throw new Error(`Failed downloading sccache (${response.status}) from ${url}`);
-    }
-    const bytes = Buffer.from(await response.arrayBuffer());
+    const bytes = await fetchSccacheArchive(url, { fetchImpl, maxAttempts, retryDelayMs });
     const actualSha = crypto.createHash('sha256').update(bytes).digest('hex');
     if (actualSha !== spec.sha256) {
       throw new Error(
