@@ -892,6 +892,37 @@ impl GitHub {
             None,
         )
     }
+    fn cleanup_starter_asset(&self, release: u64, name: &str) {
+        let Ok(bytes) = self.api(vec![
+            "api".into(),
+            "--hostname".into(),
+            "github.com".into(),
+            format!("repos/{}/releases/{release}/assets?per_page=100", self.repo),
+        ]) else {
+            return;
+        };
+        let Ok(value) = crate::json::parse(&bytes) else {
+            return;
+        };
+        let Some(rows) = value.as_array() else {
+            return;
+        };
+        for row in rows {
+            if row["name"] == name
+                && row["state"] == "starter"
+                && let Some(id) = row["id"].as_u64().filter(|id| *id > 0)
+            {
+                let _ = self.api(vec![
+                    "api".into(),
+                    "--hostname".into(),
+                    "github.com".into(),
+                    "--method".into(),
+                    "DELETE".into(),
+                    format!("repos/{}/releases/assets/{id}", self.repo),
+                ]);
+            }
+        }
+    }
 }
 impl ReleaseApi for GitHub {
     fn get_json(&mut self, endpoint: &str) -> Result<Value> {
@@ -925,21 +956,37 @@ impl ReleaseApi for GitHub {
         if !valid_name(name) {
             return Err("Invalid public upload name");
         }
-        crate::json::parse(&self.api(vec![
-            "api".into(),
-            "--hostname".into(),
-            "github.com".into(),
-            "--method".into(),
-            "POST".into(),
-            format!(
-                "https://uploads.github.com/repos/{}/releases/{release}/assets?name={name}",
-                self.repo
-            ),
-            "--header".into(),
-            "Content-Type: application/octet-stream".into(),
-            "--input".into(),
-            path.to_string_lossy().into_owned(),
-        ])?)
+        let mut last_error = None;
+        for attempt in 0..5 {
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_secs(2));
+                self.cleanup_starter_asset(release, name);
+            }
+            match self
+                .api(vec![
+                    "api".into(),
+                    "--hostname".into(),
+                    "github.com".into(),
+                    "--method".into(),
+                    "POST".into(),
+                    format!(
+                        "https://uploads.github.com/repos/{}/releases/{release}/assets?name={name}",
+                        self.repo
+                    ),
+                    "--header".into(),
+                    "Content-Type: application/octet-stream".into(),
+                    "--input".into(),
+                    path.to_string_lossy().into_owned(),
+                ])
+                .and_then(|bytes| crate::json::parse(&bytes))
+            {
+                Ok(uploaded) if uploaded["state"] == "uploaded" => return Ok(uploaded),
+                Ok(_) => last_error = Some("Staging asset upload response differs from candidate"),
+                Err(error) => last_error = Some(error),
+            }
+        }
+        self.cleanup_starter_asset(release, name);
+        Err(last_error.unwrap_or("Asset upload failed"))
     }
     fn download(&mut self, asset: u64, output: &Path) -> Result<()> {
         // Asset bytes can exceed the supervisor's bounded stdout. A private
