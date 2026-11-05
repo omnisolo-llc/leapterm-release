@@ -370,7 +370,6 @@ jobs:
     name: Linux track (${{ needs.resolve.outputs.workflow_id }})
     needs: [resolve]
     if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'fast' || inputs.verify_target == 'linux') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
-    continue-on-error: true
     environment: downloads
     permissions:
       contents: read
@@ -507,7 +506,6 @@ jobs:
     name: Windows track (${{ needs.resolve.outputs.workflow_id }})
     needs: [resolve, windows_sdk]
     if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.windows_sdk.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'slow' || inputs.verify_target == 'windows') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
-    continue-on-error: true
     environment: downloads
     permissions:
       contents: read
@@ -672,7 +670,6 @@ jobs:
     name: macOS track (${{ needs.resolve.outputs.workflow_id }})
     needs: [resolve]
     if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'slow' || inputs.verify_target == 'macos') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
-    continue-on-error: true
     environment: downloads
     permissions:
       contents: read
@@ -809,7 +806,6 @@ jobs:
     name: Android track (${{ needs.resolve.outputs.workflow_id }})
     needs: [resolve]
     if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'fast' || inputs.verify_target == 'android') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
-    continue-on-error: true
     environment: downloads
     permissions:
       contents: read
@@ -969,7 +965,6 @@ jobs:
     name: Web track (${{ needs.resolve.outputs.workflow_id }})
     needs: [resolve]
     if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'fast' || inputs.verify_target == 'web') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
-    continue-on-error: true
     environment: downloads
     permissions:
       contents: read
@@ -1091,7 +1086,6 @@ jobs:
     name: iOS track (${{ needs.resolve.outputs.workflow_id }})
     needs: [resolve]
     if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.verify_target == 'all' || inputs.verify_target == 'slow' || inputs.verify_target == 'ios') && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
-    continue-on-error: true
     environment: downloads
     permissions:
       contents: read
@@ -2274,7 +2268,7 @@ jobs:
   option1_signatures:
     name: Sign exact verified public candidate bytes
     needs: [resolve, linux_track, windows_track, macos_track, android_track, web_track, ios_track]
-    if: ${{ !failure() && !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && (needs.windows_track.result == 'success' || (inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows')) }}
     environment: package-signing
     runs-on: ubuntu-24.04
     timeout-minutes: 180

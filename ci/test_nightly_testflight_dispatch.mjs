@@ -487,6 +487,15 @@ test('release.yml blocks option1_signatures and publish on upstream track failur
   const sigMatch = releaseYml.match(/option1_signatures:[\s\S]*?if:\s*(.+)/);
   assert.ok(sigMatch, 'expected option1_signatures if condition');
   assert.ok(sigMatch[1].includes('!failure()'), 'option1_signatures must guard against upstream track failure');
+  assert.ok(
+    sigMatch[1].includes("needs.windows_track.result == 'success'"),
+    'option1_signatures must guard against windows_track skipped when windows_sdk fails',
+  );
+  assert.doesNotMatch(
+    releaseYml,
+    /continue-on-error:\s*true/,
+    'track jobs must not set continue-on-error: true or !failure() in option1_signatures will be bypassed',
+  );
 
   const pubMatch = releaseYml.match(/\r?\n  publish:\r?\n[\s\S]*?if:\s*(.+)/);
   assert.ok(pubMatch, 'expected publish if condition');
