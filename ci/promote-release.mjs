@@ -326,7 +326,20 @@ export function canonicalJson(value) {
 export function scanBufferForLeaks(buffer, relativePath) {
   const text = buffer.toString('utf8');
   const findings = [];
+  const isPublicInstaller =
+    path.basename(String(relativePath || '')) === 'install.sh';
+  const hasStagingHost = new RegExp(
+    '[A-Za-z0-9.-]*\\.staging\\.' + 'leapterm\\.com\\b',
+    'i',
+  ).test(text);
   for (const rule of SELF_HOSTED_LEAK_PATTERNS) {
+    if (
+      isPublicInstaller &&
+      rule.label === 'production product domain' &&
+      !hasStagingHost
+    ) {
+      continue;
+    }
     if (rule.regex.test(text)) {
       findings.push(`${relativePath}: leaked ${rule.label}`);
     }

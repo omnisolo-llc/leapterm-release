@@ -3239,6 +3239,14 @@ test('sanitizePublicLogText, syncAppleInternalTesters masking, and install.sh le
 
   const leakyInstall = Buffer.from('#!/bin/sh\nREPO="example-org/private-source"\n');
   assert.ok(scanBufferForLeaks(leakyInstall, 'install.sh').length > 0);
+  const publicInstall = Buffer.from(
+    '#!/bin/sh\nR2_BASE_URL="${R2_BASE_URL:-https://download.leapterm.com}"\n',
+  );
+  assert.deepEqual(scanBufferForLeaks(publicInstall, 'install.sh'), []);
+  const stagingInstall = Buffer.from(
+    `#!/bin/sh\nAPI_URL="https://api.${'staging'}.leapterm.com"\n`,
+  );
+  assert.ok(scanBufferForLeaks(stagingInstall, 'install.sh').length > 0);
   assert.ok(
     scanBufferForLeaks(Buffer.from(`HOST="leap.${'phslc' + '.com'}"\n`), 'env.sh').some((f) =>
       f.includes('private dev domain'),
