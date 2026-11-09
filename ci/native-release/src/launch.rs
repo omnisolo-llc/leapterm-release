@@ -1266,6 +1266,7 @@ fn build_native_stage(
             };
             let timeout = match required(env, "RELEASE_TARGET")? {
                 "integration" => 21600,
+                "macos" | "windows" | "ios" => 18000,
                 "installation" => 10800,
                 _ => 10000,
             };
