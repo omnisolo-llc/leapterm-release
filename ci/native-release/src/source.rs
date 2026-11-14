@@ -506,7 +506,10 @@ pub const EXPECTED_FRAMEWORK_URL_SHA256: &str =
     "fd5fd255380dc264c830f3e27e3a77fad800430f97a7382dfbc1a846c35bcb99";
 pub const EXPECTED_FRAMEWORK_NAME_SHA256: &str =
     "f5bcf3ef428d0bf2e89b51c344a4c390828975c6813f325016c973a827886ffb";
+pub const EXPECTED_FRAMEWORK_PATH_SHA256: &str =
+    "c4940ca94dc35c459f96f95e2d481f0e8bb424ed84e14b87677f8557599e7cb4";
 pub const TEST_FRAMEWORK_URL: &str = "https://github.com/example-org/private-framework.git";
+pub const TEST_FRAMEWORK_PATH: &str = "core/private-framework";
 fn normalize_git_url(url: &str) -> String {
     let trimmed = url.trim().trim_end_matches('/');
     if trimmed.ends_with(".git") {
@@ -514,6 +517,13 @@ fn normalize_git_url(url: &str) -> String {
     } else {
         format!("{trimmed}.git")
     }
+}
+fn is_approved_framework_path(path: &str) -> bool {
+    use sha2::Digest;
+    let path_digest = format!("{:x}", sha2::Sha256::digest(path.trim().as_bytes()));
+    path == "framework"
+        || path == TEST_FRAMEWORK_PATH
+        || path_digest == EXPECTED_FRAMEWORK_PATH_SHA256
 }
 fn is_approved_framework_submodule(name: &str, url: &str) -> bool {
     use sha2::Digest;
@@ -595,10 +605,14 @@ fn modules(
         }
         match (path.as_str(), name.as_str()) {
             ("leapterm-release", "leapterm-release") if url == PUBLIC_URL => {}
-            ("framework" | "core/framework", module_name)
-                if is_approved_framework_submodule(module_name, url) => {}
+            (module_path, module_name)
+                if is_approved_framework_path(module_path)
+                    && is_approved_framework_submodule(module_name, url) => {}
             ("leapterm-website", "leapterm-website") if website_slug(url).is_some() => {}
-            ("leapterm-release" | "framework" | "core/framework" | "leapterm-website", _) => {
+            ("leapterm-release" | "leapterm-website", _) => {
+                return Err("Submodule identity differs from allowlist");
+            }
+            (module_path, _) if is_approved_framework_path(module_path) => {
                 return Err("Submodule identity differs from allowlist");
             }
             _ => return Err("Unapproved submodule destination"),
