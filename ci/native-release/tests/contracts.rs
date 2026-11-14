@@ -574,6 +574,7 @@ fn ordinary_release_subtree_and_core_framework_materialize() {
     )
     .unwrap();
     fs::create_dir_all(root.path().join("core")).unwrap();
+    let framework_path = leap_release_launcher::source::TEST_FRAMEWORK_PATH;
     git(
         root.path(),
         &[
@@ -585,7 +586,7 @@ fn ordinary_release_subtree_and_core_framework_materialize() {
             "--name",
             "framework",
             seed.path().to_str().unwrap(),
-            "core/framework",
+            framework_path,
         ],
     );
     git(
@@ -604,7 +605,7 @@ fn ordinary_release_subtree_and_core_framework_materialize() {
             "add",
             ".gitmodules",
             "leapterm-release/payload.txt",
-            "core/framework",
+            framework_path,
         ],
     );
     git(
@@ -617,7 +618,7 @@ fn ordinary_release_subtree_and_core_framework_materialize() {
     );
     let sha = git(root.path(), &["rev-parse", "HEAD"]);
     git(
-        &root.path().join("core/framework"),
+        &root.path().join(framework_path),
         &[
             "remote",
             "set-url",
@@ -627,7 +628,7 @@ fn ordinary_release_subtree_and_core_framework_materialize() {
     );
     git(
         root.path(),
-        &["submodule", "deinit", "-f", "--", "core/framework"],
+        &["submodule", "deinit", "-f", "--", framework_path],
     );
     let env = leap_release_launcher::clean_environment(&std::env::vars().collect());
     assert!(
@@ -650,7 +651,13 @@ fn ordinary_release_subtree_and_core_framework_materialize() {
         )
         .is_err()
     );
-    assert!(!root.path().join("core/framework/payload.txt").exists());
+    assert!(
+        !root
+            .path()
+            .join(framework_path)
+            .join("payload.txt")
+            .exists()
+    );
     leap_release_launcher::source::materialize(
         root.path(),
         &sha,
@@ -661,7 +668,7 @@ fn ordinary_release_subtree_and_core_framework_materialize() {
     .unwrap();
     verify_source(root.path(), &sha).unwrap();
     assert_eq!(
-        git(&root.path().join("core/framework"), &["rev-parse", "HEAD"]),
+        git(&root.path().join(framework_path), &["rev-parse", "HEAD"]),
         builder_sha
     );
     fs::write(
