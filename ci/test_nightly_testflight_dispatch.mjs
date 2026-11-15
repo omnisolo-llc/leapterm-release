@@ -513,4 +513,94 @@ test('release.yml blocks option1_signatures and publish on upstream track failur
     autoPromoteMatch[0].includes('-f deploy_docs=false'),
     'internal store auto-promote run must disable duplicate docs/CDN deploy',
   );
+
+  assert.match(
+    releaseYml,
+    /promote_ios_partial:[\s\S]*needs:\s*\[resolve,\s*ios_track,\s*publish\][\s\S]*needs\.ios_track\.result == 'success'[\s\S]*needs\.publish\.result != 'success'[\s\S]*-f publish_github_release=false[\s\S]*-f ios_store_action=internal/,
+    'partial release waves with verified iOS candidate must still promote TestFlight Internal without publishing public release',
+  );
+});
+
+test('scheduled nightly run proceeds when existing active run already has a failed track or is stale', async () => {
+  const apiKeyBase64 = generateTestEs256KeyBase64();
+  const staleCreatedAt = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
+  const makeFetch = (runs, jobs) => async (url, options = {}) => {
+    const u = String(url);
+    if (options.method === 'HEAD') {
+      return { ok: true, status: 200, headers: new Map() };
+    }
+    if (u.includes('api.appstoreconnect.apple.com')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { data: [{ attributes: { version: '76' } }], included: [] };
+        },
+      };
+    }
+    if (u.includes('/releases')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return [{ tag_name: 'v0.1.9', draft: false }];
+        },
+      };
+    }
+    if (u.includes('/actions/workflows/release.yml/runs')) {
+      return { ok: true, status: 200, async json() { return { workflow_runs: runs }; } };
+    }
+    if (u.includes('/actions/runs/') && u.includes('/jobs')) {
+      return { ok: true, status: 200, async json() { return { jobs }; } };
+    }
+    if (u.includes('/actions/jobs/') && u.includes('/logs')) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return '"build_only": false,\n"version": "0.1.10",\n"build_number": "77"\n';
+        },
+      };
+    }
+    throw new Error(`Unexpected URL: ${u}`);
+  };
+
+  const failingCalls = [];
+  const failingRes = await runNightlyDispatch({
+    env: {
+      GITHUB_EVENT_NAME: 'schedule',
+      GH_TOKEN: 'ghs_test',
+      APP_STORE_CONNECT_KEY_ID: 'K1',
+      APP_STORE_CONNECT_ISSUER_ID: 'I1',
+      APP_STORE_CONNECT_API_KEY_BASE64: apiKeyBase64,
+    },
+    fetchImpl: makeFetch(
+      [{ id: 9101, status: 'in_progress', conclusion: null, created_at: new Date().toISOString() }],
+      [
+        { id: 9102, name: 'Validate release request automatically', conclusion: 'success' },
+        { id: 9103, name: 'macOS track', conclusion: 'failure' },
+      ],
+    ),
+    execFileImpl: (cmd, args) => failingCalls.push([cmd, args]),
+  });
+  assert.equal(Boolean(failingRes.skipped), false);
+  assert.equal(failingCalls.length, 1);
+
+  const staleCalls = [];
+  const staleRes = await runNightlyDispatch({
+    env: {
+      GITHUB_EVENT_NAME: 'schedule',
+      GH_TOKEN: 'ghs_test',
+      APP_STORE_CONNECT_KEY_ID: 'K1',
+      APP_STORE_CONNECT_ISSUER_ID: 'I1',
+      APP_STORE_CONNECT_API_KEY_BASE64: apiKeyBase64,
+    },
+    fetchImpl: makeFetch(
+      [{ id: 9201, status: 'in_progress', conclusion: null, created_at: staleCreatedAt }],
+      [{ id: 9202, name: 'Validate release request automatically', conclusion: 'success' }],
+    ),
+    execFileImpl: (cmd, args) => staleCalls.push([cmd, args]),
+  });
+  assert.equal(Boolean(staleRes.skipped), false);
+  assert.equal(staleCalls.length, 1);
 });

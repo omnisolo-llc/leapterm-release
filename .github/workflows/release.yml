@@ -2268,7 +2268,7 @@ jobs:
   option1_signatures:
     name: Sign exact verified public candidate bytes
     needs: [resolve, linux_track, windows_track, macos_track, android_track, web_track, ios_track]
-    if: ${{ !failure() && !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && (needs.windows_track.result == 'success' || (inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows')) }}
+    if: ${{ !failure() && !cancelled() && !inputs.build_only && inputs.release_route == 'option1' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && needs.resolve.result == 'success' && inputs.verify_target != 'ios' && (needs.windows_track.result == 'success' || (inputs.verify_target != 'all' && inputs.verify_target != 'slow' && inputs.verify_target != 'windows')) }}
     environment: package-signing
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -2600,3 +2600,51 @@ jobs:
           CARGO_REGISTRY_CACHE_DIR: ${{ format('{0}/cargo-registry-cache', runner.temp) }}
           LEAP_LAUNCHER_CACHE_DIR: ${{ format('{0}/leap-launcher-cache', runner.temp) }}
           LEAP_NATIVE_STAGE_CACHE_DIR: ${{ format('{0}/leap-native-stage-cache', runner.temp) }}
+
+  promote_ios_partial:
+    name: Promote verified iOS candidate to TestFlight Internal (${{ needs.resolve.outputs.workflow_id }})
+    needs: [resolve, ios_track, publish]
+    if: ${{ !cancelled() && !inputs.build_only && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && inputs.release_route == 'option1' && inputs.auto_promote && inputs.ios_action != 'skip' && needs.resolve.result == 'success' && needs.ios_track.result == 'success' && needs.publish.result != 'success' }}
+    environment: app-store
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Auto-promote verified iOS candidate to TestFlight Internal on partial wave
+        run: |
+          echo "Full publish did not complete (result=${{ needs.publish.result }}); promoting verified iOS candidate v${{ needs.resolve.outputs.version }} (${{ needs.resolve.outputs.build_number }}) to TestFlight Internal..."
+          gh workflow run promote-release.yml \
+            --ref main \
+            -f version="${{ needs.resolve.outputs.version }}" \
+            -f build_number="${{ needs.resolve.outputs.build_number }}" \
+            -f run_id="${{ github.run_id }}" \
+            -f publish_github_release=false \
+            -f deploy_docs=false \
+            -f rollout_environment=none \
+            -f ios_store_action=internal \
+            -f macos_store_action=none \
+            -f android_store_action=none
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN || github.token }}
+      - name: Retain encrypted partial iOS promotion diagnostics privately
+        if: ${{ always() }}
+        run: bash ci/native-release/run.sh retain-artifacts
+        env:
+          RELEASE_TARGET: publish
+          RELEASE_REQUEST: ${{ toJSON(inputs) }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RESOLVED_VERSION: ${{ needs.resolve.outputs.version }}
+          RESOLVED_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+          RELEASE_ARTIFACT_KIND: diagnostics
+          RELEASE_ARTIFACT_SCOPE: promote-ios-partial

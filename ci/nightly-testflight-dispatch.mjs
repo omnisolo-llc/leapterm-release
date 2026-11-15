@@ -9,6 +9,7 @@ export const DEFAULT_ASC_APP_ID = '6812974189';
 export const BASELINE_VERSION = '0.1.3';
 export const BASELINE_BUILD_NUMBER = 71;
 export const ALLOWED_SCHEDULED_TARGETS = Object.freeze(['all', 'slow', 'fast']);
+export const MAX_ACTIVE_RUN_AGE_MS = 6 * 60 * 60 * 1000;
 
 function trimEnv(env, key) {
   return String(env?.[key] ?? '').trim();
@@ -305,7 +306,20 @@ export async function collectGithubReleaseState({
         const approvalJob = jobs.find(
           (j) => j?.name === 'Validate release request automatically',
         );
-        if (isActiveRun && approvalJob && approvalJob.conclusion !== 'skipped') {
+        const hasFailedJob = jobs.some((j) => j?.conclusion === 'failure');
+        const createdAtMs = run?.created_at
+          ? Date.parse(String(run.created_at))
+          : Number.NaN;
+        const isStaleActiveRun =
+          Number.isFinite(createdAtMs) &&
+          Date.now() - createdAtMs > MAX_ACTIVE_RUN_AGE_MS;
+        const isBlockingActiveRun =
+          isActiveRun && !hasFailedJob && !isStaleActiveRun;
+        if (
+          isBlockingActiveRun &&
+          approvalJob &&
+          approvalJob.conclusion !== 'skipped'
+        ) {
           activeFullReleaseRunIds.push(run.id);
         }
         const inputJob = jobs.find(
@@ -322,7 +336,11 @@ export async function collectGithubReleaseState({
         if (!logRes.ok) continue;
         const logText = await logRes.text();
         const extracted = extractReleaseInputsFromLog(logText);
-        if (extracted && isActiveRun && !activeFullReleaseRunIds.includes(run.id)) {
+        if (
+          extracted &&
+          isBlockingActiveRun &&
+          !activeFullReleaseRunIds.includes(run.id)
+        ) {
           activeFullReleaseRunIds.push(run.id);
         }
         if (extracted?.version) {
