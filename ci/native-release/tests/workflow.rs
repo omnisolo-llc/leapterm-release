@@ -247,6 +247,12 @@ fn route_selection_assigns_one_version_draft_owner_and_retains_legacy_acceptance
                     "ios_track",
                 ])
             );
+        } else if name == "promote_ios_partial" {
+            assert!(condition.contains("inputs.release_route == 'option1'"));
+            assert!(condition.contains("needs.ios_track.result == 'success'"));
+            assert!(condition.contains("needs.publish.result != 'success'"));
+            assert!(condition.contains("!inputs.build_only"));
+            assert!(condition.contains("!cancelled()"));
         } else if ![
             "release_source_approval",
             "resolve",
@@ -298,7 +304,7 @@ fn every_public_workflow_uses_native_launch_and_contracts_without_legacy_runtime
     let release = workflow("release");
     for (name, job) in release["jobs"].as_mapping().unwrap() {
         let name = name.as_str().unwrap();
-        if name == "publish" {
+        if name == "publish" || name == "promote_ios_partial" {
             continue;
         }
         let command = if name == "release_source_approval" {
@@ -485,6 +491,10 @@ fn complete_same_run_release_graph_keeps_all_evidence_and_approval_edges() {
                 "ios_track",
             ],
         ),
+        (
+            "promote_ios_partial",
+            vec!["resolve", "ios_track", "publish"],
+        ),
     ];
     assert_eq!(jobs.as_mapping().unwrap().len(), edges.len());
     for (name, parents) in edges {
@@ -643,6 +653,7 @@ fn permissions_environments_and_all_task_inputs_keep_exact_step_scope() {
         ),
         ("apple_submission", "read", false, "app-store", "ios-submit"),
         ("publish", "write", false, "public-release", ""),
+        ("promote_ios_partial", "read", false, "app-store", ""),
         (
             "option1_signatures",
             "read",

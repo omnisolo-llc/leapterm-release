@@ -2,8 +2,8 @@ name: Nightly & Twice-Daily Release
 
 on:
   schedule:
-    # Twice a day off the top-of-hour boundary (02:17 UTC and 14:17 UTC) to avoid GitHub cron starvation
-    - cron: '17 2,14 * * *'
+    # Twice a day off busy top-of-hour / :15-:30 congestion windows (04:43 UTC and 16:43 UTC)
+    - cron: '43 4,16 * * *'
   workflow_dispatch:
     inputs:
       target:
