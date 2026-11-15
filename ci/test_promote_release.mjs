@@ -1468,6 +1468,9 @@ test('rollout copies a KUBECONFIG filename into an owned private file and preser
   const configuredFile = path.join(sourceRoot, 'cluster config.yaml');
   const configBytes = Buffer.from(mockRolloutCredentials.KUBECONFIG);
   fs.writeFileSync(configuredFile, configBytes, { mode: 0o640 });
+  if (process.platform !== 'win32') {
+    fs.chmodSync(configuredFile, 0o640);
+  }
   process.env.KUBECONFIG = configuredFile;
   const mock = rolloutCheckoutMock(sourceRoot);
   let usedFile;
