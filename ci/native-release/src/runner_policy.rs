@@ -17,7 +17,7 @@ pub const RUNNERS: [&str; 6] = [
     "windows-2025",
     "windows-11-arm",
     "macos-15-intel",
-    "macos-26",
+    "xcode-27",
 ];
 const MAX_FILE: u64 = 1_048_576;
 const MAX_DOCUMENTS: usize = 128;

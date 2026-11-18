@@ -15,7 +15,7 @@ fn workflow() -> Value {
 fn platform_runner(platform: &str) -> &'static str {
     match platform {
         "linux" | "android" | "web" => "ubuntu-24.04",
-        "macos" | "ios" => "macos-26",
+        "macos" | "ios" => "xcode-27",
         "windows" => "windows-2025",
         _ => panic!("unexpected platform"),
     }
