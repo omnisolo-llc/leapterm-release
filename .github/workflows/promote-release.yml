@@ -322,7 +322,7 @@ jobs:
 
   promote_apple:
     name: Promote Staged iOS/macOS Candidate to App Store Connect
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60
     environment: app-store
     if: ${{ !cancelled() && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && (inputs.verify_store_credentials_only || inputs.ios_store_action != 'none' || inputs.macos_store_action != 'none') }}
@@ -378,7 +378,7 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        runner: [ubuntu-24.04, windows-2025, macos-26]
+        runner: [ubuntu-24.04, windows-2025, xcode-27]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     permissions:

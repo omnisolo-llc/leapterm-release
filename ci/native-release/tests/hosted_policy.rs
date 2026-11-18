@@ -13,7 +13,7 @@ const RUNNERS: [&str; 6] = [
     "windows-2025",
     "windows-11-arm",
     "macos-15-intel",
-    "macos-26",
+    "xcode-27",
 ];
 fn fixture() -> TempDir {
     let dir = TempDir::new().unwrap();
@@ -644,7 +644,8 @@ fn standard_labels_only() {
     }
     for runner in [
         "self-hosted",
-        "macos-26-large",
+        "macos-26",
+        "xcode-27-xlarge",
         "ubuntu-latest",
         "windows-2022",
         "gpu-4-core",
@@ -685,7 +686,7 @@ fn matrix_and_reusable_edges_are_closed() {
     put(
         dir.path(),
         ".github/workflows/check.yml",
-        "jobs:\n  fanout:\n    strategy:\n      matrix:\n        runner: [ubuntu-24.04, windows-2025]\n        exclude:\n          - runner: windows-2025\n        include:\n          - runner: macos-26\n    runs-on: '${{ matrix.runner }}'\n  child:\n    uses: ./.github/workflows/child.yml\n",
+        "jobs:\n  fanout:\n    strategy:\n      matrix:\n        runner: [ubuntu-24.04, windows-2025]\n        exclude:\n          - runner: windows-2025\n        include:\n          - runner: xcode-27\n    runs-on: '${{ matrix.runner }}'\n  child:\n    uses: ./.github/workflows/child.yml\n",
     );
     put(
         dir.path(),
@@ -712,7 +713,7 @@ fn include_cannot_hide_paid_runner_and_unknown_matrix_fails() {
     put(
         dir.path(),
         ".github/workflows/check.yml",
-        "jobs:\n  fanout:\n    runs-on: '${{ matrix.runner }}'\n    strategy:\n      matrix:\n        include:\n          - runner: ubuntu-24.04\n          - runner: macos-26-xlarge\n",
+        "jobs:\n  fanout:\n    runs-on: '${{ matrix.runner }}'\n    strategy:\n      matrix:\n        include:\n          - runner: ubuntu-24.04\n          - runner: xcode-27-xlarge\n",
     );
     rejected(dir.path(), "runner_not_allowed");
     put(
@@ -967,7 +968,7 @@ fn standard_runner_upgrade_preserves_required_check_contexts() {
     let expected = [
         ("ubuntu-24.04", "ubuntu-24.04"),
         ("windows-2022", "windows-2025"),
-        ("macos-26", "macos-26"),
+        ("macos-26", "xcode-27"),
     ];
     assert_eq!(includes.len(), expected.len());
     for (check, runner) in expected {
