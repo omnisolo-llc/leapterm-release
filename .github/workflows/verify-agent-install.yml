@@ -40,7 +40,7 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        runner: [ubuntu-24.04, windows-2025, macos-26]
+        runner: [ubuntu-24.04, windows-2025, xcode-27]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:

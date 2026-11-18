@@ -884,14 +884,14 @@ fn build_integration_installation_and_provider_matrices_remain_complete() {
             "windows-2025",
             "inputs.verify_target == 'windows'",
         ),
-        ("macos_track", "macos-26", "inputs.verify_target == 'macos'"),
+        ("macos_track", "xcode-27", "inputs.verify_target == 'macos'"),
         (
             "android_track",
             "ubuntu-24.04",
             "inputs.verify_target == 'android'",
         ),
         ("web_track", "ubuntu-24.04", "inputs.verify_target == 'web'"),
-        ("ios_track", "macos-26", "inputs.verify_target == 'ios'"),
+        ("ios_track", "xcode-27", "inputs.verify_target == 'ios'"),
     ];
     for (track_name, runner, target_clause) in expected_tracks {
         assert_eq!(
@@ -972,7 +972,7 @@ fn build_integration_installation_and_provider_matrices_remain_complete() {
         }
         let runner = match platform {
             "linux" => "ubuntu-24.04",
-            "macos" => "macos-26",
+            "macos" => "xcode-27",
             "windows" => "windows-2025",
             _ => unreachable!(),
         };
@@ -1370,7 +1370,7 @@ fn pinned_actions_sdk_versions_and_real_relay_suites_remain_required() {
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect::<BTreeSet<_>>(),
-        BTreeSet::from(["ubuntu-24.04", "windows-2025", "macos-26"])
+        BTreeSet::from(["ubuntu-24.04", "windows-2025", "xcode-27"])
     );
     for job in ["windows_download", "external_windows_signing"] {
         for c in [

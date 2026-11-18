@@ -256,7 +256,7 @@ jobs:
             source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_LINUX_JSON
             source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_LINUX_SHA256
           - platform: macos
-            runner: macos-26
+            runner: xcode-27
             device_variable: LEAP_INTEGRATION_DEVICE_MACOS
             default_device: macos
             defines_variable: LEAP_INTEGRATION_DEFINES_MACOS
@@ -277,7 +277,7 @@ jobs:
             source_profile_secret: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_ANDROID_JSON
             source_profile_digest_variable: LEAP_PROTECTED_DESKTOP_SOURCE_PROFILE_ANDROID_SHA256
           - platform: ios
-            runner: macos-26
+            runner: xcode-27
             device_variable: LEAP_INTEGRATION_DEVICE_IOS
             default_device: ''
             defines_variable: LEAP_INTEGRATION_DEFINES_IOS
@@ -673,7 +673,7 @@ jobs:
     environment: downloads
     permissions:
       contents: read
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1089,7 +1089,7 @@ jobs:
     environment: downloads
     permissions:
       contents: read
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1291,7 +1291,7 @@ jobs:
           - target: linux
             runner: ubuntu-24.04
           - target: macos
-            runner: macos-26
+            runner: xcode-27
           - target: android
             runner: ubuntu-24.04
           - target: web
@@ -1441,7 +1441,7 @@ jobs:
     needs: [resolve, validate]
     if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
     environment: app-store
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1556,7 +1556,7 @@ jobs:
     needs: [resolve, validate, ios]
     if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
     environment: app-store
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1628,7 +1628,7 @@ jobs:
             vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_LINUX
             vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_LINUX_JSON
           - platform: macos
-            runner: macos-26
+            runner: xcode-27
             attestation_environment: vpn-installation-macos
             device_variable: LEAP_INTEGRATION_DEVICE_MACOS
             config_variable: LEAP_INSTALL_CONFIG_MACOS
@@ -1649,7 +1649,7 @@ jobs:
             vpn_profile_variable: LEAP_VPN_INSTALLATION_PROFILE_ANDROID
             vpn_control_secret: LEAP_VPN_INSTALLED_CONTROL_ANDROID_JSON
           - platform: ios
-            runner: macos-26
+            runner: xcode-27
             attestation_environment: vpn-installation-ios
             device_variable: LEAP_INTEGRATION_DEVICE_IOS
             config_variable: LEAP_INSTALL_CONFIG_IOS
@@ -1817,7 +1817,7 @@ jobs:
     needs: [resolve, validate, ios, apple_testflight, installation, vpn_container]
     if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action != 'skip' && inputs.release_route == 'legacy-acceptance'
     environment: app-store
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2002,7 +2002,7 @@ jobs:
             config_variable: LEAP_EXTERNAL_CONFIG_LINUX
             candidate_guard_variable: LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_LINUX
           - platform: macos
-            runner: macos-26
+            runner: xcode-27
             config_variable: LEAP_EXTERNAL_CONFIG_MACOS
             candidate_guard_variable: LEAP_EXTERNAL_CANDIDATE_GUARD_CONFIG_MACOS
           - platform: windows
@@ -2211,7 +2211,7 @@ jobs:
     needs: [resolve, validate, ios_delivery, publication_prepare, vpn_container, external_tests, external_windows_signing]
     if: ${{ !cancelled() && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' && !inputs.build_only && inputs.ios_action == 'submit' && needs.ios_delivery.result == 'success' && needs.vpn_container.result == 'success' && needs.external_tests.result == 'success' && needs.external_windows_signing.result == 'success' && inputs.release_route == 'legacy-acceptance' }}
     environment: app-store
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 180
     permissions:
       contents: read

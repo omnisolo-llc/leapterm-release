@@ -30,7 +30,7 @@ jobs:
             platform: darwin-x86_64
             artifact_scope: agent-darwin-x86-64
             target: macos
-          - runner: macos-26
+          - runner: xcode-27
             platform: darwin-aarch64
             artifact_scope: agent-darwin-aarch64
             target: macos
