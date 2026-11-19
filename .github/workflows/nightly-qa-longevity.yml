@@ -1,0 +1,135 @@
+name: Nightly QA & Longevity Verification
+
+on:
+  schedule:
+    # Daily off-peak UTC window avoiding :00/:15/:30 cron congestion and release waves (02:29 UTC)
+    - cron: '29 2 * * *'
+  workflow_dispatch:
+    inputs:
+      verify_target:
+        description: 'Build-only multi-platform verification wave (all, fast, slow, or single platform)'
+        type: choice
+        options: [all, fast, slow, linux, windows, macos, android, web, ios]
+        default: all
+      dispatch_source_ci:
+        description: 'Dispatch full source-ci.yml 13-stage matrix (via discovery or explicit catalog digest)'
+        type: boolean
+        default: true
+      dispatch_build_verify:
+        description: 'Dispatch multi-platform build-only verification (release.yml build_only=true)'
+        type: boolean
+        default: true
+      run_test:
+        description: 'Execute launcher, release-tool, and platform tests on each selected runner'
+        type: boolean
+        default: true
+      source_sha:
+        description: 'Optional 40-hex approved source commit SHA override (empty resolves latest main)'
+        required: false
+        type: string
+        default: ''
+      catalog_sha256:
+        description: 'Optional 64-hex reviewed source catalog SHA-256 for direct source-ci.yml dispatch'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-qa-longevity
+  cancel-in-progress: false
+
+jobs:
+  policy:
+    name: policy
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Enforce standard runners and bounded storage policy
+        run: >-
+          bash ci/native-release/run.sh audit-runners
+          --workflows .github/workflows/nightly-qa-longevity.yml
+          --policy ci/standard-runner-policy.json
+
+  public_qa_longevity:
+    name: Public Boundary QA & Contract Longevity
+    needs: policy
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node for public boundary & longevity contract checks
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+
+      - name: Audit strict QA, source-ci, discovery, and contracts workflows against runner policy
+        run: |
+          for wf in nightly-qa-longevity.yml source-ci.yml source-discovery.yml contracts.yml nightly-testflight.yml; do
+            bash ci/native-release/run.sh audit-runners --workflows ".github/workflows/$wf" --policy ci/standard-runner-policy.json
+          done
+
+      - name: Execute sanitized public-boundary native & Node QA longevity checks
+        env:
+          CARGO_TARGET_DIR: ${{ format('{0}/native-release-target', runner.temp) }}
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy --no-self-update
+          bash ci/test-native-release.sh
+          node --test ci/test_sealed_diagnostics.cjs ci/test_sealed_evaluation.cjs ci/test_promote_release.mjs ci/test_verify_agent_install_e2e.mjs ci/test_install_sccache.mjs ci/test_tag_flow.mjs ci/test_nightly_testflight_dispatch.mjs ci/test_nightly_qa_dispatch.mjs
+
+  dispatch_nightly_qa:
+    name: Dispatch Source CI Matrix & Build-Only Multi-Platform Verification
+    needs: [policy, public_qa_longevity]
+    if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: release-source-approval
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node for nightly QA workflow dispatcher
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+
+      - name: Verify nightly QA dispatcher contracts
+        run: node --test ci/test_nightly_qa_dispatch.mjs
+
+      - name: Dispatch source-ci.yml matrix and release.yml build_only verification
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN || github.token }}
+          PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_CI_DISCOVERY_ENABLED: ${{ vars.SOURCE_CI_DISCOVERY_ENABLED }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          INPUT_VERIFY_TARGET: ${{ inputs.verify_target || 'all' }}
+          INPUT_DISPATCH_SOURCE_CI: ${{ inputs.dispatch_source_ci == false && 'false' || 'true' }}
+          INPUT_DISPATCH_BUILD_VERIFY: ${{ inputs.dispatch_build_verify == false && 'false' || 'true' }}
+          INPUT_RUN_TEST: ${{ inputs.run_test == false && 'false' || 'true' }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha || '' }}
+          INPUT_CATALOG_SHA256: ${{ inputs.catalog_sha256 || '' }}
+        run: node ci/nightly-qa-dispatch.mjs
