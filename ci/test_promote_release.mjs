@@ -13,6 +13,7 @@ import {
   PRIMARY_KEYRING_ASSET,
   PUBLIC_REPOSITORY,
   PUBLIC_TARGETS,
+  FORBIDDEN_ASSET_PATTERNS,
   FORBIDDEN_PRIVATE_TARGETS,
   STORE_LISTINGS,
   assertNoPrivateLeakInPublicMetadata,
@@ -176,6 +177,7 @@ test('filterPublicDownloadLinks strips all private targets and rewrites URLs to 
 
   assert.equal(pubLinks.artifacts.length, PUBLIC_TARGETS.length);
   assert.equal(pubLinks.downloads.length, PUBLIC_TARGETS.length);
+  assert.equal(pubLinks.self_hosted, undefined);
   assert.deepEqual(
     pubLinks.artifacts.map((a) => a.target),
     PUBLIC_TARGETS,
@@ -186,11 +188,33 @@ test('filterPublicDownloadLinks strips all private targets and rewrites URLs to 
   const serialized = JSON.stringify(pubLinks);
   assertNoPrivateLeakInPublicMetadata('download-links.json', serialized);
   assert.ok(!serialized.includes('example-org/private-source/releases'));
+  assert.ok(!serialized.includes('self-hosted.zip'));
   assert.ok(
     serialized.includes(
       'omnisolo-llc/leapterm-release/releases/download/v0.1.1/',
     ),
   );
+  assert.throws(
+    () =>
+      filterPublicDownloadLinks(stagingLinks, undefined, {
+        name: 'leapterm-0.1.1-self-hosted.zip',
+        bytes: 4096,
+        sha256: 'f'.repeat(64),
+      }),
+    /Self-hosted package releases are permanently disabled/,
+  );
+  for (const name of [
+    'leapterm-0.1.1-self-hosted.zip',
+    'leapterm-0.1.1-self-hosted.zip.sha256',
+    'leapterm-0.1.1-self-hosted.zip.sha256.sig',
+    'leapterm-0.1.1-self-hosted.tar.gz',
+    'leapterm-0.1.1-self-hosted.tgz',
+  ]) {
+    assert.ok(
+      FORBIDDEN_ASSET_PATTERNS.some((rx) => rx.test(name)),
+      `expected FORBIDDEN_ASSET_PATTERNS to reject ${name}`,
+    );
+  }
 });
 
 test('filterPublicProvenance strips private targets and masks private source_sha', () => {
@@ -205,6 +229,7 @@ test('filterPublicProvenance strips private targets and masks private source_sha
   assert.equal(pubProv.source_sha, stagingProvenance.builder_sha);
   assert.notEqual(pubProv.source_sha, stagingProvenance.source_sha);
   assert.equal(pubProv.artifacts.length, PUBLIC_TARGETS.length);
+  assert.equal(pubProv.include_selfhost, false);
   assert.equal(pubProv.ios_action, undefined);
   assert.deepEqual(pubProv.managed_vpn.supported_platforms, [
     'linux',
@@ -1825,15 +1850,13 @@ test('mergeAppleSigningConfig overlays fresh APPLE_CONFIG credentials without cl
   assert.equal(mergeAppleSigningConfig(base, ''), base);
 });
 
-test('verifyAllReleaseBuildsReady checks all 9 public targets, self_hosted, and signed assets', () => {
+test('verifyAllReleaseBuildsReady checks all 9 public targets and signed assets without requiring self-hosted zip', () => {
   const { stagingLinks, stagingProvenance } = makeStagingFixtures('0.1.1');
   const assetNames = new Set([
     'download-links.json',
     'leapterm-0.1.1-release-provenance.json',
     'leapterm-0.1.1-release-provenance.json.sig',
     PRIMARY_KEYRING_ASSET,
-    stagingLinks.self_hosted.name,
-    `${stagingLinks.self_hosted.name}.sha256`,
   ]);
   for (const item of stagingLinks.downloads) {
     if (PUBLIC_TARGETS.includes(item.target)) {
@@ -1967,7 +1990,7 @@ test('mergeWaveStagingMetadata combines fast and slow wave releases and enforces
   });
   assert.equal(merged.isCompleteWaveSet, true);
   assert.equal(merged.stagingLinks.tag, 'v0.1.1');
-  assert.equal(merged.stagingLinks.self_hosted.name, stagingLinks.self_hosted.name);
+  assert.equal(merged.stagingLinks.self_hosted, undefined);
   assert.equal(merged.stagingLinks.ios_delivery.action, 'upload');
 
   const pubLinks = filterPublicDownloadLinks(merged.stagingLinks);
@@ -2247,7 +2270,7 @@ test('promoteRelease proceeds to store promotion when no wave staging tags exist
   );
 });
 
-test('verifyAllReleaseBuildsReady recognizes self_hosted when present in assetsByName', () => {
+test('verifyAllReleaseBuildsReady succeeds without self-hosted assets even if legacy metadata mentions self_hosted', () => {
   const version = '0.1.1';
   const downloads = PUBLIC_TARGETS.map((target) => ({
     target,
@@ -2264,8 +2287,6 @@ test('verifyAllReleaseBuildsReady recognizes self_hosted when present in assetsB
     `leapterm-${version}-release-provenance.json`,
     `leapterm-${version}-release-provenance.json.sig`,
     PRIMARY_KEYRING_ASSET,
-    `leapterm-${version}-self-hosted.zip`,
-    `leapterm-${version}-self-hosted.zip.sha256`,
   ]);
   for (const d of downloads) {
     assetsByName.add(d.name);
@@ -2273,13 +2294,18 @@ test('verifyAllReleaseBuildsReady recognizes self_hosted when present in assetsB
     assetsByName.add(`${d.name}.sha256.sig`);
   }
   const readiness = verifyAllReleaseBuildsReady({
-    downloadLinks: { version, downloads },
+    downloadLinks: {
+      version,
+      downloads,
+      self_hosted: { name: `leapterm-${version}-self-hosted.zip` },
+    },
     provenance: { version, artifacts },
     assetsByName,
     version,
   });
   assert.equal(readiness.ready, true);
   assert.deepEqual(readiness.missingTargets, []);
+  assert.deepEqual(readiness.missingAssets, []);
 });
 
 test('promoteAndroidToPlayStore falls back to status draft on draft apps', async () => {

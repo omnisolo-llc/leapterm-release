@@ -3,7 +3,7 @@ use leap_release_launcher::{Environment, input::Request, private_final_archive};
 use serde_json::json;
 fn request(build_only: bool) -> Request {
     Request::parse(&json!({"source_sha":"a".repeat(40),"builder_sha":"b".repeat(40),"version":"1.2.3","build_number":"42",
-        "ios_action":if build_only {"skip"}else{"submit"},"build_only":build_only,"include_selfhost":true,"automatic_release":false,"release_route":"option1"}).to_string()).unwrap()
+        "ios_action":if build_only {"skip"}else{"submit"},"build_only":build_only,"include_selfhost":false,"automatic_release":false,"release_route":"option1"}).to_string()).unwrap()
 }
 #[test]
 fn approved_recipient_forwarding_covers_all_six_native_builds_after_freeze() {
@@ -54,7 +54,7 @@ fn archive_prepare_and_legacy_preservation_require_protected_input_but_readback_
             "build_number": "42",
             "ios_action": "submit",
             "build_only": false,
-            "include_selfhost": true,
+            "include_selfhost": false,
             "automatic_release": false,
             "release_route": "legacy-acceptance"
         })

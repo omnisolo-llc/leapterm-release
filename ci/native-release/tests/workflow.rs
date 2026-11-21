@@ -1453,12 +1453,9 @@ fn release_defaults_and_protected_approval_documentation_remain_explicit() {
             .contains("1-9999")
     );
     assert_eq!(inputs["include_selfhost"]["default"].as_bool(), Some(false));
-    assert!(
-        inputs["include_selfhost"]["description"]
-            .as_str()
-            .unwrap()
-            .contains("disabled by default")
-    );
+    let selfhost_desc = inputs["include_selfhost"]["description"].as_str().unwrap();
+    assert!(selfhost_desc.contains("disabled by default"));
+    assert!(selfhost_desc.contains("permanently blocked"));
     let docs = read("README.md");
     for text in ["LeapTerm client downloads", "# Leap Agent Native Builds"] {
         assert!(docs.contains(text), "{text}");

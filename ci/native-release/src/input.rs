@@ -148,6 +148,9 @@ impl Request {
         {
             return Err("Invalid release mode or distribution selection");
         }
+        if !request.build_only && request.include_selfhost {
+            return Err("Self-hosted package releases are permanently disabled");
+        }
         if (!request.source_sha.is_empty() && !valid_sha(&request.source_sha))
             || (!request.builder_sha.is_empty() && !valid_sha(&request.builder_sha))
         {

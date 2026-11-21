@@ -325,10 +325,29 @@ test('resolveDispatchPlan advances past both ASC and in-flight GitHub release ve
   assert.ok(args.includes('version=0.1.5'));
   assert.ok(args.includes('build_number=73'));
   assert.ok(args.includes('ios_action=upload'));
-  assert.ok(args.includes('include_selfhost=true'));
+  assert.ok(args.includes('include_selfhost=false'));
+  assert.ok(!args.includes('include_selfhost=true'));
   assert.ok(args.includes('auto_promote=true'));
   assert.ok(!args.some((a) => a.startsWith('source_sha=')));
   assert.ok(!args.some((a) => a.startsWith('builder_sha=')));
+});
+
+test('buildNightlyDispatchArgs never enables include_selfhost for any scheduled target', () => {
+  for (const target of ['all', 'slow', 'fast']) {
+    const args = buildNightlyDispatchArgs({
+      target,
+      version: '0.1.5',
+      buildNumber: 73,
+    });
+    assert.ok(
+      args.includes('include_selfhost=false'),
+      `expected include_selfhost=false for target=${target}`,
+    );
+    assert.ok(
+      !args.includes('include_selfhost=true'),
+      `expected include_selfhost=true to never be passed for target=${target}`,
+    );
+  }
 });
 
 test('buildNightlyDispatchArgs rejects single-platform targets incompatible with full release mode', () => {

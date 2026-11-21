@@ -50,7 +50,7 @@ on:
         type: boolean
         default: false
       include_selfhost:
-        description: 'Include optional self-hosted relay bundle (disabled by default)'
+        description: 'Retired: self-hosted relay bundle releases are disabled by default and permanently blocked'
         type: boolean
         default: false
       auto_promote:
