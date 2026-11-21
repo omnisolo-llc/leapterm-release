@@ -79,6 +79,7 @@ export const FORBIDDEN_ASSET_PATTERNS = Object.freeze([
   /-updates-macos-arm64\.zip$/,
   /-android(-release|-alpha|-internal)?\.aab$/,
   /-ios(-private|-alpha|-internal)?\.ipa$/,
+  /-self-hosted\.(?:zip|tar\.gz|tgz)(?:\.sha256(?:\.sig)?)?$/,
   /^leapterm-sbom\./,
 ]);
 
@@ -289,7 +290,7 @@ export function buildPublicReleaseBody({
     `### Windows (${listings.windows.title})`,
     listings.windows.shortDescription,
     '',
-    '### Linux & Self-Hosted Relay',
+    '### Linux',
     ...(listings.linux.highlights || []).map((item) => `• ${item}`),
     '',
     `### iOS & iPadOS (${listings.ios.name})`,
@@ -613,7 +614,10 @@ export function filterPublicDownloadLinks(
       `Expected ${PUBLIC_TARGETS.length} public artifacts, found ${publicArtifacts.length} (${found.join(', ')})`,
     );
   }
-  const result = {
+  if (selfHostedOverride) {
+    throw new Error('Self-hosted package releases are permanently disabled');
+  }
+  return {
     version,
     build_number: stagingLinks.build_number,
     tag,
@@ -625,23 +629,6 @@ export function filterPublicDownloadLinks(
       status: 'not-included-in-public-archive',
     },
   };
-  const shSource =
-    selfHostedOverride ||
-    (stagingLinks.self_hosted && typeof stagingLinks.self_hosted === 'object'
-      ? stagingLinks.self_hosted
-      : null);
-  if (shSource) {
-    const shName = String(shSource.name || `leapterm-${version}-self-hosted.zip`);
-    result.self_hosted = {
-      ...shSource,
-      name: shName,
-      url: `${publicBaseUrl}/${shName}`,
-      checksum_url: `${publicBaseUrl}/${shName}.sha256`,
-      sha256_url: `${publicBaseUrl}/${shName}.sha256`,
-      signature_url: `${publicBaseUrl}/${shName}.sha256.sig`,
-    };
-  }
-  return result;
 }
 
 export function filterPublicProvenance(
@@ -675,6 +662,7 @@ export function filterPublicProvenance(
   const sanitized = {
     ...stagingProvenance,
     source_sha: builderSha,
+    include_selfhost: false,
     inventory_scope: 'public-application-artifacts',
     artifacts: publicArtifacts,
   };
@@ -753,20 +741,6 @@ export function verifyAllReleaseBuildsReady({
   const normalizedVersion = String(
     version || downloadLinks?.version || provenance?.version || '',
   ).replace(/^v/, '');
-  const selfHostedName = `leapterm-${normalizedVersion}-self-hosted.zip`;
-  const selfHostedFromAssets =
-    assetsByName && hasAsset(selfHostedName) && hasAsset(`${selfHostedName}.sha256`)
-      ? { name: selfHostedName, sha256: 'present' }
-      : null;
-  const selfHosted = downloadLinks?.self_hosted || selfHostedFromAssets;
-  if (selfHosted && typeof selfHosted === 'object' && selfHosted.name && assetsByName) {
-    for (const suffix of ['', '.sha256']) {
-      const assetName = `${selfHosted.name}${suffix}`;
-      if (!hasAsset(assetName)) {
-        missingAssets.push(assetName);
-      }
-    }
-  }
 
   if (assetsByName && normalizedVersion) {
     const provName = `leapterm-${normalizedVersion}-release-provenance.json`;
@@ -807,7 +781,6 @@ export function mergeWaveStagingMetadata({ wavePayloads, version }) {
   const downloadsByTarget = new Map();
   const provByTarget = new Map();
   const mergedAssets = new Map();
-  let mergedSelfHosted = null;
   let mergedIosDelivery = null;
 
   for (const wave of wavePayloads) {
@@ -863,9 +836,6 @@ export function mergeWaveStagingMetadata({ wavePayloads, version }) {
       provByTarget.set(item.target, item);
     }
 
-    if (links.self_hosted && typeof links.self_hosted === 'object') {
-      mergedSelfHosted = links.self_hosted;
-    }
     if (links.ios_delivery && typeof links.ios_delivery === 'object') {
       if (!mergedIosDelivery || links.ios_delivery.action !== 'skip') {
         mergedIosDelivery = links.ios_delivery;
@@ -881,14 +851,15 @@ export function mergeWaveStagingMetadata({ wavePayloads, version }) {
   const orderedDownloads = [...downloadsByTarget.values()];
   const orderedProvArtifacts = [...provByTarget.values()];
   const tag = `v${normalizedVersion || String(baseLinks?.version || '').replace(/^v/, '')}`;
+  const { self_hosted: _retiredSelfHosted, ...baseLinksWithoutSelfHosted } =
+    baseLinks || {};
   const stagingLinks = {
-    ...baseLinks,
+    ...baseLinksWithoutSelfHosted,
     version: normalizedVersion || baseLinks?.version,
     build_number: baseLinks?.build_number,
     tag,
     downloads: orderedDownloads,
     artifacts: orderedDownloads,
-    ...(mergedSelfHosted ? { self_hosted: mergedSelfHosted } : {}),
     ...(mergedIosDelivery ? { ios_delivery: mergedIosDelivery } : {}),
   };
   const stagingProvenance = {
@@ -4237,57 +4208,13 @@ export async function promoteRelease({
     }
 
     if (publishGithubRelease) {
-      const selfHostedName = `leapterm-${normalizedVersion}-self-hosted.zip`;
-      let selfHostedOverride = null;
       const filesToUpload = [];
       const sha256Entries = [];
-
-      if (assetsByName.has(selfHostedName)) {
-        const selfHostedBinPath = await requireStagingAsset(selfHostedName);
-        const selfHostedShaPath = await requireStagingAsset(
-          `${selfHostedName}.sha256`,
-        );
-        const selfHostedBytes = fs.statSync(selfHostedBinPath).size;
-        const selfHostedSha = sha256Hex(fs.readFileSync(selfHostedBinPath));
-        const recordedSelfHostedSha = fs
-          .readFileSync(selfHostedShaPath, 'utf8')
-          .trim()
-          .split(/\s+/)[0];
-        if (recordedSelfHostedSha !== selfHostedSha) {
-          throw new Error(`.sha256 file mismatch for ${selfHostedName}`);
-        }
-        scanSelfHostedZipForLeaks(selfHostedBinPath);
-        const selfHostedSigName = `${selfHostedName}.sha256.sig`;
-        let selfHostedSigPath;
-        if (assetsByName.has(selfHostedSigName)) {
-          selfHostedSigPath = await requireStagingAsset(selfHostedSigName);
-          verifyGpgSignature(keyringPath, selfHostedSigPath, selfHostedShaPath);
-        } else {
-          selfHostedSigPath = path.join(workDir, selfHostedSigName);
-          signDetachedWithGpg(signingConfig, selfHostedShaPath, selfHostedSigPath);
-          verifyGpgSignature(keyringPath, selfHostedSigPath, selfHostedShaPath);
-        }
-        selfHostedOverride = {
-          name: selfHostedName,
-          bytes: selfHostedBytes,
-          sha256: selfHostedSha,
-        };
-        filesToUpload.push(
-          selfHostedBinPath,
-          selfHostedShaPath,
-          selfHostedSigPath,
-        );
-        sha256Entries.push({ name: selfHostedName, sha256: selfHostedSha });
-      } else if (readiness.ready && stagingProvenance?.include_selfhost === true) {
-        throw new Error(
-          `Staging release ${tag} is missing required asset: ${selfHostedName}`,
-        );
-      }
 
       const publicLinks = filterPublicDownloadLinks(
         stagingLinks,
         publicRepo,
-        selfHostedOverride,
+        null,
         { allowPartialWave: !readiness.ready },
       );
       const publicProvenance = filterPublicProvenance(stagingProvenance, {

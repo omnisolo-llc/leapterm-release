@@ -111,6 +111,7 @@ fn normalization_preserves_release_contract_and_denies_partial_release() {
     for patch in [
         serde_json::json!({"ios_action":"skip"}),
         serde_json::json!({"automatic_release":true,"ios_action":"upload"}),
+        serde_json::json!({"include_selfhost":true}),
         serde_json::json!({"build_only":"true"}),
     ] {
         let mut raw = serde_json::to_value(&full).unwrap();

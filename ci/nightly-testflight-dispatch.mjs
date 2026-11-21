@@ -460,7 +460,7 @@ export function buildNightlyDispatchArgs({
   }
 
   const iosAction = normalizedTarget === 'fast' ? 'skip' : 'upload';
-  const includeSelfhost = normalizedTarget === 'all' ? 'true' : 'false';
+  const includeSelfhost = 'false';
 
   const args = [
     'workflow',
