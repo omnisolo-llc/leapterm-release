@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { createPrivateKey, sign } from 'node:crypto';
+import { createHash, createPrivateKey, sign } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -10,6 +11,22 @@ export const BASELINE_VERSION = '0.1.3';
 export const BASELINE_BUILD_NUMBER = 71;
 export const ALLOWED_SCHEDULED_TARGETS = Object.freeze(['all', 'slow', 'fast']);
 export const MAX_ACTIVE_RUN_AGE_MS = 6 * 60 * 60 * 1000;
+export const REQUIRED_PRE_RELEASE_CI_STAGES = Object.freeze([
+  'source',
+  'security',
+  'rust',
+  'flutter-vm',
+  'flutter-browser',
+  'account',
+  'vault',
+  'worker',
+  'web',
+  'mcp',
+  'relay',
+  'packaging',
+  'agent-lifecycle',
+]);
+export const GATE_MARKER_PREFIX = 'NIGHTLY_CI_GATE_VERIFIED=';
 
 function trimEnv(env, key) {
   return String(env?.[key] ?? '').trim();
@@ -500,11 +517,269 @@ export function buildNightlyDispatchArgs({
   return args;
 }
 
+function isHex(value, length) {
+  return (
+    typeof value === 'string' &&
+    value.length === length &&
+    /^[0-9a-f]+$/.test(value)
+  );
+}
+
+/**
+ * Deterministic opaque 24-hex fingerprint binding `(sourceSha, builderSha, catalogSha256)`.
+ * Matches `pre_release_ci::gate_fingerprint` in `ci/native-release/src/pre_release_ci.rs`.
+ */
+export function computeNightlyGateFingerprint({
+  sourceSha,
+  builderSha,
+  catalogSha256,
+} = {}) {
+  const s = String(sourceSha || '').trim().toLowerCase();
+  const b = String(builderSha || '').trim().toLowerCase();
+  const c = String(catalogSha256 || '').trim().toLowerCase();
+  if (!isHex(s, 40) || !isHex(b, 40) || !isHex(c, 64)) {
+    throw new Error('Invalid nightly CI gate fingerprint inputs');
+  }
+  return createHash('sha256')
+    .update(`leap-nightly-ci-gate-v1:${s}:${b}:${c}`)
+    .digest('hex')
+    .slice(0, 24);
+}
+
+/**
+ * Fail-closed check for an existing completed `nightly-testflight.yml` run on `main`
+ * where ALL 13 required `Pre-release CI (<stage>)` jobs executed and succeeded AND
+ * the run logged the exact `NIGHTLY_CI_GATE_VERIFIED=<gateFingerprint>` marker.
+ */
+export async function checkPriorVerifiedNightlyGate({
+  publicRepo = PUBLIC_RELEASE_REPO,
+  token = '',
+  gateFingerprint = '',
+  currentRunId = '',
+  fetchImpl = fetch,
+} = {}) {
+  const fp = String(gateFingerprint || '').trim().toLowerCase();
+  if (!isHex(fp, 24)) {
+    return { verified: false, runId: null };
+  }
+  const headers = githubHeaders(token);
+  const marker = `${GATE_MARKER_PREFIX}${fp}`;
+  try {
+    const runsRes = await fetchImpl(
+      `https://api.github.com/repos/${publicRepo}/actions/workflows/nightly-testflight.yml/runs?branch=main&status=completed&per_page=20`,
+      { headers },
+    );
+    if (!runsRes.ok) {
+      return { verified: false, runId: null };
+    }
+    const runsJson = await runsRes.json();
+    const runs = Array.isArray(runsJson?.workflow_runs)
+      ? runsJson.workflow_runs
+      : [];
+    const candidates = runs.filter(
+      (r) =>
+        r?.status === 'completed' &&
+        r?.conclusion === 'success' &&
+        r?.head_branch === 'main' &&
+        String(r?.id ?? '') !== String(currentRunId || ''),
+    );
+    for (const run of candidates.slice(0, 10)) {
+      const jobsRes = await fetchImpl(
+        `https://api.github.com/repos/${publicRepo}/actions/runs/${run.id}/jobs?per_page=50`,
+        { headers },
+      );
+      if (!jobsRes.ok) continue;
+      const jobsJson = await jobsRes.json();
+      const jobs = Array.isArray(jobsJson?.jobs) ? jobsJson.jobs : [];
+      const jobByName = new Map();
+      for (const job of jobs) {
+        if (job?.name) {
+          jobByName.set(String(job.name), job);
+        }
+      }
+      const allStagesPassed = REQUIRED_PRE_RELEASE_CI_STAGES.every((stage) => {
+        const job = jobByName.get(`Pre-release CI (${stage})`);
+        return job && job.conclusion === 'success';
+      });
+      if (!allStagesPassed) {
+        continue;
+      }
+      const dispatchJob = jobByName.get('Dispatch Nightly & Twice-Daily Release');
+      if (!dispatchJob || dispatchJob.conclusion !== 'success') {
+        continue;
+      }
+      const logRes = await fetchImpl(
+        `https://api.github.com/repos/${publicRepo}/actions/jobs/${dispatchJob.id}/logs`,
+        { headers },
+      );
+      if (!logRes.ok) continue;
+      const logText = await logRes.text();
+      if (logText.includes(marker)) {
+        return { verified: true, runId: String(run.id) };
+      }
+    }
+  } catch {
+    return { verified: false, runId: null };
+  }
+  return { verified: false, runId: null };
+}
+
+/**
+ * Enforce fail-closed pre-release CI gate before dispatching `release.yml`.
+ * Never permits skipping tests without a verified passing 13-stage run for the
+ * exact `(source_sha, builder_sha, catalog_sha256)`.
+ */
+export function verifyPreReleaseGate({ env = process.env, plan } = {}) {
+  for (const bypassKey of ['SKIP_TESTS', 'INPUT_SKIP_TESTS']) {
+    const raw = trimEnv(env, bypassKey).toLowerCase();
+    if (raw && raw !== 'false' && raw !== '0') {
+      throw new Error(
+        `Pre-release CI gate cannot be bypassed (${bypassKey}=${raw} is prohibited)`,
+      );
+    }
+  }
+  const sourceSha = trimEnv(env, 'VERIFIED_SOURCE_SHA').toLowerCase();
+  const catalogSha256 = trimEnv(env, 'VERIFIED_CATALOG_SHA256').toLowerCase();
+  const builderSha = trimEnv(env, 'GITHUB_SHA').toLowerCase();
+  if (!isHex(sourceSha, 40)) {
+    throw new Error(
+      'Pre-release CI gate requires a 40-hex VERIFIED_SOURCE_SHA before dispatching release.yml',
+    );
+  }
+  if (!isHex(catalogSha256, 64)) {
+    throw new Error(
+      'Pre-release CI gate requires a 64-hex VERIFIED_CATALOG_SHA256 before dispatching release.yml',
+    );
+  }
+  if (!isHex(builderSha, 40)) {
+    throw new Error(
+      'Pre-release CI gate requires a 40-hex GITHUB_SHA before dispatching release.yml',
+    );
+  }
+  if (plan?.sourceSha && plan.sourceSha.toLowerCase() !== sourceSha) {
+    throw new Error(
+      `Requested source_sha (${plan.sourceSha}) differs from pre-release CI verified SHA (${sourceSha})`,
+    );
+  }
+  const gateResult = trimEnv(env, 'SOURCE_CI_GATE_RESULT').toLowerCase();
+  const alreadyVerified =
+    trimEnv(env, 'SOURCE_CI_ALREADY_VERIFIED').toLowerCase() === 'true';
+  const verifiedRunId = trimEnv(env, 'SOURCE_CI_VERIFIED_RUN_ID');
+  const passedFresh = gateResult === 'success';
+  const passedReused =
+    gateResult === 'skipped' &&
+    alreadyVerified &&
+    /^[1-9]\d{0,19}$/.test(verifiedRunId);
+  if (!passedFresh && !passedReused) {
+    throw new Error(
+      `Refusing to dispatch release.yml: pre-release CI gate did not pass (result=${gateResult || 'missing'}, already_verified=${alreadyVerified})`,
+    );
+  }
+  const gateFingerprint = computeNightlyGateFingerprint({
+    sourceSha,
+    builderSha,
+    catalogSha256,
+  });
+  const expectedFp = trimEnv(env, 'VERIFIED_GATE_FINGERPRINT').toLowerCase();
+  if (expectedFp && expectedFp !== gateFingerprint) {
+    throw new Error(
+      `Pre-release CI gate fingerprint mismatch (expected ${expectedFp}, computed ${gateFingerprint})`,
+    );
+  }
+  return {
+    sourceSha,
+    builderSha,
+    catalogSha256,
+    gateFingerprint,
+    reusedRunId: passedReused ? verifiedRunId : null,
+  };
+}
+
+function writeGithubOutputs(env, values) {
+  const outputPath = trimEnv(env, 'GITHUB_OUTPUT');
+  if (!outputPath) {
+    return;
+  }
+  const lines = Object.entries(values).map(([k, v]) => `${k}=${v}`);
+  fs.appendFileSync(outputPath, `${lines.join('\n')}\n`, 'utf8');
+}
+
+export async function runPreflight({
+  env = process.env,
+  fetchImpl = fetch,
+} = {}) {
+  const publicRepo = trimEnv(env, 'PUBLIC_RELEASE_REPO') || PUBLIC_RELEASE_REPO;
+  const token =
+    trimEnv(env, 'GH_TOKEN') ||
+    trimEnv(env, 'PRIVATE_RELEASE_TOKEN') ||
+    trimEnv(env, 'GITHUB_TOKEN');
+  const ghState = await collectGithubReleaseState({
+    publicRepo,
+    sourceRepo: '',
+    token,
+    fetchImpl,
+  });
+  const skipDuplicate =
+    trimEnv(env, 'GITHUB_EVENT_NAME') === 'schedule' &&
+    trimEnv(env, 'FORCE_DISPATCH') !== 'true' &&
+    !trimEnv(env, 'VERSION') &&
+    !trimEnv(env, 'INPUT_VERSION') &&
+    Array.isArray(ghState.activeFullReleaseRunIds) &&
+    ghState.activeFullReleaseRunIds.length > 0;
+
+  let alreadyVerified = false;
+  let verifiedRunId = '';
+  const gateFingerprint = trimEnv(env, 'VERIFIED_GATE_FINGERPRINT').toLowerCase();
+  if (!skipDuplicate && isHex(gateFingerprint, 24)) {
+    const prior = await checkPriorVerifiedNightlyGate({
+      publicRepo,
+      token,
+      gateFingerprint,
+      currentRunId: trimEnv(env, 'GITHUB_RUN_ID'),
+      fetchImpl,
+    });
+    if (prior.verified && prior.runId) {
+      alreadyVerified = true;
+      verifiedRunId = prior.runId;
+    }
+  }
+  const result = {
+    skipDuplicate,
+    alreadyVerified,
+    verifiedRunId,
+    activeFullReleaseRunIds: ghState.activeFullReleaseRunIds || [],
+  };
+  writeGithubOutputs(env, {
+    skip_duplicate: skipDuplicate ? 'true' : 'false',
+    already_verified: alreadyVerified ? 'true' : 'false',
+    verified_run_id: verifiedRunId,
+  });
+  if (skipDuplicate) {
+    console.log(
+      `[nightly-preflight] Active full release.yml run(s) already in progress (${result.activeFullReleaseRunIds.join(', ')}); skipping duplicate scheduled gate & dispatch.`,
+    );
+  } else if (alreadyVerified) {
+    console.log(
+      `[nightly-preflight] All ${REQUIRED_PRE_RELEASE_CI_STAGES.length} pre-release CI stages already passed for this exact revision in run ${verifiedRunId}; reusing verified gate receipt.`,
+    );
+  } else {
+    console.log(
+      `[nightly-preflight] No prior 13/13 verified run found for gate fingerprint; executing full pre-release CI gate.`,
+    );
+  }
+  return result;
+}
+
 export async function main({
   env = process.env,
   fetchImpl = fetch,
   execFileImpl = execFileSync,
+  argv = process.argv,
 } = {}) {
+  if (trimEnv(env, 'NIGHTLY_PREFLIGHT') === 'true' || argv.includes('--preflight')) {
+    return runPreflight({ env, fetchImpl });
+  }
+
   const plan = await resolveDispatchPlan({ env, fetchImpl });
 
   if (
@@ -521,6 +796,22 @@ export async function main({
     return { ...plan, skipped: true };
   }
 
+  let gate = null;
+  if (trimEnv(env, 'REQUIRE_SOURCE_CI_GATE') === 'true') {
+    gate = verifyPreReleaseGate({ env, plan });
+    plan.sourceSha = gate.sourceSha;
+    console.log(`${GATE_MARKER_PREFIX}${gate.gateFingerprint}`);
+    if (gate.reusedRunId) {
+      console.log(
+        `[nightly-dispatch] Verified via prior 13/13 pre-release CI run ${gate.reusedRunId}.`,
+      );
+    } else {
+      console.log(
+        `[nightly-dispatch] Verified via fresh 13/13 pre-release CI gate in this run.`,
+      );
+    }
+  }
+
   console.log(
     `[nightly-dispatch] Source selection: ${plan.sourceSha || 'latest main (resolved by release.yml)'}`,
   );
@@ -531,9 +822,9 @@ export async function main({
   const args = buildNightlyDispatchArgs(plan);
   console.log(`[nightly-dispatch] Running: gh ${args.join(' ')}`);
 
-  if (env.DRY_RUN === 'true' || process.argv.includes('--dry-run')) {
+  if (env.DRY_RUN === 'true' || argv.includes('--dry-run')) {
     console.log('[nightly-dispatch] Dry run complete; skipping actual dispatch.');
-    return plan;
+    return gate ? { ...plan, gate } : plan;
   }
 
   execFileImpl('gh', args, {
@@ -543,7 +834,7 @@ export async function main({
   console.log(
     '[nightly-dispatch] Successfully dispatched twice-daily release & TestFlight workflow!',
   );
-  return plan;
+  return gate ? { ...plan, gate } : plan;
 }
 
 const isDirectRun =

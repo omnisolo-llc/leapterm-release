@@ -46,6 +46,36 @@ fn main() {
         }
         return;
     }
+    if [
+        "resolve-nightly-source",
+        "pre-release-ci",
+        "retain-nightly-diagnostics",
+    ]
+    .contains(&command.as_str())
+    {
+        if std::env::args().len() != 2 {
+            eprintln!("Unexpected pre-release CI arguments");
+            std::process::exit(1);
+        }
+        let environment = std::env::vars().collect();
+        let result = match command.as_str() {
+            "resolve-nightly-source" => {
+                leap_release_launcher::pre_release_ci::resolve_nightly_source(&environment)
+            }
+            "pre-release-ci" => {
+                leap_release_launcher::pre_release_ci::run_pre_release_ci(&environment)
+            }
+            "retain-nightly-diagnostics" => {
+                leap_release_launcher::pre_release_ci::retain_nightly_diagnostics(&environment)
+            }
+            _ => unreachable!(),
+        };
+        if let Err(error) = result {
+            eprintln!("Native pre-release CI: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if command == "check-integration-prerequisites" {
         if std::env::args().len() != 2 {
             eprintln!("Unexpected prerequisite-check arguments");

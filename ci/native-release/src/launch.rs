@@ -388,7 +388,7 @@ pub(crate) fn private_file(path: &Path, bytes: &[u8]) -> Result<fs::File> {
         .map_err(|_| "Cannot write private release file")?;
     Ok(file)
 }
-fn directory(path: &Path) -> Result<()> {
+pub(crate) fn directory(path: &Path) -> Result<()> {
     fs::create_dir(path).map_err(|_| "Cannot create private release directory")?;
     #[cfg(unix)]
     {
@@ -407,7 +407,7 @@ fn git_args(args: &[&str]) -> Vec<String> {
 fn utf8(bytes: Vec<u8>) -> Result<String> {
     String::from_utf8(bytes).map_err(|_| "Invalid native tool output")
 }
-fn seal(temp: &Path, env: &Environment) {
+pub(crate) fn seal(temp: &Path, env: &Environment) {
     let Some(recipient) = env.get("DIAGNOSTICS_PUBLIC_KEY").filter(|v| !v.is_empty()) else {
         return;
     };
@@ -853,6 +853,132 @@ pub fn build_and_dispatch(
         NativeStage::Release(request, command),
         bootstrap,
     )
+}
+
+/// Build the verified `leap-release` CLI from a byte-checked source checkout
+/// without exposing checkout credentials. Returns `(binary_path, build_env)`.
+pub(crate) fn build_release_cli(
+    src: &Path,
+    root: &Path,
+    env: &Environment,
+    source_sha: &str,
+    skip_tool_tests: bool,
+    bootstrap: &mut fs::File,
+) -> Result<(PathBuf, Environment)> {
+    for name in ["identity", "known_hosts", "website-identity"] {
+        if root.join(name).exists() {
+            return Err("Checkout credential cleanup failed");
+        }
+    }
+    let checkout = clean_environment(env);
+    source::verify(src, source_sha, &checkout, false, 0)?;
+    source::verify_tools(src, &checkout)?;
+    let frozen = crate::guards::Frozen::tree(&src.join("tools"), false)?;
+    frozen.verify()?;
+    let mut build = clean_environment(env);
+    let rustup = env
+        .get("RUSTUP_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env.get("HOME").map(String::as_str).unwrap_or("")).join(".rustup")
+        });
+    if !rustup.is_absolute() {
+        return Err("Rust toolchain location unavailable");
+    }
+    for (name, part) in [
+        ("HOME", "build-home"),
+        ("CARGO_HOME", "cargo-home"),
+        ("CARGO_TARGET_DIR", "native-target"),
+    ] {
+        let location = root.join(part);
+        directory(&location)?;
+        build.insert(name.into(), location.to_string_lossy().into_owned());
+    }
+    if let Some(registry_cache) = checkout
+        .get("CARGO_REGISTRY_CACHE_DIR")
+        .map(Path::new)
+        .filter(|cache| !paths_overlap(cache, root))
+    {
+        sync_cargo_registry(registry_cache, &root.join("cargo-home"));
+    }
+    build.insert("RUSTUP_HOME".into(), rustup.to_string_lossy().into_owned());
+    let cargo_jobs = env
+        .get("CARGO_BUILD_JOBS")
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| (1..=64).contains(&n))
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get().clamp(1, 64))
+                .unwrap_or(2)
+        })
+        .to_string();
+    build.insert("CARGO_BUILD_JOBS".into(), cargo_jobs);
+    let manifest = src.join("tools/release-cli/Cargo.toml");
+    if !manifest.is_file() || !src.join("tools/release-cli/Cargo.lock").is_file() {
+        return Err("Pinned source does not contain native release tooling");
+    }
+    let binary_name = if cfg!(windows) {
+        "leap-release.exe"
+    } else {
+        "leap-release"
+    };
+    let binary = root.join("native-target/release").join(binary_name);
+    println!("Native release phase: native-toolchain");
+    process::run(
+        Path::new("rustup"),
+        &git_args(&[
+            "toolchain",
+            "install",
+            "1.95.0",
+            "--profile",
+            "minimal",
+            "--no-self-update",
+        ]),
+        root,
+        &build,
+        Duration::from_secs(900),
+        Some(bootstrap),
+    )?;
+    if !skip_tool_tests {
+        println!("Native release phase: native-tool-tests");
+        process::run(
+            Path::new("cargo"),
+            &[
+                "+1.95.0".into(),
+                "test".into(),
+                "--locked".into(),
+                "--manifest-path".into(),
+                manifest.to_string_lossy().into_owned(),
+            ],
+            root,
+            &build,
+            Duration::from_secs(1800),
+            Some(bootstrap),
+        )?;
+    }
+    println!("Native release phase: native-tool-build");
+    process::run(
+        Path::new("cargo"),
+        &[
+            "+1.95.0".into(),
+            "build".into(),
+            "--locked".into(),
+            "--release".into(),
+            "--manifest-path".into(),
+            manifest.to_string_lossy().into_owned(),
+        ],
+        root,
+        &build,
+        Duration::from_secs(1800),
+        Some(bootstrap),
+    )?;
+    frozen.verify()?;
+    source::verify_tools(src, &checkout)?;
+    source::verify(src, source_sha, &checkout, false, 0)?;
+    if !fs::symlink_metadata(&binary).is_ok_and(|m| m.is_file() && !m.file_type().is_symlink()) {
+        return Err("Native release executable missing");
+    }
+    Ok((binary, build))
 }
 
 /// The caller must establish fresh CI authority and acquire the exact source

@@ -29,18 +29,162 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 concurrency:
   group: nightly-testflight
   cancel-in-progress: false
 
 jobs:
-  dispatch_nightly:
-    name: Dispatch Nightly & Twice-Daily Release
+  policy:
+    name: Enforce standard-runner policy
     if: github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Audit nightly workflow runner & storage policy
+        run: >-
+          bash ci/native-release/run.sh audit-runners
+          --workflows .github/workflows/nightly-testflight.yml
+          --policy ci/standard-runner-policy.json
+
+  resolve_nightly:
+    name: Resolve nightly source & CI gate
+    needs: policy
+    if: ${{ !cancelled() && needs.policy.result == 'success' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    environment: downloads
+    permissions:
+      contents: read
+      actions: read
+    timeout-minutes: 30
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      predecessor_sha: ${{ steps.source.outputs.predecessor_sha }}
+      catalog_sha256: ${{ steps.source.outputs.catalog_sha256 }}
+      gate_fingerprint: ${{ steps.source.outputs.gate_fingerprint }}
+      skip_duplicate: ${{ steps.preflight.outputs.skip_duplicate }}
+      already_verified: ${{ steps.preflight.outputs.already_verified }}
+      verified_run_id: ${{ steps.preflight.outputs.verified_run_id }}
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node for sealed diagnostics & preflight
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+
+      - name: Resolve exact main source SHA and opaque test catalog digest
+        id: source
+        env:
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha || '' }}
+          SOURCE_CI_AGENT_PREDECESSOR_SHA: ${{ vars.SOURCE_CI_AGENT_PREDECESSOR_SHA }}
+        run: bash ci/native-release/run.sh resolve-nightly-source
+
+      - name: Check duplicate active release & prior verified 13-stage CI gate
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          INPUT_VERSION: ${{ inputs.version || '' }}
+          VERIFIED_GATE_FINGERPRINT: ${{ steps.source.outputs.gate_fingerprint }}
+        run: node ci/nightly-testflight-dispatch.mjs --preflight
+
+  source_ci_gate:
+    name: Pre-release CI (${{ matrix.stage }})
+    needs: [policy, resolve_nightly]
+    if: ${{ !cancelled() && needs.policy.result == 'success' && needs.resolve_nightly.result == 'success' && needs.resolve_nightly.outputs.skip_duplicate != 'true' && needs.resolve_nightly.outputs.already_verified != 'true' && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        stage:
+          - source
+          - security
+          - rust
+          - flutter-vm
+          - flutter-browser
+          - account
+          - vault
+          - worker
+          - web
+          - mcp
+          - relay
+          - packaging
+          - agent-lifecycle
+    runs-on: ubuntu-24.04
+    environment: downloads
+    permissions:
+      contents: read
+    timeout-minutes: 360
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node for zero-leak test execution & sealed diagnostics
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+
+      - name: Run zero-leak pre-release CI stage
+        env:
+          PRE_RELEASE_CI_STAGE: ${{ matrix.stage }}
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve_nightly.outputs.source_sha }}
+          SOURCE_CI_CATALOG_SHA256: ${{ needs.resolve_nightly.outputs.catalog_sha256 }}
+          LEAP_E2E_AGENT_PREDECESSOR_COMMIT: ${{ matrix.stage == 'agent-lifecycle' && needs.resolve_nightly.outputs.predecessor_sha || '' }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          DIAGNOSTICS_PUBLIC_KEY: ${{ secrets.DIAGNOSTICS_PUBLIC_KEY }}
+        run: bash ci/native-release/run.sh pre-release-ci
+
+      - name: Retain encrypted pre-release CI diagnostic privately on failure
+        if: ${{ failure() }}
+        env:
+          RESOLVED_SOURCE_SHA: ${{ needs.resolve_nightly.outputs.source_sha }}
+          RELEASE_ARTIFACT_SCOPE: nightly-ci-${{ matrix.stage }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          SOURCE_KNOWN_HOSTS: ${{ secrets.SOURCE_KNOWN_HOSTS }}
+          SOURCE_SUBMODULE_TOKEN: ${{ secrets.SOURCE_SUBMODULE_TOKEN }}
+          SOURCE_SUBMODULE_DEPLOY_KEY_BASE64: ${{ secrets.SOURCE_SUBMODULE_DEPLOY_KEY_BASE64 }}
+          STORAGE_CONFIG: ${{ secrets.STORAGE_CONFIG }}
+        run: bash ci/native-release/run.sh retain-nightly-diagnostics
+
+  dispatch_nightly:
+    name: Dispatch Nightly & Twice-Daily Release
+    needs: [policy, resolve_nightly, source_ci_gate]
+    if: ${{ !cancelled() && needs.policy.result == 'success' && needs.resolve_nightly.result == 'success' && needs.resolve_nightly.outputs.skip_duplicate != 'true' && (needs.source_ci_gate.result == 'success' || (needs.source_ci_gate.result == 'skipped' && needs.resolve_nightly.outputs.already_verified == 'true')) && github.repository == 'omnisolo-llc/leapterm-release' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
     environment: release-source-approval
+    permissions:
+      contents: read
+      actions: write
     timeout-minutes: 15
     steps:
       - name: Checkout builder repository
@@ -57,7 +201,7 @@ jobs:
       - name: Verify twice-daily dispatcher contracts
         run: node --test ci/test_nightly_testflight_dispatch.mjs
 
-      - name: Resolve next version & build number and dispatch release
+      - name: Resolve next version & build number and dispatch release on verified SHA
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN || github.token }}
           PRIVATE_RELEASE_TOKEN: ${{ secrets.PRIVATE_RELEASE_TOKEN }}
@@ -67,8 +211,17 @@ jobs:
           APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
           APPLE_CONFIG: ${{ secrets.APPLE_CONFIG }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
           TARGET: ${{ inputs.target || 'all' }}
           INPUT_VERSION: ${{ inputs.version || '' }}
           INPUT_BUILD_NUMBER: ${{ inputs.build_number || '' }}
           INPUT_SOURCE_SHA: ${{ inputs.source_sha || '' }}
+          REQUIRE_SOURCE_CI_GATE: 'true'
+          VERIFIED_SOURCE_SHA: ${{ needs.resolve_nightly.outputs.source_sha }}
+          VERIFIED_CATALOG_SHA256: ${{ needs.resolve_nightly.outputs.catalog_sha256 }}
+          VERIFIED_GATE_FINGERPRINT: ${{ needs.resolve_nightly.outputs.gate_fingerprint }}
+          SOURCE_CI_GATE_RESULT: ${{ needs.source_ci_gate.result }}
+          SOURCE_CI_ALREADY_VERIFIED: ${{ needs.resolve_nightly.outputs.already_verified }}
+          SOURCE_CI_VERIFIED_RUN_ID: ${{ needs.resolve_nightly.outputs.verified_run_id }}
         run: node ci/nightly-testflight-dispatch.mjs

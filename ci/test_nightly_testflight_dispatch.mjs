@@ -7,14 +7,20 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildNightlyDispatchArgs,
+  checkPriorVerifiedNightlyGate,
   collectGithubReleaseState,
   compareSemver,
   computeNextPatchVersion,
+  computeNightlyGateFingerprint,
+  GATE_MARKER_PREFIX,
   main as runNightlyDispatch,
   parseSemverTag,
   queryHighestAscBuild,
+  REQUIRED_PRE_RELEASE_CI_STAGES,
   resolveAppleApiCredentials,
   resolveDispatchPlan,
+  runPreflight,
+  verifyPreReleaseGate,
 } from './nightly-testflight-dispatch.mjs';
 import { scanBufferForLeaks } from './promote-release.mjs';
 
@@ -622,4 +628,236 @@ test('scheduled nightly run proceeds when existing active run already has a fail
   });
   assert.equal(Boolean(staleRes.skipped), false);
   assert.equal(staleCalls.length, 1);
+});
+
+test('verifyPreReleaseGate fails closed on failed/missing/unverified/bypassed gate and pins exact verified SHA', async () => {
+  const sourceSha = 'a'.repeat(40);
+  const builderSha = 'b'.repeat(40);
+  const catalogSha256 = 'c'.repeat(64);
+  const fp = computeNightlyGateFingerprint({
+    sourceSha,
+    builderSha,
+    catalogSha256,
+  });
+  assert.match(fp, /^[0-9a-f]{24}$/);
+
+  const baseEnv = {
+    REQUIRE_SOURCE_CI_GATE: 'true',
+    VERIFIED_SOURCE_SHA: sourceSha,
+    VERIFIED_CATALOG_SHA256: catalogSha256,
+    VERIFIED_GATE_FINGERPRINT: fp,
+    GITHUB_SHA: builderSha,
+    SOURCE_CI_GATE_RESULT: 'success',
+  };
+
+  // Fresh 13/13 pass succeeds.
+  const fresh = verifyPreReleaseGate({ env: baseEnv, plan: { sourceSha: '' } });
+  assert.equal(fresh.sourceSha, sourceSha);
+  assert.equal(fresh.gateFingerprint, fp);
+  assert.equal(fresh.reusedRunId, null);
+
+  // Verified prior 13/13 reuse succeeds.
+  const reused = verifyPreReleaseGate({
+    env: {
+      ...baseEnv,
+      SOURCE_CI_GATE_RESULT: 'skipped',
+      SOURCE_CI_ALREADY_VERIFIED: 'true',
+      SOURCE_CI_VERIFIED_RUN_ID: '44990011223',
+    },
+    plan: { sourceSha: '' },
+  });
+  assert.equal(reused.reusedRunId, '44990011223');
+
+  // Every failure/bypass condition must throw (fail closed).
+  for (const [label, mutated] of [
+    ['stage failure', { ...baseEnv, SOURCE_CI_GATE_RESULT: 'failure' }],
+    ['cancelled gate', { ...baseEnv, SOURCE_CI_GATE_RESULT: 'cancelled' }],
+    ['skipped without verified reuse', { ...baseEnv, SOURCE_CI_GATE_RESULT: 'skipped' }],
+    [
+      'skipped without run id',
+      { ...baseEnv, SOURCE_CI_GATE_RESULT: 'skipped', SOURCE_CI_ALREADY_VERIFIED: 'true' },
+    ],
+    ['skip_tests bypass env', { ...baseEnv, SKIP_TESTS: 'true' }],
+    ['input_skip_tests bypass env', { ...baseEnv, INPUT_SKIP_TESTS: 'true' }],
+    ['missing verified SHA', { ...baseEnv, VERIFIED_SOURCE_SHA: '' }],
+    ['missing catalog digest', { ...baseEnv, VERIFIED_CATALOG_SHA256: '' }],
+    ['fingerprint mismatch', { ...baseEnv, VERIFIED_GATE_FINGERPRINT: '0'.repeat(24) }],
+  ]) {
+    assert.throws(
+      () => verifyPreReleaseGate({ env: mutated, plan: { sourceSha: '' } }),
+      `expected fail-closed rejection for ${label}`,
+    );
+  }
+
+  // SHA drift between explicit input and verified SHA must throw.
+  assert.throws(
+    () => verifyPreReleaseGate({ env: baseEnv, plan: { sourceSha: 'd'.repeat(40) } }),
+    /differs from pre-release CI verified SHA/,
+  );
+
+  // End-to-end dispatch with REQUIRE_SOURCE_CI_GATE=true must pass exact -f source_sha=<tested SHA>.
+  const apiKeyBase64 = generateTestEs256KeyBase64();
+  const dispatched = [];
+  const res = await runNightlyDispatch({
+    env: {
+      ...baseEnv,
+      GITHUB_EVENT_NAME: 'schedule',
+      GH_TOKEN: 'ghs_test',
+      APP_STORE_CONNECT_KEY_ID: 'K1',
+      APP_STORE_CONNECT_ISSUER_ID: 'I1',
+      APP_STORE_CONNECT_API_KEY_BASE64: apiKeyBase64,
+    },
+    fetchImpl: async (url, options = {}) => {
+      const u = String(url);
+      if (options.method === 'HEAD') return { ok: true, status: 200, headers: new Map() };
+      if (u.includes('api.appstoreconnect.apple.com')) {
+        return { ok: true, status: 200, async json() { return { data: [{ attributes: { version: '80' } }], included: [] }; } };
+      }
+      if (u.includes('/releases')) {
+        return { ok: true, status: 200, async json() { return [{ tag_name: 'v0.1.12' }]; } };
+      }
+      if (u.includes('/actions/workflows/release.yml/runs')) {
+        return { ok: true, status: 200, async json() { return { workflow_runs: [] }; } };
+      }
+      throw new Error(`Unexpected URL: ${u}`);
+    },
+    execFileImpl: (cmd, args) => dispatched.push([cmd, args]),
+    argv: ['node', 'nightly-testflight-dispatch.mjs'],
+  });
+  assert.equal(res.sourceSha, sourceSha);
+  assert.equal(dispatched.length, 1);
+  assert.ok(
+    dispatched[0][1].includes(`source_sha=${sourceSha}`),
+    'dispatched release.yml must pin exact verified source_sha',
+  );
+});
+
+test('checkPriorVerifiedNightlyGate requires all 13 passing CI stages and exact gate marker on main', async () => {
+  const fp = computeNightlyGateFingerprint({
+    sourceSha: '1'.repeat(40),
+    builderSha: '2'.repeat(40),
+    catalogSha256: '3'.repeat(64),
+  });
+  const all13Jobs = [
+    ...REQUIRED_PRE_RELEASE_CI_STAGES.map((stage, idx) => ({
+      id: 100 + idx,
+      name: `Pre-release CI (${stage})`,
+      conclusion: 'success',
+    })),
+    {
+      id: 999,
+      name: 'Dispatch Nightly & Twice-Daily Release',
+      conclusion: 'success',
+    },
+  ];
+  const makeFetch = ({ jobs, logText, headBranch = 'main' }) => async (url) => {
+    const u = String(url);
+    if (u.includes('/actions/workflows/nightly-testflight.yml/runs')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            workflow_runs: [
+              { id: 777001, status: 'completed', conclusion: 'success', head_branch: headBranch },
+            ],
+          };
+        },
+      };
+    }
+    if (u.includes('/actions/runs/777001/jobs')) {
+      return { ok: true, status: 200, async json() { return { jobs }; } };
+    }
+    if (u.includes('/actions/jobs/999/logs')) {
+      return { ok: true, status: 200, async text() { return logText; } };
+    }
+    throw new Error(`Unexpected URL: ${u}`);
+  };
+
+  // Exact 13/13 + matching marker verifies.
+  const ok = await checkPriorVerifiedNightlyGate({
+    gateFingerprint: fp,
+    fetchImpl: makeFetch({
+      jobs: all13Jobs,
+      logText: `ok\n${GATE_MARKER_PREFIX}${fp}\ndone`,
+    }),
+  });
+  assert.deepEqual(ok, { verified: true, runId: '777001' });
+
+  // Missing even 1 stage (12/13) must NOT verify.
+  const missingOne = await checkPriorVerifiedNightlyGate({
+    gateFingerprint: fp,
+    fetchImpl: makeFetch({
+      jobs: all13Jobs.filter((j) => j.name !== 'Pre-release CI (worker)'),
+      logText: `${GATE_MARKER_PREFIX}${fp}`,
+    }),
+  });
+  assert.deepEqual(missingOne, { verified: false, runId: null });
+
+  // Skipped stage must NOT verify.
+  const skippedOne = await checkPriorVerifiedNightlyGate({
+    gateFingerprint: fp,
+    fetchImpl: makeFetch({
+      jobs: all13Jobs.map((j) =>
+        j.name === 'Pre-release CI (flutter-browser)'
+          ? { ...j, conclusion: 'skipped' }
+          : j,
+      ),
+      logText: `${GATE_MARKER_PREFIX}${fp}`,
+    }),
+  });
+  assert.deepEqual(skippedOne, { verified: false, runId: null });
+
+  // Wrong fingerprint must NOT verify.
+  const wrongFp = await checkPriorVerifiedNightlyGate({
+    gateFingerprint: fp,
+    fetchImpl: makeFetch({
+      jobs: all13Jobs,
+      logText: `${GATE_MARKER_PREFIX}${'0'.repeat(24)}`,
+    }),
+  });
+  assert.deepEqual(wrongFp, { verified: false, runId: null });
+
+  // Preflight mode integrates duplicate check + prior verification cleanly.
+  const preflightRes = await runPreflight({
+    env: {
+      GITHUB_EVENT_NAME: 'schedule',
+      VERIFIED_GATE_FINGERPRINT: fp,
+    },
+    fetchImpl: async (url) => {
+      const u = String(url);
+      if (u.includes('/releases')) return { ok: true, status: 200, async json() { return []; } };
+      if (u.includes('/actions/workflows/release.yml/runs')) {
+        return { ok: true, status: 200, async json() { return { workflow_runs: [] }; } };
+      }
+      return makeFetch({ jobs: all13Jobs, logText: `${GATE_MARKER_PREFIX}${fp}` })(url);
+    },
+  });
+  assert.equal(preflightRes.skipDuplicate, false);
+  assert.equal(preflightRes.alreadyVerified, true);
+  assert.equal(preflightRes.verifiedRunId, '777001');
+});
+
+test('nightly-testflight.yml runs all 13 pre-release CI stages before dispatch with zero skip bypass', () => {
+  const workflowPath = path.resolve(
+    __dirname,
+    '..',
+    '.github',
+    'workflows',
+    'nightly-testflight.yml',
+  );
+  const content = fs.readFileSync(workflowPath, 'utf8');
+  assert.doesNotMatch(content, /skip_tests/i);
+  assert.doesNotMatch(content, /continue-on-error:\s*true/);
+  for (const stage of REQUIRED_PRE_RELEASE_CI_STAGES) {
+    assert.match(
+      content,
+      new RegExp(`^\\s*-\\s+${stage}$`, 'm'),
+      `expected pre-release CI stage "${stage}" in nightly-testflight.yml`,
+    );
+  }
+  assert.match(content, /REQUIRE_SOURCE_CI_GATE:\s*'true'/);
+  assert.match(content, /needs\.source_ci_gate\.result == 'success'/);
+  assert.match(content, /bash ci\/native-release\/run\.sh pre-release-ci/);
+  assert.match(content, /bash ci\/native-release\/run\.sh retain-nightly-diagnostics/);
 });
