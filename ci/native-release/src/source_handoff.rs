@@ -55,10 +55,11 @@ fn input_hashes(value: &Value) -> Result<&serde_json::Map<String, Value>> {
     }
     Ok(inputs)
 }
-pub fn verify_stage_receipt(
+pub fn verify_stage_receipt_for_catalog(
     value: &Value,
     request: &SourceCiRequest,
-    approval: &Approval,
+    expected_catalog_sha256: &str,
+    expected_case_ids_sha256: Option<&str>,
 ) -> Result<Value> {
     fields(
         value,
@@ -78,10 +79,10 @@ pub fn verify_stage_receipt(
             "status",
         ],
     )?;
-    let approved = approval.stage(request)?;
-    if value["schema"] != "leapterm.source-ci.stage.v1"
+    if !hash(expected_catalog_sha256)
+        || value["schema"] != "leapterm.source-ci.stage.v1"
         || SourceCiRequest::parse(&value["request"])? != *request
-        || value["catalog_sha256"] != approval.catalog_sha256
+        || value["catalog_sha256"] != expected_catalog_sha256
     {
         return Err("Source-CI stage receipt identity changed");
     }
@@ -173,12 +174,26 @@ pub fn verify_stage_receipt(
     if passed_counts(value)? != expected
         || expected != cases.len() as u64
         || json_digest(&json!(cases))? != text(value, "case_ids_sha256")?
-        || value["case_ids_sha256"] != approved.case_ids_sha256
+        || expected_case_ids_sha256
+            .is_some_and(|expected_hash| value["case_ids_sha256"] != expected_hash)
     {
         return Err("Source-CI approved cases are incomplete");
     }
     Ok(
         json!({"expected":expected,"registered":expected,"executed":expected,"passed":expected,"failed":0,"skipped":0,"status":"passed","case_ids_sha256":value["case_ids_sha256"]}),
+    )
+}
+pub fn verify_stage_receipt(
+    value: &Value,
+    request: &SourceCiRequest,
+    approval: &Approval,
+) -> Result<Value> {
+    let approved = approval.stage(request)?;
+    verify_stage_receipt_for_catalog(
+        value,
+        request,
+        &approval.catalog_sha256,
+        Some(&approved.case_ids_sha256),
     )
 }
 fn names(request: &SourceCiRequest) -> (String, String) {

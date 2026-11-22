@@ -5,6 +5,7 @@ pub mod hosted_inputs;
 pub mod input;
 pub mod json;
 pub mod launch;
+pub mod pre_release_ci;
 pub mod prerequisites;
 pub mod process;
 pub mod publication_candidates;
