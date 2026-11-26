@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::{fs, path::Path, time::Duration};
 
 pub const MAX_JSON: usize = 1_048_576;
-pub const MAX_RECEIPT: usize = 1_048_576;
+pub const MAX_RECEIPT: usize = 16 * 1024 * 1024;
 pub const MAX_ENVELOPE: usize = 16_384;
 pub const MAX_PAGES: usize = 10;
 

@@ -41,7 +41,7 @@ fn input_hashes(value: &Value) -> Result<&serde_json::Map<String, Value>> {
         .as_object()
         .ok_or("Source-CI input digests must retain their file identities")?;
     if inputs.is_empty()
-        || inputs.len() > 4096
+        || inputs.len() > 8192
         || inputs.iter().any(|(path, digest)| {
             !guards::safe_path(path)
                 || path.len() > 512

@@ -2212,7 +2212,6 @@ export async function promoteAppleToAppStoreConnect({
       platform,
       action,
       track: 'internal',
-      revenuecat_store: 'test_store',
       version: normalizedVersion,
       build_number: normalizedBuild,
       ...(testerSync.group_id
@@ -2310,7 +2309,6 @@ export async function promoteAppleToAppStoreConnect({
       platform,
       action,
       track: action,
-      revenuecat_store: 'production',
       ...(uploadedAlphaPackage ? { uploaded_candidate: true } : {}),
       version: normalizedVersion,
       build_number: normalizedBuild,
@@ -3213,12 +3211,8 @@ function scanStagedCdnAsset(relPath, rawBytes) {
       throw new Error('Unobfuscated internal symbols in CDN main.dart.mjs runtime');
     }
   }
-  const sanitized = text.replace(
-    /["']?LEAP_REVENUECAT_PUBLIC_SDK_KEY["']?\s*[:=]\s*["'](?:appl|goog|rcb)_[A-Za-z0-9]{1,2048}["']/gi,
-    '',
-  );
   for (const pattern of CDN_SECRET_OR_PRIVATE_PATTERNS) {
-    if (pattern.test(sanitized)) {
+    if (pattern.test(text)) {
       throw new Error(
         `Private, secret, or source-map material detected in CDN asset (${relPath}): matched ${pattern}`,
       );
