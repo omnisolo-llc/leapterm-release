@@ -1647,8 +1647,8 @@ mod stage_boundary_env_tests {
         apply_stage_boundary_env(&stage, &env, src, root, &mut task).unwrap();
         assert_eq!(task.get("PUBLIC_BUILDER_SHA"), Some(&builder_sha));
         assert_eq!(
-            task.get("PRIVATE_DIAGNOSTIC_LOG").map(String::as_str),
-            Some("/tmp/private-ci/task.log")
+            task.get("PRIVATE_DIAGNOSTIC_LOG").map(PathBuf::from),
+            Some(root.join("task.log"))
         );
         for omitted in ["SOURCE", "PRIVATE_BOOTSTRAP_LOG", "RELEASE_STATUS_FILE"] {
             assert!(
@@ -1670,20 +1670,20 @@ mod stage_boundary_env_tests {
         apply_stage_boundary_env(&stage, &env, src, root, &mut task).unwrap();
         assert_eq!(task.get("PUBLIC_BUILDER_SHA"), Some(&builder_sha));
         assert_eq!(
-            task.get("SOURCE").map(String::as_str),
-            Some("/tmp/private-release/source")
+            task.get("SOURCE").map(PathBuf::from),
+            Some(src.to_path_buf())
         );
         assert_eq!(
-            task.get("PRIVATE_BOOTSTRAP_LOG").map(String::as_str),
-            Some("/tmp/private-release/bootstrap.log")
+            task.get("PRIVATE_BOOTSTRAP_LOG").map(PathBuf::from),
+            Some(root.join("bootstrap.log"))
         );
         assert_eq!(
-            task.get("PRIVATE_DIAGNOSTIC_LOG").map(String::as_str),
-            Some("/tmp/private-release/task.log")
+            task.get("PRIVATE_DIAGNOSTIC_LOG").map(PathBuf::from),
+            Some(root.join("task.log"))
         );
         assert_eq!(
-            task.get("RELEASE_STATUS_FILE").map(String::as_str),
-            Some("/tmp/private-release/status.json")
+            task.get("RELEASE_STATUS_FILE").map(PathBuf::from),
+            Some(root.join("status.json"))
         );
     }
 }
