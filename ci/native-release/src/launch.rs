@@ -1476,19 +1476,7 @@ fn build_native_stage(
             }
         }
     };
-    task.insert("SOURCE".into(), src.to_string_lossy().into_owned());
-    task.insert(
-        "PUBLIC_BUILDER_SHA".into(),
-        required(env, "GITHUB_SHA")?.into(),
-    );
-
-    for (key, name) in [
-        ("PRIVATE_BOOTSTRAP_LOG", "bootstrap.log"),
-        ("PRIVATE_DIAGNOSTIC_LOG", "task.log"),
-        ("RELEASE_STATUS_FILE", "status.json"),
-    ] {
-        task.insert(key.into(), root.join(name).to_string_lossy().into_owned());
-    }
+    apply_stage_boundary_env(&stage, env, src, root, &mut task)?;
     println!("Native release phase: private-task");
     if matches!(&stage, NativeStage::Release(_, _))
         && cfg!(windows)
@@ -1596,6 +1584,108 @@ fn build_native_stage(
     let workspace =
         std::env::current_dir().map_err(|_| "Workspace output directory unavailable")?;
     export_workspace_outputs(&work, &workspace)
+}
+
+fn apply_stage_boundary_env(
+    stage: &NativeStage<'_>,
+    env: &Environment,
+    src: &Path,
+    root: &Path,
+    task: &mut Environment,
+) -> Result<()> {
+    task.insert(
+        "PUBLIC_BUILDER_SHA".into(),
+        required(env, "GITHUB_SHA")?.into(),
+    );
+    task.insert(
+        "PRIVATE_DIAGNOSTIC_LOG".into(),
+        root.join("task.log").to_string_lossy().into_owned(),
+    );
+    if !matches!(stage, NativeStage::Ci(_)) {
+        task.insert("SOURCE".into(), src.to_string_lossy().into_owned());
+        for (key, name) in [
+            ("PRIVATE_BOOTSTRAP_LOG", "bootstrap.log"),
+            ("RELEASE_STATUS_FILE", "status.json"),
+        ] {
+            task.insert(key.into(), root.join(name).to_string_lossy().into_owned());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod stage_boundary_env_tests {
+    use super::*;
+    use crate::ci_request::{BUILDER_REPOSITORY, PipelineIdentity, SourceCiRequest};
+
+    fn sample_ci_request(builder_sha: &str) -> SourceCiRequest {
+        SourceCiRequest {
+            identity: PipelineIdentity {
+                source_repository: "example-org/private-source".into(),
+                source_sha: "a".repeat(40),
+                builder_repository: BUILDER_REPOSITORY.into(),
+                builder_sha: builder_sha.into(),
+                run_id: "45001234567".into(),
+                attempt: "1".into(),
+            },
+            source_ref: "refs/heads/main".into(),
+            stage: "source".into(),
+            shard_index: 0,
+            shard_count: 1,
+        }
+    }
+
+    #[test]
+    fn ci_stage_boundary_env_omits_private_release_layout_keys() {
+        let builder_sha = "b".repeat(40);
+        let ci_req = sample_ci_request(&builder_sha);
+        let stage = NativeStage::Ci(&ci_req);
+        let env = Environment::from([("GITHUB_SHA".into(), builder_sha.clone())]);
+        let src = Path::new("/tmp/private-ci/source");
+        let root = Path::new("/tmp/private-ci");
+        let mut task = Environment::new();
+        apply_stage_boundary_env(&stage, &env, src, root, &mut task).unwrap();
+        assert_eq!(task.get("PUBLIC_BUILDER_SHA"), Some(&builder_sha));
+        assert_eq!(
+            task.get("PRIVATE_DIAGNOSTIC_LOG").map(String::as_str),
+            Some("/tmp/private-ci/task.log")
+        );
+        for omitted in ["SOURCE", "PRIVATE_BOOTSTRAP_LOG", "RELEASE_STATUS_FILE"] {
+            assert!(
+                !task.contains_key(omitted),
+                "{omitted} must stay absent for NativeStage::Ci"
+            );
+        }
+    }
+
+    #[test]
+    fn release_stage_boundary_env_keeps_release_layout_keys() {
+        let builder_sha = "b".repeat(40);
+        let req: Request = serde_json::from_str(r#"{"build_number":"42"}"#).unwrap();
+        let stage = NativeStage::Release(&req, "run");
+        let env = Environment::from([("GITHUB_SHA".into(), builder_sha.clone())]);
+        let src = Path::new("/tmp/private-release/source");
+        let root = Path::new("/tmp/private-release");
+        let mut task = Environment::new();
+        apply_stage_boundary_env(&stage, &env, src, root, &mut task).unwrap();
+        assert_eq!(task.get("PUBLIC_BUILDER_SHA"), Some(&builder_sha));
+        assert_eq!(
+            task.get("SOURCE").map(String::as_str),
+            Some("/tmp/private-release/source")
+        );
+        assert_eq!(
+            task.get("PRIVATE_BOOTSTRAP_LOG").map(String::as_str),
+            Some("/tmp/private-release/bootstrap.log")
+        );
+        assert_eq!(
+            task.get("PRIVATE_DIAGNOSTIC_LOG").map(String::as_str),
+            Some("/tmp/private-release/task.log")
+        );
+        assert_eq!(
+            task.get("RELEASE_STATUS_FILE").map(String::as_str),
+            Some("/tmp/private-release/status.json")
+        );
+    }
 }
 
 fn export_workspace_outputs(work: &Path, workspace: &Path) -> Result<()> {

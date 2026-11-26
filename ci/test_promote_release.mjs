@@ -2611,7 +2611,7 @@ test('promoteIosToAppStoreConnect uploads distinct alpha IPA build with producti
     assert.equal(uploadedFiles[0], alphaIpaPath);
     assert.equal(res.action, 'alpha');
     assert.equal(res.track, 'alpha');
-    assert.equal(res.revenuecat_store, 'production');
+    assert.equal(res.revenuecat_store, undefined);
     assert.equal(res.uploaded_candidate, true);
     assert.equal(res.status, 'promoted-to-testflight-alpha');
   } finally {

@@ -186,6 +186,79 @@ fn verify_nightly_stage_receipt_is_fail_closed_on_failures_skips_or_catalog_drif
 }
 
 #[test]
+fn verify_nightly_stage_receipt_accepts_large_flutter_vm_receipt_and_rejects_oversize() {
+    let temp = tempfile::tempdir().unwrap();
+    let receipt_path = temp.path().join("source-ci-stage.json");
+    let request = sample_request("flutter-vm");
+    let catalog = "f".repeat(64);
+    let suite_id = "flutter-vm:flutter-quality-and-tests:0000";
+    let pad = "a".repeat(96);
+    let mut case_ids: Vec<String> = (0..10_000)
+        .map(|i| {
+            format!(
+                "{suite_id}::test/suite_{:04}_test.dart::case_{i:05}_{pad}",
+                i / 8
+            )
+        })
+        .collect();
+    case_ids.sort();
+    let case_digest = source_api::json_digest(&json!(case_ids)).unwrap();
+    let mut input_map = serde_json::Map::new();
+    let input_hash = "c".repeat(64);
+    for i in 0..4_500 {
+        input_map.insert(
+            format!("app/test/suite_{i:04}_test.dart"),
+            json!(input_hash),
+        );
+    }
+    let inputs = Value::Object(input_map);
+    let large = json!({
+        "schema": "leapterm.source-ci.stage.v1",
+        "request": request,
+        "catalog_sha256": catalog,
+        "inputs": inputs,
+        "suites": [{
+            "id": suite_id,
+            "kind": "flutter",
+            "command_sha256": "d".repeat(64),
+            "input_sha256": inputs,
+            "case_ids": case_ids,
+            "case_ids_sha256": case_digest,
+            "expected": case_ids.len(),
+            "registered": case_ids.len(),
+            "executed": case_ids.len(),
+            "passed": case_ids.len(),
+            "failed": 0,
+            "skipped": 0,
+            "status": "passed",
+        }],
+        "case_ids_sha256": case_digest,
+        "expected": case_ids.len(),
+        "registered": case_ids.len(),
+        "executed": case_ids.len(),
+        "passed": case_ids.len(),
+        "failed": 0,
+        "skipped": 0,
+        "status": "passed",
+    });
+    let encoded = serde_json::to_vec(&large).unwrap();
+    assert!(
+        encoded.len() > 1_048_576,
+        "receipt fixture must exceed 1 MiB"
+    );
+    fs::write(&receipt_path, &encoded).unwrap();
+    let summary = verify_nightly_stage_receipt(&receipt_path, &request, &catalog).unwrap();
+    assert_eq!(summary["passed"], 10_000);
+
+    // Receipts exceeding MAX_RECEIPT must still fail closed.
+    let mut oversize = vec![b' '; source_api::MAX_RECEIPT + 1];
+    oversize[0] = b'{';
+    oversize[source_api::MAX_RECEIPT] = b'}';
+    fs::write(&receipt_path, &oversize).unwrap();
+    assert!(verify_nightly_stage_receipt(&receipt_path, &request, &catalog).is_err());
+}
+
+#[test]
 fn nightly_workflow_obeys_runner_policy_covers_all_13_stages_and_is_fail_closed() {
     let repo = repository();
     let workflow_path = repo.join(".github/workflows/nightly-testflight.yml");
